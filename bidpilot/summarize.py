@@ -28,6 +28,7 @@ class EvidenceSummarizer:
     def extractive(item: RawTender) -> SummaryResult:
         body = normalize_space(item.body)
         evidence_text = body or item.title
+        masked = bool(re.search(r"[*＊]+", evidence_text))
         facts: list[str] = []
 
         project = re.search(
@@ -45,7 +46,9 @@ class EvidenceSummarizer:
         for match in (project, budget, deadline, quantity):
             if match:
                 fact = normalize_space(match.group(0)).strip("，,。；; ")
-                if fact and fact not in facts:
+                # Public snippets sometimes mask member-only digits with '*'.
+                # Do not elevate masked values into an executive summary.
+                if fact and not re.search(r"[*＊]+", fact) and fact not in facts:
                     facts.append(fact)
 
         if not facts:
@@ -53,15 +56,22 @@ class EvidenceSummarizer:
                 normalize_space(sentence)
                 for sentence in re.split(r"(?<=[。！？；])", body)
                 if len(normalize_space(sentence)) >= 12
+                and not re.search(r"[*＊]+", sentence)
             ]
             facts.extend(sentences[:2])
 
+        safe_title = re.sub(r"[*＊]+", "脱敏信息", item.title)
         prefix = f"{item.buyer}发布" if item.buyer else "该公告涉及"
         if facts:
-            summary = f"{prefix}{item.title}。" + "；".join(facts[:4]).rstrip("。") + "。"
+            summary = f"{prefix}{safe_title}。" + "；".join(facts[:4]).rstrip("。") + "。"
         else:
-            summary = f"{prefix}{item.title}；详情请以来源页面为准。"
-        summary = normalize_space(summary)[:520]
+            summary = f"{prefix}{safe_title}；详情请以来源页面为准。"
+        caution = "公开摘要存在脱敏字段，预算与截止时间需授权后核验。" if masked else ""
+        summary = normalize_space(summary)
+        if caution:
+            summary = summary[: 260 - len(caution)].rstrip("，,；;。 ") + "。" + caution
+        else:
+            summary = summary[:260]
         evidence = item.evidence or [
             EvidenceSpan(text=evidence_text[:500], source_url=item.source_url)
         ]

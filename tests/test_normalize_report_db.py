@@ -123,3 +123,18 @@ def test_delivery_ledger_is_exactly_once(tmp_path: Path):
     assert database.undelivered_keys("sub-1", [*keys, ("canonical-1", "version-2")]) == {
         ("canonical-1", "version-2")
     }
+
+
+def test_extractive_summary_does_not_leak_masked_member_values():
+    item = raw_tender(
+        "千里马",
+        "https://example.com/masked",
+        "安徽大学服务器采购公告",
+        "本项目采购高性能服务器。预算金额：**万元。投标截止时间：****年**月**日。",
+    )
+    result = EvidenceSummarizer(Settings()).extractive(item)
+    assert "*" not in result.summary
+    assert "**万元" not in result.summary
+    assert "公开摘要存在脱敏字段" in result.summary
+    assert "需授权后核验" in result.summary
+    assert len(result.summary) <= 260

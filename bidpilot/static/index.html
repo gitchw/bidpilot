@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
+  <title>标擎 BidPilot</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="noise"></div>
+  <header class="topbar">
+    <a class="brand" href="#">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span><strong>标擎</strong><small>BidPilot</small></span>
+    </a>
+    <nav aria-label="主导航">
+      <button class="nav-link active" data-tab="search">情报检索</button>
+      <button class="nav-link" data-tab="subscriptions">订阅中心</button>
+      <button class="nav-link" data-tab="reports">报告历史</button>
+    </nav>
+    <div class="top-actions">
+      <span class="status-dot"><i></i> 系统在线</span>
+      <a class="ghost-button" href="/docs" target="_blank" rel="noreferrer">API 文档 ↗</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="tab-panel active" id="tab-search">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">EVIDENCE-FIRST TENDER INTELLIGENCE</p>
+          <h1>一句话，<br><span>追踪每个真实商机。</span></h1>
+          <p class="lede">自然语言驱动多源采集、证据约束摘要、项目生命周期去重与恰好一次增量推送。</p>
+          <div class="proof-line">
+            <span><b>3</b> 类来源</span><span><b>0</b> 硬编码结果</span><span><b>100%</b> 可回溯</span>
+          </div>
+        </div>
+        <div class="query-console">
+          <div class="console-head">
+            <span>自然语言任务</span>
+            <span class="kbd">⌘ K</span>
+          </div>
+          <textarea id="query-input" rows="4" aria-label="招投标查询" placeholder="例如：最近3个月上海充电桩招标信息，请每天9:00汇总后发送给我"></textarea>
+          <div class="examples" aria-label="查询示例">
+            <button data-query="最近3个月安徽服务器招标信息">安徽 · 服务器 · 近3月</button>
+            <button data-query="最近1个月上海充电桩招标信息">上海 · 充电桩 · 近1月</button>
+            <button data-query="最近3个月上海充电桩招标信息，请每天9:00汇总后发送给我">每日增量订阅</button>
+          </div>
+          <div class="console-actions">
+            <button class="secondary-button" id="parse-button">解析意图</button>
+            <button class="primary-button" id="run-button"><span>启动情报任务</span><b>→</b></button>
+          </div>
+          <p class="privacy-note">仅抓取公开信息或你主动授权的免费会员可见信息</p>
+        </div>
+      </div>
+
+      <section class="intent-panel hidden" id="intent-panel" aria-live="polite">
+        <div class="section-head">
+          <div><p class="eyebrow">QUERY COMPILER</p><h2>任务已编译</h2></div>
+          <div class="intent-actions">
+            <span class="confidence" id="intent-confidence">高置信</span>
+            <button class="secondary-button hidden" id="create-subscription-button">创建增量订阅 ＋</button>
+          </div>
+        </div>
+        <div class="intent-grid" id="intent-grid"></div>
+        <div class="warnings" id="intent-warnings"></div>
+      </section>
+
+      <section class="run-panel hidden" id="run-panel" aria-live="polite">
+        <div class="section-head">
+          <div><p class="eyebrow">LIVE PIPELINE</p><h2>证据流水线</h2></div>
+          <span class="running-badge" id="run-state"><i></i> 执行中</span>
+        </div>
+        <div class="pipeline">
+          <div class="pipe-step active"><span>01</span><div><b>理解意图</b><small>主题 / 地域 / 时间 / 频率</small></div></div>
+          <i></i>
+          <div class="pipe-step"><span>02</span><div><b>多源采集</b><small>公开源 + 授权会员源</small></div></div>
+          <i></i>
+          <div class="pipe-step"><span>03</span><div><b>可信聚合</b><small>清洗 / 去重 / 证据门控</small></div></div>
+          <i></i>
+          <div class="pipe-step"><span>04</span><div><b>生成报告</b><small>Word + 增量账本</small></div></div>
+        </div>
+      </section>
+
+      <section class="results-panel hidden" id="results-panel">
+        <div class="section-head results-head">
+          <div><p class="eyebrow">ACTIONABLE SIGNALS</p><h2>可行动情报</h2></div>
+          <div class="results-actions"><span id="result-summary"></span><a class="primary-button compact hidden" id="download-report">下载 Word ↓</a></div>
+        </div>
+        <div class="metric-strip" id="metric-strip"></div>
+        <div class="source-coverage" id="source-coverage"></div>
+        <div class="result-list" id="result-list"></div>
+        <div class="empty-state hidden" id="empty-state"><span>◎</span><h3>本次没有匹配的新情报</h3><p>这也是可信结果：系统不会用无关内容填充报告。可尝试扩大时间或地域。</p></div>
+      </section>
+    </section>
+
+    <section class="tab-panel" id="tab-subscriptions">
+      <div class="page-heading"><p class="eyebrow">EXACTLY-ONCE DELIVERY</p><h1>订阅中心</h1><p>每个公告版本只成功投递一次；更正与中标作为生命周期新事件继续提醒。</p></div>
+      <div class="data-list" id="subscription-list"><div class="loading-card">正在读取订阅…</div></div>
+    </section>
+
+    <section class="tab-panel" id="tab-reports">
+      <div class="page-heading"><p class="eyebrow">AUDITABLE OUTPUTS</p><h1>报告历史</h1><p>每份 Word 都保留查询口径、来源覆盖、原文链接与证据片段。</p></div>
+      <div class="data-list" id="report-list"><div class="loading-card">正在读取报告…</div></div>
+    </section>
+  </main>
+
+  <aside class="source-rail" aria-label="数据源状态">
+    <p>来源矩阵</p><div id="source-list"></div>
+  </aside>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

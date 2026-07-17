@@ -249,6 +249,54 @@ class Database:
                 ),
             )
 
+    def update_subscription_run(
+        self,
+        subscription_id: str,
+        *,
+        last_run_at: datetime,
+        next_run_at: datetime | None,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE subscriptions SET last_run_at=?, next_run_at=? WHERE id=?",
+                (
+                    last_run_at.isoformat(),
+                    next_run_at.isoformat() if next_run_at else None,
+                    subscription_id,
+                ),
+            )
+
+    def get_subscription(self, subscription_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM subscriptions WHERE id=?", (subscription_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def create_report(
+        self,
+        report_id: str,
+        run_id: str,
+        path: str,
+        item_count: int,
+        subscription_id: str | None = None,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO reports(id, run_id, subscription_id, path, item_count, created_at)
+                VALUES(?,?,?,?,?,?)
+                """,
+                (report_id, run_id, subscription_id, path, item_count, utcnow_iso()),
+            )
+
+    def list_reports(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM reports ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_subscriptions(self) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute("SELECT * FROM subscriptions ORDER BY created_at DESC").fetchall()
