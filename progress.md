@@ -1,40 +1,72 @@
 # Progress
 
-## 2026-07-17 - Phase 0/1 complete
+## 2026-07-17 — 立项与证据流水线
 
-- Workspace was empty and not under Git; initialized a new `main` repository.
-- Read the user-requested harness methodology and the required document/presentation skills.
-- Verified the official HyperFusion challenge page, registration form, full competition rules and intellectual-property terms.
-- Confirmed registration closes at 2026-07-19 24:00 Asia/Shanghai; each company selects three teams for the cohort.
-- Confirmed judging dimensions: AI innovation, business value, scalability and solution professionalism.
-- Confirmed mandatory challenge outputs: multiple DOCX reports, design document, complete code, operation manual and full-flow multi-query demo video.
-- Validated public access patterns for China Tendering & Bidding Net and China Government Procurement Network.
-- Validated that Qianlima redirects unauthenticated search to free registration, making it suitable for the required authorized-login source adapter.
-- Defined the product as “标擎 BidPilot” and the working team name as “聚标成擎”.
+- 初始化 `main` 仓库，定义产品名“标擎 BidPilot”和团队名“聚标成擎”。
+- 核验超聚变命题、报名表、赛制、截止时间和交付要求。
+- 完成中文查询编译器、Pydantic 领域模型、SQLite 基础结构。
+- 完成中国招标投标网、中国政府采购网、千里马授权源骨架。
+- 完成严格筛选、证据摘要、转载去重、生命周期聚类、机会评分和 DOCX 报告。
+- 完成 FastAPI、CLI 和第一版 Web 闭环。
 
-## Current
+## 2026-07-18 — 真实工程化里程碑
 
-- Completed F01: the versioned Chinese query compiler parses all four official examples plus weekly delivery, reversed date ranges, defaults and invalid input. Eight tests pass.
-- Completed the configuration, Pydantic domain model and transactional SQLite schema foundation.
-- Fixed setup failure detection and verified a clean editable development install on Python 3.13.
-- In progress: real source adapters and the evidence-first normalization pipeline.
-- Completed F02/F03: CEC Bid and CCGP adapters include real search/list parsing, detail extraction, attachment capture, request throttling and bounded retries.
-- Implemented F04 pending user authorization: Qianlima detects missing/expired free-member sessions and contains a tested parser for the authorized result surface.
-- Completed F05/F06: strict date/region/topic filtering, relevance scoring, evidence-gated extractive/optional-LLM summaries, cross-site duplicate merging and lifecycle grouping.
-- Completed F07: DOCX reports follow the required filename rule and include query scope, coverage disclosure, required item fields, source/attachment hyperlinks and evidence.
-- Implemented F09 channels; local delivery is testable now, while Feishu webhook/app delivery needs user credentials.
-- Sixteen automated tests pass. A real online run for “最近3个月安徽服务器招标信息” fetched five CEC candidates and retained only the matching安徽大学 server notice at relevance 83.
-- In progress: orchestration service, persistent scheduler, API/CLI and Web UI.
+### 来源
 
-## Known constraints
+- 来源从 3 个扩展到 5 个，新增全国公共资源交易平台、商务部中国国际招标网。
+- 全国平台只使用首页最新公告流，始终标记 `partial`，不冒充全量历史检索。
+- 商务部适配器使用真实表单接口，已完成在线查询、详情解析和证据保留。
+- 千里马未授权时返回 `auth_required`，等待用户主动登录免费会员。
 
-- No Git remote exists, so the harness push requirement cannot be satisfied until the user supplies a remote. Local atomic commits will still be created.
-- A real Qianlima free-member session requires the user to complete registration/login; credentials and cookies must never be committed.
-- Final form submission requires team composition, member identity/student proof and the user’s action-time confirmation.
+### 长期任务
 
-## Next
+- 移除 APScheduler 进程内闹钟，改为 SQLite 持久 worker。
+- 支持 `python -m bidpilot worker` 和 Web 内嵌 worker。
+- 持久化 `next_run_at`、运行、投递尝试、失败次数、worker 心跳、租约和增量账本。
+- 实现重启补跑、失败退避、多 worker 原子领取、长任务续租和手动/自动执行互斥。
+- 故障注入验证：投递失败不写账本；首次重试约 60 秒；租约未过期不能重复领取；过期后可接管。
 
-1. Create the Python package, configuration, database schema and source abstractions.
-2. Implement and verify the query compiler.
-3. Implement and verify sources, normalization, report generation and scheduling.
-4. Build the Web UI/API/CLI, then generate competition artifacts.
+### 投递与管理
+
+- 本地报告中心明确标记“不主动推送”。
+- 飞书 Webhook 支持运行卡片和下载链接；飞书应用支持 Word 文件与无新增文本回执。
+- 新增跨平台标准 SMTP：SSL/STARTTLS、Word 附件、多收件人、无新增回执。
+- 未配置渠道在 UI 禁用，创建订阅时拒绝虚假推送承诺。
+- 订阅中心支持编辑自然语言规则、通知策略、渠道、暂停、恢复、立即执行、日志和二次确认删除。
+- 新增来源中心：官方/行业属性、接入模式、授权状态、最近检查、抓取/保留和诊断。
+- 修复 1280px 下来源浮层覆盖查询面板；编辑期间自动刷新不再清空输入。
+
+### 跨平台与部署
+
+- 删除 `setup.ps1`，新增纯 Python `bootstrap.py`。
+- 新增非 root Dockerfile、Compose Web + 独立 worker、持久卷、健康检查和自动重启。
+- Compose 补齐 LLM、会员会话、飞书和 SMTP 环境变量。
+- 新增 Windows/macOS/Linux、Python 3.11/3.13 GitHub Actions 矩阵。
+- 本机没有 Docker，不能把镜像构建标记为已验证。
+
+### 真实验收证据
+
+- 订阅 `f8b24edfbe64481dbcc7d4fdee85d94f` 在真实进程重启前后保持同一 ID、`next_run_at`、运行历史和投递历史。
+- 首轮真实查询“最近1个月江苏芯板招标信息，请每天9:00发送给我”新增 5 条并生成 DOCX。
+- 浏览器点击第二轮“立即执行”新增 0 条，仍记录本地运行回执；运行数 2、投递尝试 2、账本仍为 5。
+- 浏览器完成临时订阅的规则编辑、计划重算、暂停、恢复和二次确认删除。
+- 来源中心真实显示 5 个来源，其中 4 个当前可运行、3 个官方平台；千里马待授权。
+- 最终门禁：36 项 Pytest、Ruff lint/format、JavaScript 语法、JSON/YAML、依赖完整性、敏感令牌扫描和 wheel 构建全部通过。
+- wheel 构建门禁曾发现静态资源重复收录，已移除 Hatch 重复配置；最终生成 `bidpilot-0.2.0-py3-none-any.whl`。
+
+## 当前约束
+
+- 仓库没有 Git remote；可以创建本地原子提交，但无法满足 `push` 要求。
+- 本机没有 Docker；需要在有 Docker 的环境实际执行 `docker compose up -d --build`。
+- 飞书真实投递需要用户提供 Webhook 或应用凭据；SMTP 真实投递需要应用专用密码。
+- 千里马真实链路需要用户主动完成免费会员登录，Cookie 不得提交仓库。
+- 比赛材料和最终表单提交按用户要求暂缓；任何对外提交仍需动作时确认。
+
+## 下一步产品优先级
+
+1. 完整回归、安全扫描、独立代码评审并提交工程化里程碑。
+2. 项目收藏、阅读状态、负责人和待办。
+3. 单项目生命周期时间线和变更提醒。
+4. 采购单位/竞争对手监控与高级包含词、排除词规则。
+5. 来源健康历史和适配器回归监测。
+6. 核心产品稳定后再生成报名资料、详设、操作手册、PPT/PDF 和演示视频脚本。

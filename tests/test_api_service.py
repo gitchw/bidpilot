@@ -1,5 +1,7 @@
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
@@ -13,7 +15,8 @@ from bidpilot.models import (
     SourceStatus,
     TenderQuerySpec,
 )
-from bidpilot.service import BidPilotService
+from bidpilot.scheduler import SubscriptionWorker, next_schedule_time
+from bidpilot.service import BidPilotService, RunExecutionError, SubscriptionBusyError
 from bidpilot.sources.base import SourceAdapter
 
 
@@ -98,6 +101,20 @@ def test_subscription_creation_is_idempotent(tmp_path: Path):
     assert len(service.list_subscriptions()) == 1
 
 
+async def test_recreating_existing_subscription_requeues_a_fresh_run(tmp_path: Path):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    query = "最近1个月安徽服务器招标信息，请每天9:00发送给我"
+    first = service.create_subscription("每日服务器简报", query)
+    await service.run_subscription(first.id)
+    completed = service.get_subscription(first.id)
+    assert completed.next_run_at > datetime.now(ZoneInfo("Asia/Shanghai"))
+
+    existing = service.create_subscription("重复点击", query, run_immediately=True)
+    assert existing.id == first.id
+    assert existing.enabled is True
+    assert existing.next_run_at <= datetime.now(ZoneInfo("Asia/Shanghai"))
+
+
 def test_subscription_requires_schedule(tmp_path: Path):
     service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
     try:
@@ -106,3 +123,274 @@ def test_subscription_requires_schedule(tmp_path: Path):
         assert "必须包含" in str(exc)
     else:
         raise AssertionError("Expected schedule validation")
+
+
+def test_schedule_calculation_is_strictly_future():
+    timezone = ZoneInfo("Asia/Shanghai")
+    from bidpilot.intent import IntentParser
+
+    daily = IntentParser().parse(
+        "最近1个月安徽服务器招标信息，每天9:00发送",
+        now=datetime(2026, 7, 17, 10, 0, tzinfo=timezone),
+    )
+    assert next_schedule_time(
+        daily.schedule, datetime(2026, 7, 17, 10, 0, tzinfo=timezone)
+    ) == datetime(2026, 7, 18, 9, 0, tzinfo=timezone)
+
+    weekly = IntentParser().parse(
+        "最近1个月安徽服务器招标信息，每周一8:30发送",
+        now=datetime(2026, 7, 17, 10, 0, tzinfo=timezone),
+    )
+    next_week = next_schedule_time(weekly.schedule, datetime(2026, 7, 20, 8, 30, tzinfo=timezone))
+    assert next_week == datetime(2026, 7, 27, 8, 30, tzinfo=timezone)
+
+
+def test_subscription_management_api(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.embedded_worker = False
+    app = create_app(settings, sources=[FakeSource()])
+    query = "最近1个月安徽服务器招标信息，请每天9:00发送给我"
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/subscriptions",
+            json={
+                "name": "服务器日报",
+                "query": query,
+                "delivery_channel": "local",
+                "delivery_policy": "always",
+                "run_immediately": False,
+            },
+        )
+        assert created.status_code == 200
+        subscription = created.json()
+        subscription_id = subscription["id"]
+        assert subscription["next_run_at"] is not None
+
+        paused = client.post(f"/api/v1/subscriptions/{subscription_id}/pause")
+        assert paused.json()["enabled"] is False
+        assert paused.json()["next_run_at"] is None
+
+        resumed = client.post(
+            f"/api/v1/subscriptions/{subscription_id}/resume",
+            json={"run_immediately": False},
+        )
+        assert resumed.json()["enabled"] is True
+        assert resumed.json()["next_run_at"] is not None
+
+        updated = client.patch(
+            f"/api/v1/subscriptions/{subscription_id}",
+            json={
+                "name": "重点服务器周报",
+                "query": "近2周安徽服务器招标信息，每周一8:30发送",
+                "delivery_policy": "on_change",
+            },
+        )
+        updated_row = updated.json()
+        assert updated_row["name"] == "重点服务器周报"
+        assert updated_row["delivery_policy"] == "on_change"
+        assert updated_row["spec"]["schedule"]["kind"] == "weekly"
+        assert updated_row["spec"]["schedule"]["send_time"] == "08:30:00"
+        assert updated_row["next_run_at"] is not None
+
+        deleted = client.delete(f"/api/v1/subscriptions/{subscription_id}")
+        assert deleted.json() == {"deleted": True}
+        assert client.get(f"/api/v1/subscriptions/{subscription_id}").status_code == 404
+
+
+async def test_durable_worker_continues_after_service_restart(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.embedded_worker = False
+    query = "最近1个月安徽服务器招标信息，请每天9:00发送给我"
+    first_service = BidPilotService(settings, sources=[FakeSource()])
+    subscription = first_service.create_subscription("服务器日报", query, run_immediately=True)
+    first_worker = SubscriptionWorker(first_service, kind="test")
+    assert await first_worker.run_once() is True
+    first_row = first_service.db.get_subscription(subscription.id)
+    assert first_row["last_status"] == "completed"
+    assert first_row["last_new_count"] == 1
+    assert datetime.fromisoformat(first_row["next_run_at"]) > datetime.now(
+        ZoneInfo("Asia/Shanghai")
+    )
+
+    # A new process/service instance reads the same durable state and can continue.
+    due = datetime.now(ZoneInfo("Asia/Shanghai")) - timedelta(seconds=1)
+    first_service.db.set_subscription_due(subscription.id, due)
+    restarted_service = BidPilotService(settings, sources=[FakeSource()])
+    restarted_worker = SubscriptionWorker(restarted_service, kind="test-restart")
+    assert await restarted_worker.run_once() is True
+    second_row = restarted_service.db.get_subscription(subscription.id)
+    assert second_row["last_status"] == "completed"
+    assert second_row["last_new_count"] == 0
+    attempts = restarted_service.db.list_delivery_attempts(subscription_id=subscription.id)
+    assert len(attempts) == 2
+    assert all(attempt["success"] for attempt in attempts)
+
+
+async def test_delivery_failure_keeps_increment_uncommitted_and_schedules_retry(
+    tmp_path: Path, monkeypatch
+):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+
+    async def fail_delivery(*args, **kwargs):
+        raise RuntimeError("模拟投递服务不可用")
+
+    monkeypatch.setattr(service.delivery, "deliver", fail_delivery)
+    before = datetime.now(ZoneInfo("Asia/Shanghai"))
+    try:
+        await service.run_subscription(subscription.id, trigger_reason="schedule")
+    except RunExecutionError as exc:
+        assert "模拟投递服务不可用" in str(exc)
+    else:
+        raise AssertionError("Expected delivery failure")
+
+    row = service.db.get_subscription(subscription.id)
+    assert row["last_status"] == "failed"
+    assert row["consecutive_failures"] == 1
+    retry_at = datetime.fromisoformat(row["next_run_at"])
+    assert timedelta(seconds=45) <= retry_at - before <= timedelta(seconds=90)
+    with service.db.connection() as conn:
+        delivered = conn.execute(
+            "SELECT COUNT(*) FROM delivery_ledger WHERE subscription_id=?",
+            (subscription.id,),
+        ).fetchone()[0]
+        reports = conn.execute(
+            "SELECT COUNT(*) FROM reports WHERE subscription_id=?",
+            (subscription.id,),
+        ).fetchone()[0]
+    assert delivered == 0
+    assert reports == 0
+    attempts = service.db.list_delivery_attempts(subscription_id=subscription.id)
+    assert len(attempts) == 1
+    assert attempts[0]["success"] == 0
+
+
+def test_subscription_lease_blocks_duplicate_claim_and_recovers_after_expiry(tmp_path: Path):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    first = service.db.claim_due_subscription(
+        worker_id="worker-a",
+        now=now,
+        lease_until=now + timedelta(minutes=5),
+    )
+    assert first and first["id"] == subscription.id
+    assert (
+        service.db.claim_due_subscription(
+            worker_id="worker-b",
+            now=now + timedelta(minutes=1),
+            lease_until=now + timedelta(minutes=6),
+        )
+        is None
+    )
+    recovered = service.db.claim_due_subscription(
+        worker_id="worker-b",
+        now=now + timedelta(minutes=5, seconds=1),
+        lease_until=now + timedelta(minutes=10),
+    )
+    assert recovered and recovered["id"] == subscription.id
+
+
+async def test_manual_run_is_rejected_while_worker_owns_subscription(tmp_path: Path):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    claimed = service.db.claim_due_subscription(
+        worker_id="worker-a",
+        now=now,
+        lease_until=now + timedelta(minutes=5),
+    )
+    assert claimed is not None
+    assert service.get_subscription(subscription.id).in_progress is True
+    try:
+        await service.run_subscription(subscription.id)
+    except SubscriptionBusyError as exc:
+        assert "正在执行" in str(exc)
+    else:
+        raise AssertionError("Expected an active lease to block a duplicate manual run")
+    for action in (service.pause_subscription, service.delete_subscription):
+        try:
+            action(subscription.id)
+        except SubscriptionBusyError as exc:
+            assert "正在执行" in str(exc)
+        else:
+            raise AssertionError("Expected an active lease to block destructive management")
+
+
+async def test_worker_renews_lease_during_long_running_subscription(tmp_path: Path):
+    started = asyncio.Event()
+
+    class SlowSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            await asyncio.sleep(0.65)
+            return await super().search(spec, fetcher)
+
+    settings = make_settings(tmp_path)
+    # Production validation enforces >=30s. A short interval keeps this concurrency test fast.
+    settings.worker_lease_seconds = 0.3
+    service = BidPilotService(settings, sources=[SlowSource()])
+    service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    worker = SubscriptionWorker(service, kind="lease-test")
+    task = asyncio.create_task(worker.run_once())
+    await asyncio.wait_for(started.wait(), timeout=3)
+    await asyncio.sleep(0.42)
+
+    other_service = BidPilotService(settings, sources=[FakeSource()])
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    duplicate = other_service.db.claim_due_subscription(
+        worker_id="competing-worker",
+        now=now,
+        lease_until=now + timedelta(seconds=10),
+    )
+    assert duplicate is None
+    assert await task is True
+
+
+async def test_manual_run_renews_lease_during_long_running_subscription(tmp_path: Path):
+    started = asyncio.Event()
+
+    class SlowSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            await asyncio.sleep(0.65)
+            return await super().search(spec, fetcher)
+
+    settings = make_settings(tmp_path)
+    settings.worker_lease_seconds = 0.3
+    service = BidPilotService(settings, sources=[SlowSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    task = asyncio.create_task(service.run_subscription(subscription.id))
+    await asyncio.wait_for(started.wait(), timeout=3)
+    await asyncio.sleep(0.42)
+
+    other_service = BidPilotService(settings, sources=[FakeSource()])
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    duplicate = other_service.db.claim_due_subscription(
+        worker_id="competing-worker",
+        now=now,
+        lease_until=now + timedelta(seconds=10),
+    )
+    assert duplicate is None
+    result = await task
+    assert result.new_count == 1

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,10 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     timezone: str = "Asia/Shanghai"
+    embedded_worker: bool = True
+    worker_poll_interval: float = Field(default=3.0, ge=0.2, le=300)
+    worker_lease_seconds: int = Field(default=900, ge=30, le=7200)
+    worker_heartbeat_ttl: int = Field(default=30, ge=5, le=600)
 
     data_dir: Path = Path("data")
     report_dir: Path = Path("outputs/reports")
@@ -49,6 +54,16 @@ class Settings(BaseSettings):
     feishu_app_secret: str = ""
     feishu_receive_id: str = ""
     feishu_receive_id_type: str = "chat_id"
+    public_base_url: str = ""
+
+    smtp_host: str = ""
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    smtp_security: Literal["ssl", "starttls", "plain"] = "ssl"
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_to: str = ""
+    smtp_timeout: float = Field(default=30.0, ge=3, le=120)
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

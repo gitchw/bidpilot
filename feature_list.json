@@ -9,12 +9,15 @@
     {"id": "F05", "description": "Evidence-first normalization, relevance filtering, cross-site duplicate clustering and project lifecycle grouping are implemented.", "status": "passing"},
     {"id": "F06", "description": "Evidence-gated summarization works offline and supports an optional OpenAI-compatible model with safe fallback.", "status": "passing_offline_optional_provider_unconfigured"},
     {"id": "F07", "description": "DOCX generator produces compliant filenames and reports with required fields, coverage disclosure and evidence.", "status": "passing"},
-    {"id": "F08", "description": "Persistent subscriptions, scheduler and exactly-once incremental delivery ledger work for immediate, daily, weekly and one-off jobs.", "status": "pending"},
-    {"id": "F09", "description": "Local, Feishu webhook and Feishu Open Platform delivery channels are implemented with diagnostic failures.", "status": "implemented_external_credentials_unconfigured"},
-    {"id": "F10", "description": "FastAPI REST API and polished Chinese Web UI complete the query-to-report workflow.", "status": "pending"},
-    {"id": "F11", "description": "CLI supports running queries, serving the app, checking sources and importing an authorized login session.", "status": "pending"},
-    {"id": "F12", "description": "Automated tests cover intent examples, source parsers, deduplication, incremental delivery, DOCX output and API smoke flows.", "status": "pending"},
+    {"id": "F08", "description": "Persistent subscriptions, scheduler and exactly-once incremental delivery ledger work for immediate, daily, weekly and one-off jobs.", "status": "passing_confirmed_delivery_semantics"},
+    {"id": "F09", "description": "Local, Feishu webhook and Feishu Open Platform delivery channels are implemented with diagnostic failures.", "status": "passing_local_feishu_credential_tests_pending"},
+    {"id": "F10", "description": "FastAPI REST API and polished Chinese Web UI complete the query-to-report workflow.", "status": "passing"},
+    {"id": "F11", "description": "CLI supports running queries, serving the app, checking sources and importing an authorized login session.", "status": "passing"},
+    {"id": "F12", "description": "Automated tests cover intent examples, source parsers, deduplication, incremental delivery, DOCX output and API smoke flows.", "status": "passing"},
     {"id": "F13", "description": "Design document, operation manual, registration copy, supplemental deck/PDF, demo script and defense materials are delivered.", "status": "pending"},
-    {"id": "F14", "description": "End-to-end online run generates multiple real reports and passes an independent judge-style evaluation.", "status": "pending"}
+    {"id": "F14", "description": "End-to-end online run generates multiple real reports and passes an independent judge-style evaluation.", "status": "partial_real_runs_verified_independent_judge_review_pending"},
+    {"id": "F15", "description": "Cross-platform Python bootstrap, Docker image, Compose web/worker deployment and Windows/macOS/Linux CI are provided.", "status": "passing_local_windows_docker_unavailable"},
+    {"id": "F16", "description": "Users can inspect source operations and fully manage subscription rules, state, delivery policy and execution logs in the Web UI.", "status": "passing_browser_verified"},
+    {"id": "F17", "description": "Standard SMTP delivery sends DOCX attachments and no-change receipts with SSL or STARTTLS without blocking the async worker.", "status": "passing_mock_smtp_verified"}
   ]
 }

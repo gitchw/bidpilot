@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
   <title>标擎 BidPilot</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -17,6 +18,7 @@
     <nav aria-label="主导航">
       <button class="nav-link active" data-tab="search">情报检索</button>
       <button class="nav-link" data-tab="subscriptions">订阅中心</button>
+      <button class="nav-link" data-tab="sources">来源中心</button>
       <button class="nav-link" data-tab="reports">报告历史</button>
     </nav>
     <div class="top-actions">
@@ -31,9 +33,9 @@
         <div class="hero-copy">
           <p class="eyebrow">EVIDENCE-FIRST TENDER INTELLIGENCE</p>
           <h1>一句话，<br><span>追踪每个真实商机。</span></h1>
-          <p class="lede">自然语言驱动多源采集、证据约束摘要、项目生命周期去重与恰好一次增量推送。</p>
+          <p class="lede">自然语言驱动多源采集、证据约束摘要、项目生命周期去重与成功确认后的版本级防重复。</p>
           <div class="proof-line">
-            <span><b>3</b> 类来源</span><span><b>0</b> 硬编码结果</span><span><b>100%</b> 可回溯</span>
+            <span><b>5</b> 类来源</span><span><b>0</b> 硬编码结果</span><span><b>100%</b> 可回溯</span>
           </div>
         </div>
         <div class="query-console">
@@ -47,6 +49,11 @@
             <button data-query="最近1个月上海充电桩招标信息">上海 · 充电桩 · 近1月</button>
             <button data-query="最近3个月上海充电桩招标信息，请每天9:00汇总后发送给我">每日增量订阅</button>
           </div>
+          <div class="task-options">
+            <label><span>交付方式</span><select id="delivery-channel" aria-label="交付方式"><option value="local">报告中心（不主动推送）</option></select></label>
+            <label><span>无新增时</span><select id="delivery-policy" aria-label="无新增通知策略"><option value="always">仍发送运行回执</option><option value="on_change">保持安静</option></select></label>
+          </div>
+          <p class="channel-hint" id="channel-hint">报告中心只保存文件；如需主动提醒，请配置飞书通道。</p>
           <div class="console-actions">
             <button class="secondary-button" id="parse-button">解析意图</button>
             <button class="primary-button" id="run-button"><span>启动情报任务</span><b>→</b></button>
@@ -60,7 +67,7 @@
           <div><p class="eyebrow">QUERY COMPILER</p><h2>任务已编译</h2></div>
           <div class="intent-actions">
             <span class="confidence" id="intent-confidence">高置信</span>
-            <button class="secondary-button hidden" id="create-subscription-button">创建增量订阅 ＋</button>
+            <button class="secondary-button hidden" id="create-subscription-button">创建并验证订阅 ＋</button>
           </div>
         </div>
         <div class="intent-grid" id="intent-grid"></div>
@@ -96,13 +103,24 @@
     </section>
 
     <section class="tab-panel" id="tab-subscriptions">
-      <div class="page-heading"><p class="eyebrow">EXACTLY-ONCE DELIVERY</p><h1>订阅中心</h1><p>每个公告版本只成功投递一次；更正与中标作为生命周期新事件继续提醒。</p></div>
+      <div class="page-heading"><p class="eyebrow">CONFIRMED DELIVERY LEDGER</p><h1>订阅中心</h1><p>同一公告版本经成功确认后不再重复投递；更正与中标作为生命周期新事件继续提醒。</p></div>
+      <div class="scheduler-health" id="scheduler-health"><div><i></i><b>正在检查长期任务 worker…</b><p>订阅先持久化，再由 worker 领取；进程重启不会丢失。</p></div><button class="secondary-button" id="refresh-subscriptions">刷新状态</button></div>
       <div class="data-list" id="subscription-list"><div class="loading-card">正在读取订阅…</div></div>
     </section>
 
     <section class="tab-panel" id="tab-reports">
       <div class="page-heading"><p class="eyebrow">AUDITABLE OUTPUTS</p><h1>报告历史</h1><p>每份 Word 都保留查询口径、来源覆盖、原文链接与证据片段。</p></div>
       <div class="data-list" id="report-list"><div class="loading-card">正在读取报告…</div></div>
+    </section>
+
+    <section class="tab-panel" id="tab-sources">
+      <div class="page-heading"><p class="eyebrow">SOURCE OPERATIONS</p><h1>来源中心</h1><p>查看每个数据源的接入模式、最近运行、实际抓取结果与授权边界；覆盖不完整时明确披露。</p></div>
+      <div class="source-summary" id="source-summary"><div class="loading-card">正在读取来源状态…</div></div>
+      <div class="source-center-grid" id="source-center-list"><div class="loading-card">正在读取来源状态…</div></div>
+      <div class="source-guide">
+        <div><p class="eyebrow">AUTHORIZED SOURCE</p><h2>授权会员源由你掌控</h2><p>千里马只使用你主动登录后保存在本机的免费会员会话，不保存密码，不绕过验证码或付费权限。</p></div>
+        <code>python -m bidpilot auth qianlima</code>
+      </div>
     </section>
   </main>
 

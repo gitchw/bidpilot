@@ -22,6 +22,11 @@ class RunStatus(StrEnum):
     FAILED = "failed"
 
 
+class DeliveryPolicy(StrEnum):
+    ALWAYS = "always"
+    ON_CHANGE = "on_change"
+
+
 class SourceStatus(StrEnum):
     OK = "ok"
     PARTIAL = "partial"
@@ -147,12 +152,24 @@ class RunResult(BaseModel):
     started_at: datetime
     completed_at: datetime | None = None
     warnings: list[str] = Field(default_factory=list)
+    delivery_channel: str | None = None
+    delivery_status: str | None = None
+    delivery_message: str | None = None
 
 
 class SubscriptionCreate(BaseModel):
     name: str
     query: str
     delivery_channel: str = "local"
+    delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS
+    run_immediately: bool = True
+
+
+class SubscriptionUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    query: str | None = Field(default=None, min_length=2, max_length=500)
+    delivery_channel: str | None = None
+    delivery_policy: DeliveryPolicy | None = None
 
 
 class Subscription(BaseModel):
@@ -161,9 +178,17 @@ class Subscription(BaseModel):
     spec: TenderQuerySpec
     enabled: bool = True
     delivery_channel: str = "local"
+    delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS
     created_at: datetime
+    updated_at: datetime | None = None
     last_run_at: datetime | None = None
     next_run_at: datetime | None = None
+    last_status: RunStatus | None = None
+    last_message: str | None = None
+    last_new_count: int = 0
+    consecutive_failures: int = 0
+    last_run_id: str | None = None
+    in_progress: bool = False
 
 
 class HealthResponse(BaseModel):

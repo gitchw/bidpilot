@@ -1,0 +1,75 @@
+x-bidpilot-environment: &bidpilot-environment
+  BIDPILOT_ENV: production
+  BIDPILOT_TIMEZONE: ${BIDPILOT_TIMEZONE:-Asia/Shanghai}
+  BIDPILOT_DATA_DIR: /app/data
+  BIDPILOT_DATABASE_PATH: /app/data/bidpilot.db
+  BIDPILOT_REPORT_DIR: /app/outputs/reports
+  BIDPILOT_QIANLIMA_COOKIE_PATH: /app/data/secrets/qianlima_cookie.txt
+  BIDPILOT_WORKER_POLL_INTERVAL: ${BIDPILOT_WORKER_POLL_INTERVAL:-3}
+  BIDPILOT_WORKER_LEASE_SECONDS: ${BIDPILOT_WORKER_LEASE_SECONDS:-900}
+  BIDPILOT_WORKER_HEARTBEAT_TTL: ${BIDPILOT_WORKER_HEARTBEAT_TTL:-30}
+  BIDPILOT_REQUEST_TIMEOUT: ${BIDPILOT_REQUEST_TIMEOUT:-20}
+  BIDPILOT_REQUEST_INTERVAL: ${BIDPILOT_REQUEST_INTERVAL:-0.8}
+  BIDPILOT_MAX_RESULTS_PER_SOURCE: ${BIDPILOT_MAX_RESULTS_PER_SOURCE:-20}
+  BIDPILOT_CCGP_MAX_PAGES: ${BIDPILOT_CCGP_MAX_PAGES:-2}
+  BIDPILOT_LLM_BASE_URL: ${BIDPILOT_LLM_BASE_URL:-}
+  BIDPILOT_LLM_API_KEY: ${BIDPILOT_LLM_API_KEY:-}
+  BIDPILOT_LLM_MODEL: ${BIDPILOT_LLM_MODEL:-}
+  BIDPILOT_CECBID_COOKIE: ${BIDPILOT_CECBID_COOKIE:-}
+  BIDPILOT_QIANLIMA_COOKIE: ${BIDPILOT_QIANLIMA_COOKIE:-}
+  BIDPILOT_FEISHU_WEBHOOK_URL: ${BIDPILOT_FEISHU_WEBHOOK_URL:-}
+  BIDPILOT_FEISHU_APP_ID: ${BIDPILOT_FEISHU_APP_ID:-}
+  BIDPILOT_FEISHU_APP_SECRET: ${BIDPILOT_FEISHU_APP_SECRET:-}
+  BIDPILOT_FEISHU_RECEIVE_ID: ${BIDPILOT_FEISHU_RECEIVE_ID:-}
+  BIDPILOT_FEISHU_RECEIVE_ID_TYPE: ${BIDPILOT_FEISHU_RECEIVE_ID_TYPE:-chat_id}
+  BIDPILOT_PUBLIC_BASE_URL: ${BIDPILOT_PUBLIC_BASE_URL:-}
+  BIDPILOT_SMTP_HOST: ${BIDPILOT_SMTP_HOST:-}
+  BIDPILOT_SMTP_PORT: ${BIDPILOT_SMTP_PORT:-465}
+  BIDPILOT_SMTP_SECURITY: ${BIDPILOT_SMTP_SECURITY:-ssl}
+  BIDPILOT_SMTP_USERNAME: ${BIDPILOT_SMTP_USERNAME:-}
+  BIDPILOT_SMTP_PASSWORD: ${BIDPILOT_SMTP_PASSWORD:-}
+  BIDPILOT_SMTP_FROM: ${BIDPILOT_SMTP_FROM:-}
+  BIDPILOT_SMTP_TO: ${BIDPILOT_SMTP_TO:-}
+  BIDPILOT_SMTP_TIMEOUT: ${BIDPILOT_SMTP_TIMEOUT:-30}
+
+services:
+  web:
+    build: .
+    init: true
+    restart: unless-stopped
+    environment:
+      <<: *bidpilot-environment
+      BIDPILOT_EMBEDDED_WORKER: "false"
+      BIDPILOT_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:${BIDPILOT_PORT:-8000}:8000"
+    volumes:
+      - bidpilot-data:/app/data
+      - bidpilot-reports:/app/outputs/reports
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    stop_grace_period: 30s
+
+  worker:
+    build: .
+    init: true
+    restart: unless-stopped
+    command: ["python", "-m", "bidpilot", "worker"]
+    environment:
+      <<: *bidpilot-environment
+      BIDPILOT_EMBEDDED_WORKER: "false"
+    volumes:
+      - bidpilot-data:/app/data
+      - bidpilot-reports:/app/outputs/reports
+    depends_on:
+      web:
+        condition: service_healthy
+    stop_grace_period: 30s
+
+volumes:
+  bidpilot-data:
+  bidpilot-reports:

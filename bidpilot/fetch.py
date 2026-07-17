@@ -58,6 +58,44 @@ class HttpFetcher:
         encoding: str | None = None,
         retries: int = 2,
     ) -> FetchedPage:
+        return await self.request(
+            "GET",
+            url,
+            params=params,
+            headers=headers,
+            encoding=encoding,
+            retries=retries,
+        )
+
+    async def post_form(
+        self,
+        url: str,
+        *,
+        data: dict[str, Any] | list[tuple[str, Any]],
+        headers: dict[str, str] | None = None,
+        encoding: str | None = None,
+        retries: int = 2,
+    ) -> FetchedPage:
+        return await self.request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            encoding=encoding,
+            retries=retries,
+        )
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict[str, Any] | list[tuple[str, Any]] | None = None,
+        data: dict[str, Any] | list[tuple[str, Any]] | None = None,
+        headers: dict[str, str] | None = None,
+        encoding: str | None = None,
+        retries: int = 2,
+    ) -> FetchedPage:
         host = urlparse(url).netloc.lower()
         last_error: Exception | None = None
         for attempt in range(retries + 1):
@@ -69,7 +107,9 @@ class HttpFetcher:
                     if wait_for > 0:
                         await asyncio.sleep(wait_for)
                     started = time.perf_counter()
-                    response = await self._client.get(url, params=params, headers=headers)
+                    response = await self._client.request(
+                        method, url, params=params, data=data, headers=headers
+                    )
                     self._last_request[host] = time.monotonic()
                 if response.status_code in {429, 500, 502, 503, 504}:
                     raise FetchError(f"HTTP {response.status_code}")

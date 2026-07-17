@@ -55,8 +55,7 @@ class EvidenceSummarizer:
             sentences = [
                 normalize_space(sentence)
                 for sentence in re.split(r"(?<=[。！？；])", body)
-                if len(normalize_space(sentence)) >= 12
-                and not re.search(r"[*＊]+", sentence)
+                if len(normalize_space(sentence)) >= 12 and not re.search(r"[*＊]+", sentence)
             ]
             facts.extend(sentences[:2])
 

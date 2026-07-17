@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -12,6 +13,7 @@ from rich.table import Table
 
 from bidpilot.api import create_app
 from bidpilot.config import get_settings
+from bidpilot.scheduler import SubscriptionWorker
 from bidpilot.service import BidPilotService
 
 app = typer.Typer(
@@ -31,7 +33,7 @@ def parse_command(query: str = typer.Argument(..., help="自然语言查询")) -
 @app.command("run")
 def run_command(
     query: str = typer.Argument(..., help="自然语言查询"),
-    channel: str = typer.Option("local", help="local / feishu / feishu_app"),
+    channel: str = typer.Option("local", help="local / feishu / feishu_app / email"),
 ) -> None:
     result = asyncio.run(BidPilotService(get_settings()).run_query(query, delivery_channel=channel))
     console.print(f"[bold green]完成[/bold green]：{result.new_count} 条结果")
@@ -64,6 +66,25 @@ def serve_command(
     )
 
 
+@app.command("worker")
+def worker_command() -> None:
+    """Run the durable subscription worker as a standalone process."""
+    try:
+        asyncio.run(_run_worker())
+    except KeyboardInterrupt:
+        console.print("[yellow]订阅 worker 已停止[/yellow]")
+
+
+async def _run_worker() -> None:
+    service = BidPilotService(get_settings())
+    worker = SubscriptionWorker(service, kind="standalone")
+    console.print(f"[green]订阅 worker 已启动[/green]：{worker.worker_id}")
+    try:
+        await worker.run_forever()
+    finally:
+        await worker.stop()
+
+
 @app.command("sources")
 def sources_command() -> None:
     rows = BidPilotService(get_settings()).source_status()
@@ -90,8 +111,8 @@ async def _authorize_qianlima() -> None:
         from playwright.async_api import async_playwright
     except ImportError as exc:
         raise typer.BadParameter(
-            "请先运行 .\\.venv\\Scripts\\python.exe -m pip install -e '.[auth]'，"
-            "再运行 playwright install chromium"
+            "请先用当前 Python 运行 `python -m pip install -e '.[auth]'`，"
+            "再运行 `python -m playwright install chromium`"
         ) from exc
 
     settings = get_settings()
@@ -110,6 +131,8 @@ async def _authorize_qianlima() -> None:
     path: Path = settings.qianlima_cookie_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(cookie_header, encoding="utf-8")
+    with suppress(OSError):
+        path.chmod(0o600)
     console.print(f"[green]授权会话已保存到 {path}（已被 .gitignore 排除）[/green]")
 
 

@@ -3,6 +3,8 @@ from pathlib import Path
 from bidpilot.models import EventType
 from bidpilot.sources.ccgp import CCGPSource
 from bidpilot.sources.cecbid import CECBidSource
+from bidpilot.sources.ggzy import GGZYSource
+from bidpilot.sources.mofcom import MofcomSource
 from bidpilot.sources.qianlima import QianlimaSource
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -50,3 +52,56 @@ def test_ccgp_prefilter_respects_region_topic_and_date(sample_spec):
     items = CCGPSource.parse_list_page(fixture("ccgp_list.html"), page_url, EventType.TENDER)
     assert CCGPSource._matches_spec(items[0], sample_spec)
     assert not CCGPSource._matches_spec(items[1], sample_spec)
+
+
+def test_mofcom_json_and_detail_parsers_preserve_official_evidence():
+    payload = {
+        "rows": [
+            {
+                "name": "合肥先进光源服务器设备 - 国际招标公告",
+                "publishTime": "2026-07-17",
+                "areaName": "中国安徽省",
+                "filePath": "/bidding/bulletin/202607/abc.html",
+                "digest": "招标项目编号: 0729-264OIT321025，采购服务器2台",
+                "industryName": "计算机设备",
+                "capitalSourceName": "现汇",
+                "fdid": "abc",
+            }
+        ]
+    }
+    item = MofcomSource.parse_search_response(payload, EventType.TENDER)[0]
+    assert item.region == "安徽"
+    assert item.source_url.endswith("/bidDetail/bidding/bulletin/202607/abc.html")
+    detail = """
+    <div class="article"><p>招标项目编号:0729-264OIT321025<br>
+    招标人:合肥先进光源研究院<br>投标截止时间:2026-08-07 10:00</p>
+    <a href="/files/spec.xls">附件</a></div>
+    """
+    item = MofcomSource.parse_detail_page(detail, item)
+    assert item.buyer == "合肥先进光源研究院"
+    assert item.attachments[0].url.endswith("/files/spec.xls")
+    assert item.evidence
+
+
+def test_ggzy_home_feed_and_detail_parsers_are_honest_about_region():
+    home = """
+    <div class="main_list_on"><h4>交易公告</h4><ul><li>
+    <a href="/information/deal/html/a/340000/0201/20260717/abc.html">
+    安徽大学 GPU 服务器采购公告</a><span>2026-07-17</span>
+    </li></ul></div>
+    <div class="main_list_on main_list_tw"><h4>成交公示</h4><ul><li>
+    <a href="/information/deal/html/a/310000/0202/20260717/def.html">
+    上海服务器采购成交公告</a><span>2026-07-17</span>
+    </li></ul></div>
+    """
+    items = GGZYSource.parse_home_feed(home)
+    assert items[0].region == "安徽"
+    assert items[0].event_type == EventType.TENDER
+    assert items[1].event_type == EventType.AWARD
+    detail = """
+    <div class="detail"><h4 class="h4_o">安徽大学 GPU 服务器采购公告</h4>
+    <div class="detail_content"><p>项目编号：AH-2026-001。预算金额：1200万元。</p></div></div>
+    """
+    parsed = GGZYSource.parse_detail_page(detail, items[0])
+    assert parsed.project_id == "AH-2026-001"
+    assert "预算金额" in parsed.body

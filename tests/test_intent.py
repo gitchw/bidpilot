@@ -70,6 +70,15 @@ def test_weekly_schedule_and_feishu_channel():
     assert spec.delivery_channel == "feishu"
 
 
+def test_email_delivery_channel_is_preserved_for_scheduled_query():
+    spec = IntentParser().parse(
+        "近1个月江苏服务器招标信息，每天9点发送到邮箱",
+        now=NOW,
+    )
+    assert spec.schedule.kind == ScheduleKind.DAILY
+    assert spec.delivery_channel == "email"
+
+
 def test_default_window_and_nationwide_warning():
     spec = IntentParser().parse("查询液冷设备招标信息", now=NOW)
     assert spec.topic == "液冷设备"

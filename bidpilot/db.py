@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from bidpilot.models import RunStatus, TenderQuerySpec
+from bidpilot.models import DeliveryPolicy, RunStatus, TenderQuerySpec
 
 
 def utcnow_iso() -> str:
@@ -42,6 +42,8 @@ class Database:
         schema = """
         CREATE TABLE IF NOT EXISTS runs (
             id TEXT PRIMARY KEY,
+            subscription_id TEXT,
+            trigger_reason TEXT NOT NULL DEFAULT 'manual',
             raw_query TEXT NOT NULL,
             spec_json TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -79,10 +81,19 @@ class Database:
             raw_query TEXT NOT NULL,
             spec_json TEXT NOT NULL,
             delivery_channel TEXT NOT NULL DEFAULT 'local',
+            delivery_policy TEXT NOT NULL DEFAULT 'always',
             enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
+            updated_at TEXT,
             last_run_at TEXT,
-            next_run_at TEXT
+            next_run_at TEXT,
+            last_status TEXT,
+            last_message TEXT,
+            last_new_count INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            last_run_id TEXT,
+            lease_owner TEXT,
+            lease_until TEXT
         );
         CREATE TABLE IF NOT EXISTS delivery_ledger (
             subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
@@ -100,19 +111,81 @@ class Database:
             item_count INTEGER NOT NULL,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS delivery_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            subscription_id TEXT,
+            channel TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            message TEXT NOT NULL,
+            external_id TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS workers (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            heartbeat_at TEXT NOT NULL,
+            pid INTEGER NOT NULL,
+            hostname TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_subscriptions_due ON subscriptions(enabled, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_delivery_attempts_run ON delivery_attempts(run_id);
         """
         with self.connection() as conn:
             conn.executescript(schema)
+            # Additive migrations keep existing demo databases usable across releases.
+            self._ensure_column(conn, "runs", "subscription_id", "TEXT")
+            self._ensure_column(conn, "runs", "trigger_reason", "TEXT NOT NULL DEFAULT 'manual'")
+            self._ensure_column(
+                conn, "subscriptions", "delivery_policy", "TEXT NOT NULL DEFAULT 'always'"
+            )
+            self._ensure_column(conn, "subscriptions", "updated_at", "TEXT")
+            self._ensure_column(conn, "subscriptions", "last_status", "TEXT")
+            self._ensure_column(conn, "subscriptions", "last_message", "TEXT")
+            self._ensure_column(
+                conn, "subscriptions", "last_new_count", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_column(
+                conn, "subscriptions", "consecutive_failures", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_column(conn, "subscriptions", "last_run_id", "TEXT")
+            self._ensure_column(conn, "subscriptions", "lease_owner", "TEXT")
+            self._ensure_column(conn, "subscriptions", "lease_until", "TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_subscription "
+                "ON runs(subscription_id, started_at DESC)"
+            )
 
-    def create_run(self, run_id: str, spec: TenderQuerySpec) -> None:
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def create_run(
+        self,
+        run_id: str,
+        spec: TenderQuerySpec,
+        *,
+        subscription_id: str | None = None,
+        trigger_reason: str = "manual",
+    ) -> None:
         with self.connection() as conn:
             conn.execute(
-                "INSERT INTO runs(id, raw_query, spec_json, status, started_at) VALUES(?,?,?,?,?)",
+                """
+                INSERT INTO runs(
+                  id, subscription_id, trigger_reason, raw_query, spec_json, status, started_at
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
                 (
                     run_id,
+                    subscription_id,
+                    trigger_reason,
                     spec.raw_query,
                     spec.model_dump_json(),
                     RunStatus.RUNNING.value,
@@ -230,13 +303,16 @@ class Database:
         spec: TenderQuerySpec,
         delivery_channel: str,
         next_run_at: datetime | None,
+        delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
     ) -> None:
+        now = utcnow_iso()
         with self.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO subscriptions(
-                  id, name, raw_query, spec_json, delivery_channel, created_at, next_run_at
-                ) VALUES(?,?,?,?,?,?,?)
+                  id, name, raw_query, spec_json, delivery_channel, delivery_policy,
+                  created_at, updated_at, next_run_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     subscription_id,
@@ -244,27 +320,175 @@ class Database:
                     spec.raw_query,
                     spec.model_dump_json(),
                     delivery_channel,
-                    utcnow_iso(),
+                    delivery_policy.value,
+                    now,
+                    now,
                     next_run_at.isoformat() if next_run_at else None,
                 ),
             )
 
-    def update_subscription_run(
+    def finish_subscription_attempt(
         self,
         subscription_id: str,
         *,
         last_run_at: datetime,
         next_run_at: datetime | None,
+        status: RunStatus,
+        message: str,
+        new_count: int,
+        run_id: str | None,
+        success: bool,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
-                "UPDATE subscriptions SET last_run_at=?, next_run_at=? WHERE id=?",
+                """
+                UPDATE subscriptions SET
+                  last_run_at=?, next_run_at=?, last_status=?, last_message=?,
+                  last_new_count=?, last_run_id=?, updated_at=?, lease_owner=NULL,
+                  lease_until=NULL,
+                  consecutive_failures=CASE WHEN ? THEN 0 ELSE consecutive_failures + 1 END
+                WHERE id=?
+                """,
                 (
                     last_run_at.isoformat(),
                     next_run_at.isoformat() if next_run_at else None,
+                    status.value,
+                    message,
+                    new_count,
+                    run_id,
+                    utcnow_iso(),
+                    int(success),
                     subscription_id,
                 ),
             )
+
+    def set_subscription_due(
+        self, subscription_id: str, next_run_at: datetime | None, *, enabled: bool | None = None
+    ) -> bool:
+        assignments = ["next_run_at=?", "updated_at=?", "lease_owner=NULL", "lease_until=NULL"]
+        values: list[Any] = [next_run_at.isoformat() if next_run_at else None, utcnow_iso()]
+        if enabled is not None:
+            assignments.append("enabled=?")
+            values.append(int(enabled))
+        values.append(subscription_id)
+        with self.connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE subscriptions SET {', '.join(assignments)} WHERE id=?", values
+            )
+        return cursor.rowcount > 0
+
+    def update_subscription(
+        self,
+        subscription_id: str,
+        *,
+        name: str | None = None,
+        spec: TenderQuerySpec | None = None,
+        next_run_at: datetime | None = None,
+        update_next_run: bool = False,
+        delivery_channel: str | None = None,
+        delivery_policy: DeliveryPolicy | None = None,
+    ) -> bool:
+        assignments = ["updated_at=?"]
+        values: list[Any] = [utcnow_iso()]
+        for column, value in (
+            ("name", name),
+            ("delivery_channel", delivery_channel),
+            ("delivery_policy", delivery_policy.value if delivery_policy else None),
+        ):
+            if value is not None:
+                assignments.append(f"{column}=?")
+                values.append(value)
+        if spec is not None:
+            assignments.extend(("raw_query=?", "spec_json=?"))
+            values.extend((spec.raw_query, spec.model_dump_json()))
+        if update_next_run:
+            assignments.append("next_run_at=?")
+            values.append(next_run_at.isoformat() if next_run_at else None)
+        values.append(subscription_id)
+        with self.connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE subscriptions SET {', '.join(assignments)} WHERE id=?", values
+            )
+        return cursor.rowcount > 0
+
+    def delete_subscription(self, subscription_id: str) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute("DELETE FROM subscriptions WHERE id=?", (subscription_id,))
+        return cursor.rowcount > 0
+
+    def claim_due_subscription(
+        self, *, worker_id: str, now: datetime, lease_until: datetime
+    ) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT * FROM subscriptions
+                WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at<=?
+                  AND (lease_until IS NULL OR lease_until<?)
+                ORDER BY next_run_at ASC, created_at ASC
+                LIMIT 1
+                """,
+                (now.isoformat(), now.isoformat()),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE subscriptions SET lease_owner=?, lease_until=?, updated_at=?
+                WHERE id=?
+                """,
+                (worker_id, lease_until.isoformat(), utcnow_iso(), row["id"]),
+            )
+        return dict(row)
+
+    def renew_subscription_lease(
+        self, subscription_id: str, *, worker_id: str, lease_until: datetime
+    ) -> bool:
+        """Extend a lease only while it is still owned by the same worker."""
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE subscriptions SET lease_until=?, updated_at=?
+                WHERE id=? AND lease_owner=?
+                """,
+                (
+                    lease_until.isoformat(),
+                    utcnow_iso(),
+                    subscription_id,
+                    worker_id,
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def claim_subscription(
+        self,
+        subscription_id: str,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_until: datetime,
+    ) -> bool:
+        """Claim one subscription for a user-triggered run without racing a worker."""
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE subscriptions SET lease_owner=?, lease_until=?, updated_at=?
+                WHERE id=? AND (
+                  lease_owner IS NULL OR lease_until IS NULL OR lease_until<? OR lease_owner=?
+                )
+                """,
+                (
+                    worker_id,
+                    lease_until.isoformat(),
+                    utcnow_iso(),
+                    subscription_id,
+                    now.isoformat(),
+                    worker_id,
+                ),
+            )
+        return cursor.rowcount > 0
 
     def get_subscription(self, subscription_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:
@@ -309,7 +533,111 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_subscription_runs(self, subscription_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM runs WHERE subscription_id=?
+                ORDER BY started_at DESC LIMIT ?
+                """,
+                (subscription_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return dict(row) if row else None
+
+    def create_delivery_attempt(
+        self,
+        *,
+        run_id: str,
+        subscription_id: str | None,
+        channel: str,
+        success: bool,
+        skipped: bool,
+        message: str,
+        external_id: str | None,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO delivery_attempts(
+                  run_id, subscription_id, channel, success, skipped, message,
+                  external_id, created_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    run_id,
+                    subscription_id,
+                    channel,
+                    int(success),
+                    int(skipped),
+                    message,
+                    external_id,
+                    utcnow_iso(),
+                ),
+            )
+
+    def list_delivery_attempts(
+        self, *, subscription_id: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            if subscription_id:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM delivery_attempts WHERE subscription_id=?
+                    ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (subscription_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM delivery_attempts ORDER BY created_at DESC LIMIT ?", (limit,)
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def heartbeat_worker(
+        self, *, worker_id: str, kind: str, started_at: datetime, pid: int, hostname: str
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO workers(id, kind, started_at, heartbeat_at, pid, hostname)
+                VALUES(?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET heartbeat_at=excluded.heartbeat_at,
+                  pid=excluded.pid, hostname=excluded.hostname
+                """,
+                (
+                    worker_id,
+                    kind,
+                    started_at.isoformat(),
+                    utcnow_iso(),
+                    pid,
+                    hostname,
+                ),
+            )
+
+    def remove_worker(self, worker_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM workers WHERE id=?", (worker_id,))
+
+    def list_workers(self) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM workers ORDER BY heartbeat_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def latest_source_runs(self) -> dict[str, dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_runs.*, runs.started_at
+                FROM source_runs
+                JOIN runs ON runs.id = source_runs.run_id
+                JOIN (
+                  SELECT source, MAX(id) AS latest_id FROM source_runs GROUP BY source
+                ) latest ON latest.latest_id = source_runs.id
+                """
+            ).fetchall()
+        return {row["source"]: dict(row) for row in rows}
