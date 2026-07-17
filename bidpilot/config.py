@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     request_interval: float = Field(default=0.8, ge=0.1, le=10)
     max_results_per_source: int = Field(default=20, ge=1, le=100)
     ccgp_max_pages: int = Field(default=2, ge=1, le=20)
-    user_agent: str = "BidPilot/0.1 (+local competition prototype; respectful rate limits)"
+    user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
+        "BidPilot/0.1"
+    )
 
     llm_base_url: str = ""
     llm_api_key: str = ""

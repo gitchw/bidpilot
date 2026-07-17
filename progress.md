@@ -18,6 +18,13 @@
 - Completed the configuration, Pydantic domain model and transactional SQLite schema foundation.
 - Fixed setup failure detection and verified a clean editable development install on Python 3.13.
 - In progress: real source adapters and the evidence-first normalization pipeline.
+- Completed F02/F03: CEC Bid and CCGP adapters include real search/list parsing, detail extraction, attachment capture, request throttling and bounded retries.
+- Implemented F04 pending user authorization: Qianlima detects missing/expired free-member sessions and contains a tested parser for the authorized result surface.
+- Completed F05/F06: strict date/region/topic filtering, relevance scoring, evidence-gated extractive/optional-LLM summaries, cross-site duplicate merging and lifecycle grouping.
+- Completed F07: DOCX reports follow the required filename rule and include query scope, coverage disclosure, required item fields, source/attachment hyperlinks and evidence.
+- Implemented F09 channels; local delivery is testable now, while Feishu webhook/app delivery needs user credentials.
+- Sixteen automated tests pass. A real online run for “最近3个月安徽服务器招标信息” fetched five CEC candidates and retained only the matching安徽大学 server notice at relevance 83.
+- In progress: orchestration service, persistent scheduler, API/CLI and Web UI.
 
 ## Known constraints
 

@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+
+from rapidfuzz.fuzz import ratio
+
+from bidpilot.clean import normalize_space, stable_hash
+from bidpilot.models import Attachment, RawTender, TenderQuerySpec, TenderRecord
+from bidpilot.summarize import EvidenceSummarizer
+
+EVENT_WORDS = re.compile(
+    r"公开招标|竞争性磋商|竞争性谈判|询价|采购|招标|中标|成交|更正|变更|结果|公告|公示|项目"
+)
+
+
+def normalize_title(title: str) -> str:
+    title = normalize_space(title).lower()
+    title = EVENT_WORDS.sub("", title)
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", title)
+
+
+def region_matches(item: RawTender, spec: TenderQuerySpec) -> bool:
+    if not spec.region:
+        return True
+    evidence = f"{item.region or ''} {item.title} {item.buyer or ''} {item.body}"
+    return spec.region in evidence
+
+
+def keyword_hits(item: RawTender, spec: TenderQuerySpec) -> tuple[int, bool]:
+    title = item.title.lower()
+    body = item.body.lower()
+    exact_title = spec.topic.lower() in title
+    hits = sum(1 for keyword in spec.keywords if keyword.lower() in f"{title} {body}")
+    return hits, exact_title
+
+
+def relevance_score(item: RawTender, spec: TenderQuerySpec) -> float:
+    hits, exact_title = keyword_hits(item, spec)
+    score = 0.0
+    if exact_title:
+        score += 48
+    elif spec.topic.lower() in item.body.lower():
+        score += 34
+    score += min(hits * 7, 21)
+    if spec.region:
+        score += 18 if region_matches(item, spec) else 0
+    else:
+        score += 8
+    if spec.start_date <= item.published_at.date() <= spec.end_date:
+        score += 10
+    if item.buyer:
+        score += 3
+    return min(score, 100)
+
+
+def opportunity_score(item: RawTender, relevance: float) -> float:
+    body = item.body
+    score = relevance * 0.72
+    if re.search(r"预算金额|项目预算|最高限价", body):
+        score += 10
+    if re.search(r"截止时间|开标时间|响应文件", body):
+        score += 8
+    if item.buyer:
+        score += 5
+    if item.attachments:
+        score += 5
+    if item.project_id:
+        score += 4
+    return min(round(score, 1), 100)
+
+
+def _project_key(item: RawTender) -> str:
+    if item.project_id:
+        return stable_hash("project", item.project_id.upper())
+    base = normalize_title(item.title)
+    return stable_hash("project", base, normalize_space(item.buyer or ""), item.region or "")
+
+
+def _canonical_id(item: RawTender) -> str:
+    if item.project_id:
+        return stable_hash("notice", item.project_id.upper(), item.event_type.value)
+    return stable_hash(
+        "notice",
+        normalize_title(item.title),
+        item.event_type.value,
+        item.published_at.date().isoformat(),
+        normalize_space(item.buyer or ""),
+    )
+
+
+def _version_hash(item: RawTender) -> str:
+    return stable_hash(
+        "version",
+        normalize_space(item.title),
+        normalize_space(item.body),
+        item.published_at.isoformat(),
+        *sorted(attachment.url for attachment in item.attachments),
+    )
+
+
+async def normalize_item(
+    item: RawTender,
+    spec: TenderQuerySpec,
+    summarizer: EvidenceSummarizer,
+) -> TenderRecord | None:
+    if item.published_at.date() < spec.start_date or item.published_at.date() > spec.end_date:
+        return None
+    if not region_matches(item, spec):
+        return None
+    hits, exact_title = keyword_hits(item, spec)
+    if not exact_title and hits == 0:
+        return None
+    relevance = relevance_score(item, spec)
+    if relevance < 45:
+        return None
+    summary = await summarizer.summarize(item)
+    project_key = _project_key(item)
+    return TenderRecord(
+        canonical_id=_canonical_id(item),
+        project_key=project_key,
+        version_hash=_version_hash(item),
+        title=normalize_space(item.title),
+        published_at=item.published_at,
+        region=normalize_space(item.region or "") or None,
+        buyer=normalize_space(item.buyer or "") or None,
+        event_type=item.event_type,
+        project_id=item.project_id,
+        summary=summary.summary,
+        body_excerpt=normalize_space(item.body)[:800],
+        attachments=item.attachments,
+        evidence=summary.evidence,
+        source_urls=[item.source_url],
+        sources=[item.source],
+        relevance_score=round(relevance, 1),
+        opportunity_score=opportunity_score(item, relevance),
+        duplicate_count=1,
+        lifecycle_id=project_key,
+        auth_level=item.auth_level,
+    )
+
+
+def _merge_records(primary: TenderRecord, duplicate: TenderRecord) -> TenderRecord:
+    primary.source_urls = list(dict.fromkeys([*primary.source_urls, *duplicate.source_urls]))
+    primary.sources = list(dict.fromkeys([*primary.sources, *duplicate.sources]))
+    primary.duplicate_count += duplicate.duplicate_count
+    primary.relevance_score = max(primary.relevance_score, duplicate.relevance_score)
+    primary.opportunity_score = min(
+        100, max(primary.opportunity_score, duplicate.opportunity_score) + 3
+    )
+    if len(duplicate.body_excerpt) > len(primary.body_excerpt):
+        primary.body_excerpt = duplicate.body_excerpt
+        primary.summary = duplicate.summary
+    attachment_map: dict[str, Attachment] = {item.url: item for item in primary.attachments}
+    attachment_map.update({item.url: item for item in duplicate.attachments})
+    primary.attachments = list(attachment_map.values())
+    evidence_keys = {(item.text, item.source_url) for item in primary.evidence}
+    for span in duplicate.evidence:
+        if (span.text, span.source_url) not in evidence_keys:
+            primary.evidence.append(span)
+            evidence_keys.add((span.text, span.source_url))
+    return primary
+
+
+def deduplicate_records(records: list[TenderRecord]) -> list[TenderRecord]:
+    by_id: dict[str, TenderRecord] = {}
+    for record in sorted(records, key=lambda value: value.opportunity_score, reverse=True):
+        if record.canonical_id in by_id:
+            by_id[record.canonical_id] = _merge_records(by_id[record.canonical_id], record)
+            continue
+        duplicate_key = None
+        for key, existing in by_id.items():
+            if existing.event_type != record.event_type:
+                continue
+            if abs((existing.published_at.date() - record.published_at.date()).days) > 7:
+                continue
+            if ratio(normalize_title(existing.title), normalize_title(record.title)) >= 92:
+                duplicate_key = key
+                break
+        if duplicate_key:
+            by_id[duplicate_key] = _merge_records(by_id[duplicate_key], record)
+        else:
+            by_id[record.canonical_id] = record
+
+    result = list(by_id.values())
+    result.sort(key=lambda value: (value.opportunity_score, value.published_at), reverse=True)
+    return result
+
+
+def lifecycle_groups(records: list[TenderRecord]) -> dict[str, list[TenderRecord]]:
+    groups: dict[str, list[TenderRecord]] = defaultdict(list)
+    for record in records:
+        groups[record.lifecycle_id].append(record)
+    for group in groups.values():
+        group.sort(key=lambda value: value.published_at)
+    return dict(groups)
