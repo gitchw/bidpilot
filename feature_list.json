@@ -2,7 +2,7 @@
   "project": "BidPilot",
   "append_only": true,
   "features": [
-    {"id": "F01", "description": "Chinese natural-language query compiler extracts topic, region, time range, schedule and delivery intent with confidence and warnings.", "status": "pending"},
+    {"id": "F01", "description": "Chinese natural-language query compiler extracts topic, region, time range, schedule and delivery intent with confidence and warnings.", "status": "passing"},
     {"id": "F02", "description": "CEC Bid public-source adapter performs real search, detail cleaning and attachment extraction.", "status": "pending"},
     {"id": "F03", "description": "CCGP public-source adapter crawls recent official notices and extracts structured detail fields.", "status": "pending"},
     {"id": "F04", "description": "Qianlima authenticated-source adapter consumes a user-authorized free-member session and detects expired authentication.", "status": "pending"},
@@ -18,4 +18,3 @@
     {"id": "F14", "description": "End-to-end online run generates multiple real reports and passes an independent judge-style evaluation.", "status": "pending"}
   ]
 }
-

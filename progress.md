@@ -14,7 +14,10 @@
 
 ## Current
 
-- In progress: architecture scaffolding and the first implementation sprint.
+- Completed F01: the versioned Chinese query compiler parses all four official examples plus weekly delivery, reversed date ranges, defaults and invalid input. Eight tests pass.
+- Completed the configuration, Pydantic domain model and transactional SQLite schema foundation.
+- Fixed setup failure detection and verified a clean editable development install on Python 3.13.
+- In progress: real source adapters and the evidence-first normalization pipeline.
 
 ## Known constraints
 
@@ -28,4 +31,3 @@
 2. Implement and verify the query compiler.
 3. Implement and verify sources, normalization, report generation and scheduling.
 4. Build the Web UI/API/CLI, then generate competition artifacts.
-
