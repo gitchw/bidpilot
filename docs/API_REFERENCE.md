@@ -1,6 +1,6 @@
-# 标擎 BidPilot API 参考（v0.4.0）
+# 标擎 BidPilot API 参考（v0.5.0）
 
-本文档对应当前代码中的 29 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。
+本文档对应当前代码中的 31 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。每个接口均说明用途、输入、返回、副作用、常见错误和示例；“副作用”不是警告装饰，而是告诉调用者该请求是否会抓取外部站点、写数据、真实推送或停止进程。
 
 ## 1. 调用约定
 
@@ -26,10 +26,19 @@
 
 - 用途：读取 worker 心跳、启用/到期/执行中订阅数量、时区和投递通道就绪状态。
 - 参数：无。
-- 返回：调度状态、订阅计数、`delivery_channels`；通道只返回 `configured`，不返回凭据。
+- 返回：调度状态、订阅计数、`delivery_channels` 和安全的 `intent_engine` 计数；通道只返回 `configured`，不返回凭据，意图状态不返回模型地址或原始回复。
 - 副作用：无，只读数据库心跳和内存配置。
 - 错误：数据库不可用时返回 500。
 - 示例：`curl http://127.0.0.1:8000/api/v1/system/status`
+
+### `POST /api/v1/system/shutdown` — 优雅停止本机服务
+
+- 用途：只供跨平台命令 `python -m bidpilot stop` 调用，让当前可管理 Uvicorn 先停止接收新请求，再执行内嵌 worker 和数据库生命周期清理。
+- 参数：无 JSON 请求体；必须从 `127.0.0.1`/`::1` 发起，并提供请求头 `X-BidPilot-Control-Token`。令牌位于本机 `data/secrets/control.token`，不应复制到网页、脚本仓库或远程主机。
+- 返回：HTTP 202 和 `{"accepted":true,"message":"已接收停止请求，正在完成清理"}`；返回后连接会在数秒内不可用，这是成功现象。
+- 副作用：停止 Web 进程及其内嵌长期任务 worker；不会删除 SQLite、报告、订阅、机会、投递账本或配置。
+- 错误：403 表示不是回环请求或控制令牌错误；409 表示服务由普通 `uvicorn ...` 启动、没有可控退出回调，此时必须在启动终端按 `Ctrl+C`。
+- 示例：日常用户不要手写令牌请求，直接运行 `python -m bidpilot stop`。系统不会在失败后按 PID 强杀未知进程。
 
 ### `GET /api/v1/sources/status` — 来源运行状态
 
@@ -44,11 +53,11 @@
 
 ### `POST /api/v1/intent/parse` — 解析中文意图
 
-- 用途：把自然语言拆成主题、地域、时间、公告类型、排除词、计划和投递通道。
+- 用途：先用确定性规则拆成主题、地域、时间、公告类型、排除词、计划和投递通道；低置信、缺失或冲突字段才交给 LLM 提议修复，所有提议再经过本地校验。
 - 请求：`query` 必填，2～500 字；`delivery_channel` 仅为请求模型兼容字段，本接口不执行投递。
-- 返回：`TenderQuerySpec`、字段置信度、警告和 `parser_version`。
-- 副作用：无；不抓取、不生成报告、不创建订阅。
-- 错误：422，问题过短、日期/时间/每月日期非法或 JSON 格式错误。
+- 返回：`TenderQuerySpec`、字段置信度、警告、`parser_version` 和 `resolution`。`resolution` 解释调用原因、模型状态、字段级接受/拒绝/锁定决定和耗时，不包含 API Key、端点或模型原文。
+- 副作用：不抓取、不生成报告、不创建订阅；`auto/always` 模式满足条件时，会把原问题、规则基线和当前时间发送给用户配置的模型服务。不会发送标讯正文、机会备注、订阅历史或密钥。
+- 错误：422 表示问题过短、规则日期/计划非法或 JSON 格式错误。模型超时、HTTP 错误、Markdown 包裹、额外字段或非法 JSON 不返回 502，而是在 `resolution.llm_status` 中披露并安全回退。
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/intent/parse \
@@ -64,20 +73,70 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/parse \
   "region": "深圳",
   "region_code": "440000",
   "event_types": [],
-  "parser_version": "rules-v2",
+  "parser_version": "hybrid-v1",
+  "resolution": {
+    "mode": "hybrid",
+    "llm_status": "confirmed",
+    "trigger_reasons": ["主题置信度 0.82 低于阈值 0.85"],
+    "decisions": [],
+    "latency_ms": 2800,
+    "summary": "LLM 复核结果与规则一致，没有改动已确认字段。"
+  },
   "warnings": []
 }
 ```
 
 普通“招标信息/采购信息”不限制公告类型，以保留后续更正和中标生命周期；只有“只看招标公告”“中标公告”“更正公告”等明确表达才设置 `event_types`。
 
+`llm_status` 取值：
+
+| 值 | 中文含义 | 最终结果来源 |
+|---|---|---|
+| `not_needed` | 规则字段都达到阈值，没有调用模型 | 规则 |
+| `disabled` | 用户在配置中心关闭意图模型 | 规则 |
+| `not_configured` | 需要复核但模型地址/名称未配置 | 规则安全回退 |
+| `applied` | 至少一个提议通过本地校验并真正改变字段 | 混合 |
+| `confirmed` | 模型有效复核，但与规则一致 | 混合复核、字段不变 |
+| `rejected` | JSON 合法，但所有改动被本地校验拒绝 | 规则安全回退 |
+| `invalid_response` | 不是严格 JSON、schema 多字段/少字段或枚举非法 | 规则安全回退 |
+| `unavailable` | 超时、网络或模型 HTTP 故障 | 规则安全回退 |
+
+### `POST /api/v1/intent/compare` — 对比规则与混合结果
+
+- 用途：给开发者、测试人员和高级用户检查“模型究竟做了什么”，一次返回纯规则基线和安全合并后的最终结果。
+- 请求：`query` 必填，2～500 字；`delivery_channel` 兼容接收但不参与对比。
+- 返回：`rules`、`resolved` 和 `changed_fields`。`changed_fields` 只列真正变化，如 `topic`、`start_date`；地域虽被模型确认但未改变时不会虚报。
+- 副作用：不抓取、不写运行、不建订阅；与解析接口一样，满足模式条件时可能调用用户配置的模型服务。
+- 错误：422 仅限规则输入错误；模型失败仍返回 200 和带回退状态的 `resolved`。
+- 示例：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
+  -H "Content-Type: application/json" \
+  -d '{"query":"帮我查近四十五日泉州储能系统项目"}'
+```
+
 ### `POST /api/v1/runs` — 立即执行任务
 
-- 用途：解析问题、访问来源、过滤、去重、摘要、持久化，并在有新增时生成 Word。
+- 用途：解析问题、访问来源、过滤、去重、摘要和持久化。即时任务即使最终保留 0 条，也会生成包含诊断信息的 Word；长期订阅在无新增时是否生成/外发报告由通知策略决定。
 - 请求：`query`；`delivery_channel` 可为 `local`、`feishu_webhook`、`feishu_app`、`email`、`dingtalk_webhook`、`wecom_webhook`、`generic_webhook`。
-- 返回：`RunResult`，包含运行 ID、意图、记录、来源诊断、新增数、报告路径和投递回执。
+- 返回：`RunResult`，包含运行 ID、意图、记录、来源诊断、`search_explanation`、新增数、报告路径和投递回执。
 - 副作用：会真实访问公开/已授权来源、写数据库、可能生成 DOCX，并可能向外部通道发送。
 - 错误：422 请求非法；502 抓取、报告或投递失败。失败运行仍保存诊断。
+
+`diagnostics` 中每个来源都有三个容易混淆的数字：
+
+- `scanned_count`：从该来源列表页或 API 实际读到多少条；
+- `fetched_count`：通过来源端初筛、进入统一证据核验多少条；
+- `kept_count`：最终通过时间、地域、主题、公告类型、排除词和去重后留下多少条。
+
+`search_explanation` 是面向用户的零结果解释：
+
+- `outcome=all_filtered`：有候选，但统一核验后一条未留；
+- `outcome=no_candidates`：来源端初筛后没有候选；
+- `rejection_reasons`：逐原因排除数量；
+- `coverage_complete=false`：至少一个来源覆盖不完整、需要登录或失败，不能把 0 条解释成“全网没有”；
+- `suggestions`：最多三条放宽时间、地域或同义词的建议。前端点击只填回查询框，不会自动发起新的外网抓取。
 
 ```json
 {
@@ -290,6 +349,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/parse \
   "llm_base_url": "http://127.0.0.1:8045/v1",
   "llm_model": "your-compatible-model",
   "llm_api_key": "<仅写入，不回显>",
+  "intent_llm_mode": "auto",
+  "intent_llm_confidence_threshold": 0.85,
   "clear_secrets": []
 }
 ```

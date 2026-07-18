@@ -69,10 +69,25 @@ data/secrets/runtime_config.key
 
 - API 密钥：本机无鉴权服务可以留空；云服务通常必须填写。
 - 超时：3～120 秒，默认 30 秒。
+- 意图辅助模式：`auto`（推荐，只在低置信/缺失/冲突时调用）、`off`（完全关闭意图模型）、`always`（每次复核，但高置信规则字段仍锁定）。
+- 意图置信阈值：0.50～0.99，默认 0.85。阈值越高越容易触发模型，调用次数与费用也可能增加；阈值不会放宽本地校验。
 
 系统会在基础地址后调用 `/chat/completions`；如果用户直接填了以 `/chat/completions` 结尾的完整端点，则不会重复拼接。请求主体使用标准 `model`、`messages`、`temperature` 和 `max_tokens` 字段，响应需至少包含 `choices[0].message.content`。可参考 [OpenAI Chat Completions API](https://developers.openai.com/api/reference/resources/chat)。
 
 点击“测试模型连接”时，网页会先保存当前表单，再发送固定测试句。测试不发送任何招投标内容。成功后显示延迟和短回复；失败只显示脱敏诊断，不返回密钥或完整认证 URL。
+
+### 混合意图引擎如何使用模型
+
+1. `rules-v2` 先生成完整、可独立执行的规则基线。
+2. `auto` 模式只检查低于阈值、缺失或冲突的字段；`always` 模式会请求复核，但不自动解锁高置信字段。
+3. 模型必须返回严格 JSON；Markdown 代码围栏、解释性前缀、额外字段和非法枚举都会让整份提议失效。
+4. 本地逐字段验证主题是否来自原句、地域是否存在于行政区词表、日期是否合法有界、计划字段是否完整、渠道/公告类型是否属于允许枚举。
+5. `region_code` 永远由本地词表派生，模型没有输出该字段的权限。
+6. 超时、网络错误、非法 JSON 或提议被拒绝时，任务继续使用规则结果。
+
+意图模型只收到自然语言原句、规则基线、当前时间、允许修复字段和 schema；不会收到抓取到的标讯正文、机会备注、订阅历史、API Key 或 Webhook。若模型服务位于云端，原句会离开本机，请先确认其隐私政策；敏感查询可把模式设为 `off`。
+
+模型还有独立的“证据约束摘要”用途：它只在任务抓取阶段对证据生成摘要，并受事实回指门控。意图解析成功不代表摘要一定使用模型，反之亦然。
 
 ### 模型失败时的行为
 
@@ -174,6 +189,8 @@ Webhook URL 通常包含访问密钥，因此读取接口不会返回原文。
 BIDPILOT_LLM_BASE_URL=
 BIDPILOT_LLM_API_KEY=
 BIDPILOT_LLM_MODEL=
+BIDPILOT_INTENT_LLM_MODE=auto
+BIDPILOT_INTENT_LLM_CONFIDENCE_THRESHOLD=0.85
 BIDPILOT_FEISHU_WEBHOOK_URL=
 BIDPILOT_SMTP_HOST=
 ...
