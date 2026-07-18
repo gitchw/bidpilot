@@ -27,11 +27,38 @@ def region_matches(item: RawTender, spec: TenderQuerySpec) -> bool:
     return spec.region in evidence
 
 
+def buyer_matches(item: RawTender, spec: TenderQuerySpec) -> bool:
+    """Match only explicit normalized buyer identities; do not infer aliases or subsidiaries."""
+    if not spec.buyer_keywords:
+        return True
+    buyer_name = normalize_space(item.buyer or "").casefold()
+    if not buyer_name:
+        return False
+    return buyer_name in {
+        normalize_space(keyword).casefold() for keyword in spec.buyer_keywords if keyword.strip()
+    }
+
+
+def topic_evidence_text(item: RawTender, spec: TenderQuerySpec) -> tuple[str, str]:
+    """Return topic evidence with locked buyer identities removed from title and body."""
+    title = normalize_space(item.title)
+    body = normalize_space(item.body)
+    if spec.buyer_keywords:
+        for buyer_keyword in spec.buyer_keywords:
+            buyer_name = normalize_space(buyer_keyword)
+            if not buyer_name:
+                continue
+            title = re.sub(re.escape(buyer_name), " ", title, flags=re.IGNORECASE)
+            body = re.sub(re.escape(buyer_name), " ", body, flags=re.IGNORECASE)
+    else:
+        body = f"{item.buyer or ''} {body}"
+    return normalize_space(title).casefold(), normalize_space(body).casefold()
+
+
 def keyword_hits(item: RawTender, spec: TenderQuerySpec) -> tuple[int, bool]:
-    title = item.title.lower()
-    body = item.body.lower()
-    exact_title = spec.topic.lower() in title
-    hits = sum(1 for keyword in spec.keywords if keyword.lower() in f"{title} {body}")
+    title, body = topic_evidence_text(item, spec)
+    exact_title = spec.topic.casefold() in title
+    hits = sum(1 for keyword in spec.keywords if keyword.casefold() in f"{title} {body}")
     return hits, exact_title
 
 
@@ -41,6 +68,8 @@ def hard_filter_reason(item: RawTender, spec: TenderQuerySpec) -> str | None:
         return "outside_time"
     if not region_matches(item, spec):
         return "region_mismatch"
+    if not buyer_matches(item, spec):
+        return "buyer_mismatch"
     if spec.event_types and item.event_type not in spec.event_types:
         return "event_type_mismatch"
     searchable = f"{item.title} {item.buyer or ''} {item.body}".casefold()
@@ -51,14 +80,13 @@ def hard_filter_reason(item: RawTender, spec: TenderQuerySpec) -> str | None:
 
 def relevance_score(item: RawTender, spec: TenderQuerySpec) -> float:
     hits, exact_title = keyword_hits(item, spec)
-    title = item.title.lower()
-    body = item.body.lower()
-    synonym_in_title = any(keyword.lower() in title for keyword in spec.keywords)
-    synonym_in_body = any(keyword.lower() in body for keyword in spec.keywords)
+    title, body = topic_evidence_text(item, spec)
+    synonym_in_title = any(keyword.casefold() in title for keyword in spec.keywords)
+    synonym_in_body = any(keyword.casefold() in body for keyword in spec.keywords)
     score = 0.0
     if exact_title:
         score += 48
-    elif spec.topic.lower() in body:
+    elif spec.topic.casefold() in body:
         score += 34
     elif synonym_in_title:
         score += 38

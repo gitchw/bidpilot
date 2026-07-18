@@ -58,11 +58,34 @@ def tender(
     )
 
 
-def selection(evidence_id: str = "E01", quote: str = "采购 AI 服务器") -> str:
+def selection(
+    evidence_id: str = "E01",
+    quote: str = "采购 AI 服务器",
+    *,
+    field: str = "excerpt",
+) -> str:
     return json.dumps(
         {
             "answerable": True,
-            "citations": [{"evidence_id": evidence_id, "quote": quote}],
+            "citations": [
+                {
+                    "evidence_id": evidence_id,
+                    "field": field,
+                    "quote": quote,
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+def field_selections(field: str, *evidence_ids: str) -> str:
+    return json.dumps(
+        {
+            "answerable": True,
+            "citations": [
+                {"evidence_id": evidence_id, "field": field} for evidence_id in evidence_ids
+            ],
         },
         ensure_ascii=False,
     )
@@ -78,6 +101,8 @@ async def test_model_only_selects_quotes_and_cache_never_stores_question(tmp_pat
         serialized = json.dumps(payload, ensure_ascii=False)
         assert "https://example.com" not in serialized
         assert "record-001" not in serialized
+        if calls == 2:
+            return field_selections("project_id", "E01")
         return selection()
 
     settings = make_settings(tmp_path)
@@ -115,6 +140,199 @@ async def test_model_only_selects_quotes_and_cache_never_stores_question(tmp_pat
     with db.connection() as conn:
         dump = "\n".join(conn.iterdump())
     assert private_question not in dump
+
+
+async def test_model_selects_multiple_buyer_fields_and_values_are_filled_locally(
+    tmp_path: Path,
+):
+    calls = 0
+
+    async def requester(payload):
+        nonlocal calls
+        calls += 1
+        schema = json.loads(payload["messages"][1]["content"])["schema"]
+        assert "field" in schema["$defs"]["_CitationProposal"]["properties"]
+        return field_selections("buyer", "E01", "E02", "E03", "E04", "E05")
+
+    records = [tender(index) for index in range(1, 6)]
+    settings = make_settings(tmp_path)
+    result = await RunEvidenceQACopilot(
+        settings,
+        Database(settings.database_path),
+        requester=requester,
+    ).answer(
+        "run-buyers",
+        "这批项目分别有哪些采购人？",
+        records,
+        run_status="completed",
+    )
+
+    assert result.status == "applied"
+    assert result.mode == "llm_grounded"
+    assert calls == 1
+    assert [claim.text for claim in result.claims] == [
+        f"采购人：采购单位 {index}" for index in range(1, 6)
+    ]
+    assert [claim.citations[0].quote for claim in result.claims] == [
+        f"采购单位 {index}" for index in range(1, 6)
+    ]
+    assert [claim.citations[0].source_url for claim in result.claims] == [
+        f"https://example.com/{index}" for index in range(1, 6)
+    ]
+
+
+async def test_false_model_answer_for_buyer_list_falls_back_to_local_snapshot(
+    tmp_path: Path,
+):
+    async def requester(_payload):
+        return json.dumps({"answerable": False, "citations": []})
+
+    records = [tender(index) for index in range(1, 7)]
+    settings = make_settings(tmp_path)
+    result = await RunEvidenceQACopilot(
+        settings,
+        Database(settings.database_path),
+        requester=requester,
+    ).answer(
+        "run-buyers-fallback",
+        "这批项目分别有哪些采购人？",
+        records,
+        run_status="completed",
+    )
+
+    assert result.status == "invalid_response"
+    assert result.mode == "deterministic"
+    assert result.answerable is True
+    assert [claim.text for claim in result.claims] == [
+        f"采购人：采购单位 {index}" for index in range(1, 7)
+    ]
+    assert result.context_truncated is False
+    assert result.answer_version == "run-qa-v3"
+    assert "均未由模型生成" in result.summary
+
+
+async def test_multi_field_question_falls_back_to_all_requested_local_fields(tmp_path: Path):
+    async def requester(_payload):
+        return json.dumps({"answerable": False, "citations": []})
+
+    settings = make_settings(tmp_path)
+    result = await RunEvidenceQACopilot(
+        settings,
+        Database(settings.database_path),
+        requester=requester,
+    ).answer(
+        "run-multi-field",
+        "E01 的采购人和发布日期是什么？",
+        [tender()],
+        run_status="completed",
+    )
+
+    assert result.status == "invalid_response"
+    assert result.mode == "deterministic"
+    assert result.answerable is True
+    assert "模型选择未通过证据校验" in result.answer
+    assert result.claims[0].text == "采购人：采购单位 1；发布日期：2026-07-18"
+    assert [item.quote for item in result.claims[0].citations] == [
+        "采购单位 1",
+        "2026-07-18",
+    ]
+
+
+async def test_multi_field_question_returns_available_date_and_discloses_missing_buyer(
+    tmp_path: Path,
+):
+    async def requester(_payload):
+        return json.dumps({"answerable": False, "citations": []})
+
+    settings = make_settings(tmp_path)
+    result = await RunEvidenceQACopilot(
+        settings,
+        Database(settings.database_path),
+        requester=requester,
+    ).answer(
+        "run-partial-field",
+        "E01 的采购人和发布日期是什么？",
+        [tender().model_copy(update={"buyer": None})],
+        run_status="completed",
+    )
+
+    assert result.answerable is True
+    assert result.claims[0].text == "发布日期：2026-07-18"
+    assert result.claims[0].citations[0].quote == "2026-07-18"
+    assert "未在固定快照中识别：采购人" in result.answer
+
+
+async def test_model_cannot_supply_or_forge_buyer_value(tmp_path: Path):
+    forged_buyer = "伪造采购人 RAW_BUYER_SENTINEL"
+    calls = 0
+
+    async def requester(_payload):
+        nonlocal calls
+        calls += 1
+        return json.dumps(
+            {
+                "answerable": True,
+                "citations": [
+                    {
+                        "evidence_id": "E01",
+                        "field": "buyer",
+                        "quote": forged_buyer,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    settings = make_settings(tmp_path)
+    db = Database(settings.database_path)
+    result = await RunEvidenceQACopilot(
+        settings,
+        db,
+        requester=requester,
+    ).answer(
+        "run-forged-buyer",
+        "E01 的采购人是谁？",
+        [tender()],
+        run_status="completed",
+    )
+
+    assert calls == 2
+    assert result.status == "invalid_response"
+    assert result.mode == "deterministic"
+    assert result.claims[0].text == "采购人：采购单位 1"
+    assert forged_buyer not in result.answer
+    with db.connection() as conn:
+        dump = "\n".join(conn.iterdump())
+    assert forged_buyer not in dump
+
+
+async def test_model_cannot_answer_buyer_question_with_unrequested_title_field(
+    tmp_path: Path,
+):
+    calls = 0
+
+    async def requester(_payload):
+        nonlocal calls
+        calls += 1
+        return field_selections("title", "E01")
+
+    settings = make_settings(tmp_path)
+    result = await RunEvidenceQACopilot(
+        settings,
+        Database(settings.database_path),
+        requester=requester,
+    ).answer(
+        "run-wrong-field",
+        "E01 的采购人是谁？",
+        [tender()],
+        run_status="completed",
+    )
+
+    assert calls == 2
+    assert result.status == "invalid_response"
+    assert result.mode == "deterministic"
+    assert result.claims[0].text == "采购人：采购单位 1"
+    assert "标题：" not in result.answer
 
 
 async def test_unknown_reference_and_prompt_injection_are_refused_before_model(tmp_path: Path):
@@ -169,7 +387,13 @@ async def test_invalid_reference_repairs_once_and_wrong_quote_falls_back(tmp_pat
         return json.dumps(
             {
                 "answerable": True,
-                "citations": [{"evidence_id": "E01", "quote": raw_sentinel}],
+                "citations": [
+                    {
+                        "evidence_id": "E01",
+                        "field": "excerpt",
+                        "quote": raw_sentinel,
+                    }
+                ],
                 "untrusted_raw": raw_sentinel,
             }
         )

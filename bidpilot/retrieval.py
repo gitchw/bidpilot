@@ -20,6 +20,7 @@ from bidpilot.models import (
     RetrievalTerm,
     TenderQuerySpec,
 )
+from bidpilot.normalize import topic_evidence_text
 from bidpilot.sources.base import SourceAdapter
 
 LLMRequester = Callable[[dict[str, Any]], Awaitable[str]]
@@ -124,6 +125,7 @@ class RetrievalPlanner:
             return self._finish_plan(
                 base_terms,
                 region=spec.region,
+                buyer_keywords=spec.buyer_keywords,
                 llm_status="disabled",
                 mode="deterministic",
                 summary="AI 检索规划已关闭；本轮使用原主题、规则同义词和本地行业词典。",
@@ -132,6 +134,7 @@ class RetrievalPlanner:
             return self._finish_plan(
                 base_terms,
                 region=spec.region,
+                buyer_keywords=spec.buyer_keywords,
                 llm_status="not_configured",
                 mode="deterministic",
                 summary="模型尚未配置；本轮安全使用原主题、规则同义词和本地行业词典。",
@@ -146,6 +149,7 @@ class RetrievalPlanner:
             return self._finish_plan(
                 base_terms,
                 region=spec.region,
+                buyer_keywords=spec.buyer_keywords,
                 llm_status="invalid_response",
                 mode="fallback",
                 latency_ms=round((time.perf_counter() - started) * 1000),
@@ -155,6 +159,7 @@ class RetrievalPlanner:
             return self._finish_plan(
                 base_terms,
                 region=spec.region,
+                buyer_keywords=spec.buyer_keywords,
                 llm_status="unavailable",
                 mode="fallback",
                 latency_ms=round((time.perf_counter() - started) * 1000),
@@ -191,6 +196,7 @@ class RetrievalPlanner:
         plan = self._finish_plan(
             accepted,
             region=spec.region,
+            buyer_keywords=spec.buyer_keywords,
             llm_status="applied" if len(accepted) > len(base_terms) else "rejected",
             mode="hybrid" if len(accepted) > len(base_terms) else "deterministic",
             latency_ms=round((time.perf_counter() - started) * 1000),
@@ -310,6 +316,7 @@ class RetrievalPlanner:
         terms: list[RetrievalTerm],
         *,
         region: str | None,
+        buyer_keywords: Sequence[str] = (),
         llm_status: Literal[
             "disabled",
             "not_configured",
@@ -325,20 +332,38 @@ class RetrievalPlanner:
         source_priorities: list[str] | None = None,
         proposed_queries: Sequence[str] = (),
     ) -> RetrievalPlan:
+        buyer_query = next(
+            (
+                normalized
+                for name in buyer_keywords
+                if (normalized := normalize_space(name)) and 2 <= len(self._fold(normalized)) <= 60
+            ),
+            "",
+        )
+        primary_text = buyer_query or terms[0].text
+        primary_kind: Literal["topic", "buyer", "synonym", "industry", "llm"] = (
+            "buyer" if buyer_query else terms[0].kind
+        )
+        primary_reason = (
+            "买方监控先按本地锁定的完整采购单位名称召回；产品主题仍在本地独立校验。"
+            if buyer_query
+            else "所有来源先执行用户核心主题，建立可比较的确定性基线。"
+        )
         queries = [
             RetrievalQuery(
                 id="q-primary",
-                text=terms[0].text,
+                text=primary_text,
                 round=1,
-                reason="所有来源先执行用户核心主题，建立可比较的确定性基线。",
-                term_kind=terms[0].kind,
+                reason=primary_reason,
+                term_kind=primary_kind,
             )
         ]
-        seen = {self._fold(terms[0].text)}
+        seen = {self._fold(primary_text)}
         reserve: list[tuple[str, str, Literal["topic", "synonym", "industry", "llm"]]] = []
         accepted_texts = [term.text for term in terms]
-        deterministic = [term for term in terms[1:] if term.origin != "llm"]
-        model_terms = [term for term in terms[1:] if term.origin == "llm"]
+        remaining_terms = terms if buyer_query else terms[1:]
+        deterministic = [term for term in remaining_terms if term.origin != "llm"]
+        model_terms = [term for term in remaining_terms if term.origin == "llm"]
         ordered_terms: list[RetrievalTerm] = []
         if deterministic:
             ordered_terms.append(deterministic.pop(0))
@@ -384,7 +409,11 @@ class RetrievalPlanner:
             max_rounds=self.settings.retrieval_max_rounds,
             query_budget_per_source=self.settings.retrieval_query_budget_per_source,
             latency_ms=latency_ms,
-            summary=summary,
+            summary=(
+                f"{summary.rstrip('。')}；首轮按本地锁定采购单位召回，主题仍执行独立硬校验。"
+                if buyer_query
+                else summary
+            ),
         )
 
     def _plan_payload(
@@ -434,14 +463,21 @@ class RetrievalPlanner:
     ) -> dict[str, Any]:
         rows = []
         for candidate_id, item in candidates.items():
+            if spec.buyer_keywords:
+                title, evidence_excerpt = topic_evidence_text(item, spec)
+                buyer = ""
+            else:
+                title = item.title
+                buyer = item.buyer or ""
+                evidence_excerpt = normalize_space(item.body)
             rows.append(
                 {
                     "candidate_id": candidate_id,
-                    "title": item.title[:240],
-                    "buyer": (item.buyer or "")[:120],
+                    "title": title[:240],
+                    "buyer": buyer[:120],
                     "region": item.region or "",
                     "event_type": item.event_type.value,
-                    "evidence_excerpt": normalize_space(item.body)[:500],
+                    "evidence_excerpt": evidence_excerpt[:500],
                 }
             )
         return {

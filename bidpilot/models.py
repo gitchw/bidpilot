@@ -54,7 +54,10 @@ class RetrievalQuery(BaseModel):
     text: str = Field(min_length=2, max_length=60, description="发送给来源搜索框的查询词")
     round: int = Field(ge=1, le=2, description="计划使用的召回轮次")
     reason: str = Field(max_length=240, description="为什么执行该查询")
-    term_kind: Literal["topic", "synonym", "industry", "llm"] = "topic"
+    term_kind: Literal["topic", "buyer", "synonym", "industry", "llm"] = Field(
+        default="topic",
+        description="查询由核心主题、本地锁定买方、同义词、行业词或模型建议产生",
+    )
 
 
 class RetrievalPlan(BaseModel):
@@ -353,11 +356,15 @@ class EvidenceAnswerCitation(BaseModel):
 
 class EvidenceAnswerClaim(BaseModel):
     text: str = Field(min_length=2, max_length=360)
-    citations: list[EvidenceAnswerCitation] = Field(min_length=1, max_length=5)
+    citations: list[EvidenceAnswerCitation] = Field(
+        min_length=1,
+        max_length=8,
+        description="支撑同一条本地组装结论的证据字段；模型单次仍最多选择 8 项",
+    )
 
 
 class EvidenceAnswer(BaseModel):
-    answer_version: str = "run-qa-v1"
+    answer_version: str = "run-qa-v3"
     run_id: str
     mode: Literal["llm_grounded", "deterministic"] = "deterministic"
     status: Literal[
@@ -372,8 +379,12 @@ class EvidenceAnswer(BaseModel):
         "evidence_incomplete",
     ]
     answerable: bool = False
-    answer: str = Field(max_length=4000)
-    claims: list[EvidenceAnswerClaim] = Field(default_factory=list, max_length=8)
+    answer: str = Field(max_length=8000)
+    claims: list[EvidenceAnswerClaim] = Field(
+        default_factory=list,
+        max_length=25,
+        description="模型选择最多 8 条；结构化本地回退可覆盖当前最多 25 条固定上下文",
+    )
     evidence_catalog: list[BriefEvidence] = Field(default_factory=list)
     total_evidence_count: int = Field(default=0, ge=0)
     context_evidence_count: int = Field(default=0, ge=0)
@@ -466,6 +477,14 @@ class TenderQuerySpec(BaseModel):
     raw_query: str = Field(description="规范化后的用户原始问题")
     topic: str = Field(description="用于严格匹配的核心产品、服务或行业主题")
     keywords: list[str] = Field(description="主题和受控同义词扩展")
+    buyer_keywords: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description=(
+            "采购单位精确过滤白名单；空数组表示不限制。该字段由买方雷达从本地已抓取记录写入，"
+            "不会由模型猜测，历史订阅缺少该字段时自动按空数组兼容。"
+        ),
+    )
     exclude_keywords: list[str] = Field(default_factory=list, description="任一命中即排除")
     event_types: list[EventType] = Field(
         default_factory=list,
@@ -496,6 +515,19 @@ class TenderQuerySpec(BaseModel):
     @classmethod
     def deduplicate_keywords(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+    @field_validator("buyer_keywords")
+    @classmethod
+    def normalize_buyer_keywords(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            normalized = " ".join(item.split())[:200]
+            key = normalized.casefold()
+            if normalized and key not in seen:
+                cleaned.append(normalized)
+                seen.add(key)
+        return cleaned
 
     @field_validator("exclude_keywords")
     @classmethod
@@ -560,6 +592,122 @@ class TenderRecord(BaseModel):
     duplicate_count: int = 1
     lifecycle_id: str
     auth_level: str = "public"
+
+
+class BuyerRadarTopic(BaseModel):
+    """从本地已抓取公告文本确定性统计出的买方主题。"""
+
+    name: str = Field(description="本地词典或公告标题提取出的主题名称", min_length=1, max_length=80)
+    notice_count: int = Field(
+        ge=1,
+        description="包含该主题的去重公告数；同一公告的多个内容版本只计算一次",
+    )
+
+
+class BuyerRadarActivity(BaseModel):
+    """买方雷达使用的一条本地持久化公告证据。"""
+
+    canonical_id: str = Field(description="本地公告规范 ID，用于公告级去重")
+    version_hash: str = Field(description="当前展示的本地内容版本哈希")
+    project_key: str = Field(description="既有项目聚合键；不会为买方雷达重新计算")
+    title: str = Field(description="本地标讯快照中的公告标题", max_length=500)
+    buyer_name: str = Field(description="本地标讯快照中的采购单位名称", max_length=300)
+    published_at: datetime = Field(description="公告原文发布时间，不是系统抓取时间")
+    first_seen_at: datetime = Field(description="系统首次保存该内容版本的时间")
+    last_seen_at: datetime = Field(description="系统最近一次发现该内容版本的时间")
+    region: str | None = Field(default=None, description="公告标注的地域；原文未提供时为空")
+    event_type: EventType = Field(description="公告生命周期阶段，如招标、更正、中标或合同")
+    summary: str = Field(description="本地保存的证据摘要；不由买方雷达重新生成", max_length=1000)
+    source_name: str = Field(
+        default="",
+        description="主证据来源名称；缺失时为空字符串，不会猜测来源",
+        max_length=200,
+    )
+    source_url: str = Field(
+        default="",
+        description="从本地证据或来源链接回填的主原文地址；缺失时为空字符串",
+        max_length=3000,
+    )
+    evidence_available: bool = Field(description="本地快照是否保留了可点击原文地址")
+
+
+class BuyerRadarCard(BaseModel):
+    """单个采购单位可审计的活动、生命周期和主题聚合。"""
+
+    buyer_id: str = Field(description="采购单位规范名称的本地稳定哈希，不是外部机构编码")
+    buyer_name: str = Field(description="本地标讯中最近使用的采购单位名称", max_length=300)
+    notice_count: int = Field(ge=1, description="按 canonical_id 去重后的公告数量")
+    version_count: int = Field(
+        ge=1,
+        description="这些公告在 tender_items 中保留的内容版本行数，用于审计变更",
+    )
+    project_count: int = Field(
+        ge=1,
+        description="按既有 project_key 去重得到的估算项目数，不宣称为采购方官方项目总数",
+    )
+    project_count_is_estimate: bool = Field(
+        default=True,
+        description="始终为 true，提醒项目键可能因标题变化或缺失项目编号而拆分",
+    )
+    first_activity_at: datetime = Field(description="该采购单位最早一条本地公告的原文发布时间")
+    latest_activity_at: datetime = Field(description="该采购单位最近一条本地公告的原文发布时间")
+    last_seen_at: datetime = Field(description="系统最近一次发现该采购单位公告内容的时间")
+    stage_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="按公告生命周期阶段统计的去重公告数；不是销售机会跟进阶段",
+    )
+    top_topics: list[BuyerRadarTopic] = Field(
+        default_factory=list,
+        max_length=8,
+        description="从去重公告文本确定性统计的高频主题，不是采购预测",
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="这些公告在本地快照中保留的真实来源名称",
+    )
+    evidence_notice_count: int = Field(
+        ge=0,
+        description="至少保留一个本地原文地址的去重公告数",
+    )
+    recent_activities: list[BuyerRadarActivity] = Field(
+        default_factory=list,
+        description="按原文发布时间倒序返回的近期去重公告证据",
+    )
+
+
+class BuyerRadarResult(BaseModel):
+    """只使用本地 tender_items 构建、同时披露识别覆盖率的买方雷达。"""
+
+    buyers: list[BuyerRadarCard] = Field(description="经过搜索和数量限制后返回的采购单位卡片")
+    total_buyer_count: int = Field(ge=0, description="全部本地公告中可识别的采购单位总数")
+    matched_buyer_count: int = Field(ge=0, description="应用 search 后匹配的采购单位数")
+    returned_buyer_count: int = Field(ge=0, description="本次响应实际返回的采购单位数")
+    total_local_notice_count: int = Field(
+        ge=0,
+        description="tender_items 按 canonical_id 去重后的全部本地公告数",
+    )
+    identified_buyer_notice_count: int = Field(
+        ge=0,
+        description="去重后具有可用采购单位名称的本地公告数",
+    )
+    unknown_buyer_notice_count: int = Field(
+        ge=0,
+        description="去重后未识别采购单位或最新可用快照损坏的本地公告数",
+    )
+    invalid_version_count: int = Field(
+        ge=0,
+        description="无法按 TenderRecord 恢复的历史内容版本行数；这些行不会被伪造补齐",
+    )
+    buyer_coverage_rate: float = Field(
+        ge=0,
+        le=100,
+        description="可识别采购单位公告数占全部去重公告数的百分比",
+    )
+    generated_at: datetime = Field(description="本次本地聚合完成时间")
+    coverage_note: str = Field(
+        description="面向用户解释采购单位识别覆盖、未知记录和项目数估算边界",
+        max_length=800,
+    )
 
 
 class FeedbackUpdate(BaseModel):
@@ -761,6 +909,25 @@ class SubscriptionCreate(BaseModel):
         description="always 每轮回执；on_change 仅变化外发",
     )
     run_immediately: bool = Field(default=True, description="创建后是否立即进入待领取队列")
+
+
+class BuyerSubscriptionCreate(SubscriptionCreate):
+    """不允许客户端提交或改写采购单位身份的标准订阅控制项。"""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "安徽大学采购监控",
+                    "query": "每天9点汇总最近30天服务器采购公告",
+                    "delivery_channel": "local",
+                    "delivery_policy": "on_change",
+                    "run_immediately": False,
+                }
+            ]
+        },
+    )
 
 
 class SubscriptionUpdate(BaseModel):

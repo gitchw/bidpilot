@@ -277,6 +277,7 @@ def generate_report(
         reason_labels = {
             "outside_time": "时间外",
             "region_mismatch": "地域不符",
+            "buyer_mismatch": "采购单位不符",
             "event_type_mismatch": "类型不符",
             "excluded_keyword": "命中排除词",
             "keyword_mismatch": "主题未命中",

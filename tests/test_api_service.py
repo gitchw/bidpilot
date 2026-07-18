@@ -12,6 +12,8 @@ from bidpilot.config import Settings
 from bidpilot.models import (
     EventType,
     EvidenceSpan,
+    FeedbackUpdate,
+    FeedbackVerdict,
     OpportunityCreate,
     OpportunityStage,
     OpportunityUpdate,
@@ -602,6 +604,11 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
     assert persisted is not None
     assert persisted.owner == "王同学"
     assert persisted.notes == "联系采购人并核验资质要求"
+    service.set_feedback(
+        tender.canonical_id,
+        tender.version_hash,
+        FeedbackUpdate(verdict=FeedbackVerdict.RELEVANT, reason="删除卡片不应删除反馈"),
+    )
 
     app = create_app(settings, sources=[FakeSource()])
     with TestClient(app) as client:
@@ -616,6 +623,70 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
         )
         assert missing.status_code == 404
         assert missing.json()["detail"] == "只能收藏系统已抓取并验证过的标讯记录"
+
+        reports_before = [row["id"] for row in app.state.service.db.list_reports()]
+        run_items_before = app.state.service.db.list_run_items(run.run_id)
+        feedback_before = app.state.service.db.get_feedback(
+            tender.canonical_id,
+            tender.version_hash,
+        )
+        assert reports_before
+        assert run_items_before
+        assert feedback_before is not None
+        deleted = client.delete(f"/api/v1/opportunities/{opportunity.id}")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted": True}
+        assert client.get(f"/api/v1/opportunities/{opportunity.id}").status_code == 404
+        assert client.get(f"/api/v1/opportunities/{opportunity.id}/timeline").status_code == 404
+        assert (
+            app.state.service.db.get_tender_item(tender.canonical_id, tender.version_hash)
+            is not None
+        )
+        assert (
+            app.state.service.db.get_tender_item(award.canonical_id, award.version_hash) is not None
+        )
+        assert app.state.service.db.get_run(run.run_id) is not None
+        assert [row["id"] for row in app.state.service.db.list_reports()] == reports_before
+        assert app.state.service.db.list_run_items(run.run_id) == run_items_before
+        assert (
+            app.state.service.db.get_feedback(tender.canonical_id, tender.version_hash)
+            == feedback_before
+        )
+
+        recreated = client.post(
+            "/api/v1/opportunities",
+            json={
+                "canonical_id": tender.canonical_id,
+                "version_hash": tender.version_hash,
+            },
+        )
+        assert recreated.status_code == 200
+        assert recreated.json()["id"] != opportunity.id
+        assert recreated.json()["record"]["event_type"] == "中标公告"
+        assert recreated.json()["stage"] == "new"
+        assert recreated.json()["owner"] == ""
+        assert recreated.json()["notes"] == ""
+        assert recreated.json()["tags"] == []
+        already_deleted = client.delete(f"/api/v1/opportunities/{opportunity.id}")
+        assert already_deleted.status_code == 404
+        delete_contract = client.get("/openapi.json").json()["paths"][
+            "/api/v1/opportunities/{opportunity_id}"
+        ]["delete"]
+        assert delete_contract["summary"] == "从机会工作台删除卡片"
+        assert delete_contract["responses"]["200"]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/DeleteResultResponse"
+        }
+        assert delete_contract["tags"] == ["机会工作台"]
+        for section in (
+            "### 用途",
+            "### 参数与请求体",
+            "### 返回值",
+            "### 副作用",
+            "### 常见错误",
+            "### 示例",
+        ):
+            assert section in delete_contract["description"]
+        assert "不会删除 tender_items" in delete_contract["description"]
 
 
 async def test_new_lifecycle_event_refreshes_opportunity_without_losing_follow_up(tmp_path: Path):
@@ -759,7 +830,7 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
                 continue
             operations.append((method.upper(), path, operation))
 
-    assert len(operations) == 47
+    assert len(operations) == 50
     for method, path, operation in operations:
         description = operation.get("description", "")
         assert path in api_reference, f"{method} {path} 未写入独立 API 参考"

@@ -85,7 +85,7 @@ class TenderPipeline:
                 self._round_diagnostic(
                     round_one,
                     effective_spec,
-                    trigger="所有来源先执行用户核心主题，建立确定性召回基线。",
+                    trigger=primary.reason,
                     gaps=gaps,
                     elapsed_ms=round((time.perf_counter() - round_one_started) * 1000),
                 )
@@ -414,6 +414,11 @@ class TenderPipeline:
         coverage_notes = [
             f"{item.source}：{status_labels[item.status]}（{item.message}）" for item in incomplete
         ]
+        if spec.buyer_keywords:
+            coverage_notes.append(
+                f"本轮锁定采购单位：{'、'.join(spec.buyer_keywords)}；"
+                "零结果建议不会自动取消该买方边界。"
+            )
         suggestions: list[SearchSuggestion] = []
         region = spec.region or "全国"
         if not records and (reasons.get("outside_time", 0) or total_candidates == 0):
@@ -454,6 +459,8 @@ class TenderPipeline:
                     explanation="部分平台标题只写同义词。分开检索可提高召回，但仍需人工确认与原主题的业务一致性。",
                 )
             )
+        if spec.buyer_keywords:
+            suggestions = []
 
         coverage_complete = not incomplete
         if records:
@@ -470,6 +477,7 @@ class TenderPipeline:
             labels = {
                 "outside_time": "超出时间范围",
                 "region_mismatch": "地域不匹配",
+                "buyer_mismatch": "采购单位不匹配",
                 "event_type_mismatch": "公告类型不匹配",
                 "excluded_keyword": "命中排除词",
                 "keyword_mismatch": "主题或同义词未命中",
@@ -490,6 +498,11 @@ class TenderPipeline:
             summary = (
                 f"来源共扫描 {total_scanned} 条公开列表记录，但没有返回符合来源端初筛的候选。"
                 "这可能表示当前范围确实较窄，也可能受来源公开入口、授权或历史检索能力限制。"
+            )
+        if spec.buyer_keywords:
+            summary += (
+                f"本轮采购单位始终锁定为 {'、'.join(spec.buyer_keywords)}；"
+                "如需调整时间或主题，请编辑该买方订阅，系统不会自动改成其他买方。"
             )
         return SearchExplanation(
             outcome=outcome,

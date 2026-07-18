@@ -5,9 +5,10 @@ import ipaddress
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +17,8 @@ from bidpilot import __version__
 from bidpilot.config import Settings, get_settings
 from bidpilot.control import ControlPlane
 from bidpilot.models import (
+    BuyerRadarResult,
+    BuyerSubscriptionCreate,
     CompanyProfile,
     CompanyProfileUpdate,
     EvidenceAnswer,
@@ -29,6 +32,7 @@ from bidpilot.models import (
     OpportunityStage,
     OpportunityUpdate,
     RunResult,
+    Subscription,
     SubscriptionCreate,
     SubscriptionUpdate,
     TenderFeedback,
@@ -84,12 +88,30 @@ class ConfigEditTokenResponse(BaseModel):
     expires_in: int = Field(description="令牌剩余有效秒数")
 
 
+class DeleteResultResponse(BaseModel):
+    deleted: Literal[True] = Field(
+        default=True,
+        description="目标资源已完成删除；不存在或已删除时接口返回 404 而不是 false",
+    )
+
+
+class DeletedCountResponse(BaseModel):
+    deleted_count: int = Field(
+        ge=0,
+        description="本次批量操作实际删除的本地记录数量",
+    )
+
+
 OPENAPI_TAGS = [
     {"name": "系统", "description": "健康检查、运行状态与数据源诊断。"},
     {"name": "意图解析", "description": "把中文自然语言编译为可执行的结构化检索条件。"},
     {"name": "情报任务", "description": "执行多源检索、证据聚合、报告生成与投递。"},
     {"name": "报告", "description": "列出和下载系统真实生成的 Word 报告。"},
     {"name": "长期订阅", "description": "创建、编辑、暂停、恢复和审计持久化订阅。"},
+    {
+        "name": "买方雷达",
+        "description": "只聚合本机已抓取标讯，查看采购单位活动、公告生命周期、主题和证据入口，并创建精确买方监控订阅。",
+    },
     {"name": "机会工作台", "description": "把已抓取标讯转为项目级跟进机会并查看生命周期。"},
     {"name": "决策智能", "description": "管理企业画像、本轮证据快照和用户反馈学习数据。"},
     {"name": "配置中心", "description": "安全管理模型与推送通道，并执行真实连通性测试。"},
@@ -480,6 +502,7 @@ def create_app(
 
     @app.delete(
         "/api/v1/feedback/{canonical_id}/{version_hash}",
+        response_model=DeleteResultResponse,
         **_api_docs(
             tag="决策智能",
             summary="删除一条标讯反馈",
@@ -509,6 +532,7 @@ def create_app(
 
     @app.delete(
         "/api/v1/feedback",
+        response_model=DeletedCountResponse,
         **_api_docs(
             tag="决策智能",
             summary="清空全部标讯反馈",
@@ -572,6 +596,128 @@ def create_app(
             filename=path.name,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         )
+
+    @app.get(
+        "/api/v1/buyers",
+        response_model=BuyerRadarResult,
+        **_api_docs(
+            tag="买方雷达",
+            summary="查看本地买方活动雷达",
+            purpose=(
+                "只读取本机 SQLite 的 tender_items，把已经抓取并验证过的公告按采购单位聚合，"
+                "展示公告数、估算项目数、最近活动、生命周期阶段、高频主题和可点击原文。"
+                "不会联网补数、调用模型、生成联系人或推测未来采购。"
+            ),
+            parameters=(
+                "查询参数 `search` 可按采购单位、主题或来源名称筛选，最长 100 字；"
+                "`limit` 控制返回采购单位卡片数，范围 1～200、默认 100；"
+                "`activity_limit` 控制每张卡的近期证据条数，范围 1～100、默认 5。"
+            ),
+            returns=(
+                "HTTP 200；返回采购单位卡片、全局采购单位识别覆盖率、未识别公告数和损坏版本数。"
+                "`notice_count` 按 canonical_id 去重，`project_count` 按既有 project_key 估算，"
+                "证据 URL 全部从本地标讯快照回填。"
+            ),
+            side_effects="无。只读本地 tender_items，不访问招投标网站、不刷新授权、不调用 LLM，也不修改订阅。",
+            errors=(
+                "422：search、limit 或 activity_limit 不符合长度/范围约束；"
+                "500：本地数据库不可读。单条历史快照损坏不会让接口失败，而会计入 invalid_version_count。"
+            ),
+            example="GET /api/v1/buyers?search=大学&limit=20&activity_limit=5",
+            responses={422: "查询参数格式或范围非法。"},
+        ),
+    )
+    async def list_buyer_radar(
+        search: str = Query(
+            default="",
+            max_length=100,
+            description="按采购单位名称、高频主题或来源名称进行本地筛选",
+        ),
+        limit: int = Query(
+            default=100,
+            ge=1,
+            le=200,
+            description="最多返回多少张采购单位卡片",
+        ),
+        activity_limit: int = Query(
+            default=5,
+            ge=1,
+            le=100,
+            description="每张采购单位卡片最多返回多少条近期公告证据",
+        ),
+    ):
+        return service.list_buyer_radar(
+            search=search,
+            limit=limit,
+            activity_limit=activity_limit,
+        )
+
+    @app.post(
+        "/api/v1/buyers/{buyer_id}/subscriptions",
+        response_model=Subscription,
+        **_api_docs(
+            tag="买方雷达",
+            summary="从本地买方创建精准监控订阅",
+            purpose=(
+                "选择买方雷达中的真实采购单位，并把它作为 buyer_keywords 精确过滤条件创建长期任务。"
+                "自然语言仍经过统一混合意图解析，后续运行仍使用统一检索计划、来源授权、调度租约、"
+                "增量投递账本和失败重试；买方名称只来自本地记录，不由模型猜测。"
+            ),
+            parameters=(
+                "路径参数 `buyer_id` 是 GET /api/v1/buyers 返回的 24 位本地稳定哈希。"
+                "JSON 与普通订阅一致：`name`、含明确计划的 `query`、`delivery_channel`、"
+                "`delivery_policy`（always/on_change）和 `run_immediately`。"
+            ),
+            returns=(
+                "HTTP 200；返回标准订阅对象。`spec.buyer_keywords` 明确列出锁定的采购单位，"
+                "便于用户和审计人员确认后续结果不会混入其他买方。"
+            ),
+            side_effects=(
+                "【有副作用】可能调用用户配置的意图模型，随后写入 subscriptions。"
+                "`run_immediately=true` 只把任务设为立即到期；持久 worker 领取后才会访问已接入来源、"
+                "使用用户本人授权的会话、生成报告并按配置投递。不会生成联系人或采购预测。"
+            ),
+            errors=(
+                "404：buyer_id 不对应当前本地买方；422：请求字段非法、自然语言没有可调度计划，"
+                "投递通道尚未配置，或本地采购单位名称无法形成可靠来源查询。"
+                "来源登录、网络和投递错误发生在实际运行中并写入运行审计。"
+            ),
+            example=(
+                "POST /api/v1/buyers/0123456789abcdef01234567/subscriptions\n"
+                '{"name":"安徽大学采购监控","query":"每天9点汇总最近30天服务器采购公告",'
+                '"delivery_channel":"local","delivery_policy":"on_change","run_immediately":false}'
+            ),
+            responses={
+                404: "本地买方雷达中没有该采购单位。",
+                422: "计划、通道或请求字段校验失败。",
+            },
+        ),
+    )
+    async def create_buyer_subscription(
+        buyer_id: Annotated[
+            str,
+            ApiPath(
+                min_length=24,
+                max_length=24,
+                pattern=r"^[0-9a-f]{24}$",
+                description="GET /api/v1/buyers 返回的采购单位本地稳定哈希",
+            ),
+        ],
+        request: BuyerSubscriptionCreate,
+    ):
+        try:
+            return await service.create_buyer_subscription(
+                buyer_id,
+                request.name,
+                request.query,
+                request.delivery_channel,
+                request.delivery_policy,
+                request.run_immediately,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post(
         "/api/v1/subscriptions",
@@ -738,6 +884,7 @@ def create_app(
 
     @app.delete(
         "/api/v1/subscriptions/{subscription_id}",
+        response_model=DeleteResultResponse,
         **_api_docs(
             tag="长期订阅",
             summary="删除订阅及增量账本",
@@ -880,6 +1027,34 @@ def create_app(
             return service.update_opportunity(opportunity_id, request)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.delete(
+        "/api/v1/opportunities/{opportunity_id}",
+        response_model=DeleteResultResponse,
+        **_api_docs(
+            tag="机会工作台",
+            summary="从机会工作台删除卡片",
+            purpose=(
+                "移除用户不再跟进的机会卡片及其中的阶段、负责人、下一步、备注和标签。"
+                "这只是工作台整理操作；同一真实标讯以后仍可重新加入。"
+            ),
+            parameters="路径参数 `opportunity_id`：机会卡片的本地 ID。无请求体；网页端应先进行二次确认。",
+            returns='HTTP 200；删除成功返回 `{"deleted": true}`。',
+            side_effects=(
+                "【不可逆工作台操作】只删除 opportunities 中指定的一行。不会删除 tender_items 原始标讯、"
+                "runs/run_items 运行证据、reports 报告、反馈、订阅或投递账本。已删卡片的人工跟进字段不会自动恢复。"
+            ),
+            errors="404：机会 ID 不存在或已经删除。数据库不可用时返回 500。",
+            example="DELETE /api/v1/opportunities/8f1c...",
+            responses={404: "机会不存在或已删除。"},
+        ),
+    )
+    async def delete_opportunity(opportunity_id: str):
+        try:
+            service.delete_opportunity(opportunity_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+        return {"deleted": True}
 
     @app.get(
         "/api/v1/opportunities/{opportunity_id}/timeline",

@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from bidpilot.buyer_radar import BuyerRadarAggregator
 from bidpilot.clean import stable_hash
 from bidpilot.config import Settings
 from bidpilot.db import Database
@@ -19,6 +20,7 @@ from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
 from bidpilot.intent import IntentParser
 from bidpilot.models import (
+    BuyerRadarResult,
     CompanyProfile,
     CompanyProfileUpdate,
     DeliveryPolicy,
@@ -27,6 +29,7 @@ from bidpilot.models import (
     FeedbackUpdate,
     IntelligenceBrief,
     IntentComparison,
+    IntentFieldDecision,
     Opportunity,
     OpportunityAssessmentSet,
     OpportunityCreate,
@@ -110,6 +113,7 @@ class BidPilotService:
         self.intelligence = IntelligenceBriefGenerator(settings)
         self.fit_assessor = OpportunityFitAssessor(settings)
         self.evidence_qa = RunEvidenceQACopilot(settings, self.db)
+        self.buyer_radar_aggregator = BuyerRadarAggregator()
         self.delivery = DeliveryManager(settings)
         self._live_results: dict[str, RunResult] = {}
         self.worker = None
@@ -133,6 +137,45 @@ class BidPilotService:
         self.runtime_config.load_persisted()
         return await self.intent_engine.compare(query, now=now)
 
+    @staticmethod
+    def _lock_buyer_filter(
+        spec: TenderQuerySpec,
+        buyer_keywords: list[str],
+    ) -> TenderQuerySpec:
+        """Attach a local-only buyer constraint and make the lock visible in the intent audit."""
+        validated = TenderQuerySpec.model_validate(
+            {**spec.model_dump(mode="python"), "buyer_keywords": buyer_keywords}
+        )
+        locked = validated.buyer_keywords
+        if not locked:
+            return spec
+        spec.buyer_keywords = locked
+        spec.resolution.decisions = [
+            decision for decision in spec.resolution.decisions if decision.field != "buyer_keywords"
+        ]
+        spec.resolution.decisions.append(
+            IntentFieldDecision(
+                field="buyer_keywords",
+                outcome="locked",
+                rule_value=[],
+                proposed_value=None,
+                final_value=locked,
+                reason="采购单位来自本地买方雷达，模型和来源响应都不能改写该精确过滤条件",
+            )
+        )
+        spec.resolution.trigger_reasons = list(
+            dict.fromkeys(
+                [
+                    *spec.resolution.trigger_reasons,
+                    "已应用本地买方雷达精确过滤",
+                ]
+            )
+        )
+        spec.resolution.summary = (
+            f"{spec.resolution.summary.rstrip('。')}；已锁定本地采购单位：{'、'.join(locked)}。"
+        )
+        return spec
+
     async def run_query(
         self,
         query: str,
@@ -140,6 +183,7 @@ class BidPilotService:
         subscription_id: str | None = None,
         delivery_channel: str | None = None,
         trigger_reason: str = "manual",
+        buyer_keywords: list[str] | None = None,
     ) -> RunResult:
         # A standalone worker is a separate process. Reload the allowlisted
         # SQLite-backed settings before every real run so Web changes apply
@@ -148,6 +192,8 @@ class BidPilotService:
         self.source_auth.load_persisted()
         started_at = datetime.now(ZoneInfo(self.settings.timezone))
         spec = await self.intent_engine.resolve(query, now=started_at)
+        if buyer_keywords:
+            spec = self._lock_buyer_filter(spec, buyer_keywords)
         if delivery_channel:
             spec.delivery_channel = delivery_channel
         channel = spec.delivery_channel
@@ -482,6 +528,34 @@ class BidPilotService:
             now,
         )
 
+    async def create_buyer_subscription(
+        self,
+        buyer_id: str,
+        name: str,
+        query: str,
+        delivery_channel: str = "local",
+        delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
+        run_immediately: bool = True,
+    ) -> Subscription:
+        """Create a normal subscription with a locally selected buyer identity locked in."""
+        rows = self.db.list_tender_items_for_buyer_radar()
+        buyer = self.buyer_radar_aggregator.find_buyer(rows, buyer_id)
+        if buyer is None:
+            raise KeyError("采购单位不存在或已不在本地买方雷达中")
+        if not 2 <= len(buyer.buyer_name) <= 60:
+            raise ValueError("采购单位名称长度必须为 2～60 字，当前记录无法建立可靠的来源查询")
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        spec = await self.parse_intent(query, now=now)
+        spec = self._lock_buyer_filter(spec, [buyer.buyer_name])
+        return self._create_subscription_from_spec(
+            name,
+            spec,
+            delivery_channel,
+            delivery_policy,
+            run_immediately,
+            now,
+        )
+
     def _create_subscription_from_spec(
         self,
         name: str,
@@ -498,13 +572,20 @@ class BidPilotService:
         delivery_policy = DeliveryPolicy(delivery_policy)
         spec.delivery_channel = delivery_channel
         for row in self.db.list_subscriptions():
-            if row["raw_query"] == spec.raw_query and row["delivery_channel"] == delivery_channel:
-                existing = self._subscription_from_row(row)
-                if run_immediately and not existing.in_progress:
-                    self.db.set_subscription_due(row["id"], now, enabled=True)
-                    row = self.db.get_subscription(row["id"])
-                    assert row is not None
-                return self._subscription_from_row(row)
+            if row["raw_query"] != spec.raw_query or row["delivery_channel"] != delivery_channel:
+                continue
+            try:
+                existing_spec = TenderQuerySpec.model_validate_json(row["spec_json"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if existing_spec.buyer_keywords != spec.buyer_keywords:
+                continue
+            existing = self._subscription_from_row(row)
+            if run_immediately and not existing.in_progress:
+                self.db.set_subscription_due(row["id"], now, enabled=True)
+                row = self.db.get_subscription(row["id"])
+                assert row is not None
+            return self._subscription_from_row(row)
 
         subscription_id = uuid4().hex
         next_run_at = now if run_immediately else next_schedule_time(spec.schedule, now)
@@ -565,6 +646,7 @@ class BidPilotService:
                     subscription_id=subscription_id,
                     delivery_channel=row["delivery_channel"],
                     trigger_reason=trigger_reason,
+                    buyer_keywords=spec.buyer_keywords,
                 )
             except RunExecutionError as exc:
                 failed_at = datetime.now(ZoneInfo(self.settings.timezone))
@@ -669,6 +751,8 @@ class BidPilotService:
             spec = self.parser.parse(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
+            if current.spec.buyer_keywords:
+                spec = self._lock_buyer_filter(spec, current.spec.buyer_keywords)
             spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
             next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
         self.db.update_subscription(
@@ -704,6 +788,8 @@ class BidPilotService:
             spec = await self.parse_intent(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
+            if current.spec.buyer_keywords:
+                spec = self._lock_buyer_filter(spec, current.spec.buyer_keywords)
             spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
             next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
         self.db.update_subscription(
@@ -880,6 +966,22 @@ class BidPilotService:
     def clear_feedback(self) -> int:
         return self.db.clear_feedback()
 
+    def list_buyer_radar(
+        self,
+        *,
+        search: str = "",
+        limit: int = 100,
+        activity_limit: int = 5,
+    ) -> BuyerRadarResult:
+        """Aggregate persisted notices only; this method never calls sources or an LLM."""
+        rows = self.db.list_tender_items_for_buyer_radar()
+        return self.buyer_radar_aggregator.aggregate(
+            rows,
+            search=search,
+            limit=min(max(limit, 1), 200),
+            activity_limit=min(max(activity_limit, 1), 100),
+        )
+
     def list_reports(self) -> list[dict]:
         return self.db.list_reports()
 
@@ -1006,6 +1108,10 @@ class BidPilotService:
         result = self.get_opportunity(opportunity_id)
         assert result is not None
         return result
+
+    def delete_opportunity(self, opportunity_id: str) -> None:
+        if not self.db.delete_opportunity(opportunity_id):
+            raise KeyError(f"机会不存在：{opportunity_id}")
 
     def opportunity_timeline(self, opportunity_id: str) -> list[dict]:
         opportunity = self.db.get_opportunity(opportunity_id)

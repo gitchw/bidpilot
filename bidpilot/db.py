@@ -502,6 +502,19 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
+    def list_tender_items_for_buyer_radar(self) -> list[dict[str, Any]]:
+        """Return local evidence rows newest-first without visiting any external source."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT canonical_id, version_hash, project_key, title, payload_json,
+                       first_seen_at, last_seen_at
+                FROM tender_items
+                ORDER BY last_seen_at DESC, first_seen_at DESC, rowid DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_project_items(self, project_key: str) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(
@@ -627,6 +640,12 @@ class Database:
             cursor = conn.execute(
                 f"UPDATE opportunities SET {', '.join(assignments)} WHERE id=?", values
             )
+        return cursor.rowcount > 0
+
+    def delete_opportunity(self, opportunity_id: str) -> bool:
+        """Delete only the user workspace row; captured tender evidence remains untouched."""
+        with self.connection() as conn:
+            cursor = conn.execute("DELETE FROM opportunities WHERE id=?", (opportunity_id,))
         return cursor.rowcount > 0
 
     def undelivered_keys(
