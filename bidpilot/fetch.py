@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -85,6 +86,27 @@ class HttpFetcher:
             retries=retries,
         )
 
+    async def post_json(
+        self,
+        url: str,
+        *,
+        json_body: dict[str, Any],
+        headers: dict[str, str] | None = None,
+        encoding: str | None = None,
+        retries: int = 2,
+    ) -> FetchedPage:
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
+        return await self.request(
+            "POST",
+            url,
+            content=json.dumps(json_body, ensure_ascii=False).encode("utf-8"),
+            headers=request_headers,
+            encoding=encoding,
+            retries=retries,
+        )
+
     async def request(
         self,
         method: str,
@@ -92,6 +114,7 @@ class HttpFetcher:
         *,
         params: dict[str, Any] | list[tuple[str, Any]] | None = None,
         data: dict[str, Any] | list[tuple[str, Any]] | None = None,
+        content: bytes | None = None,
         headers: dict[str, str] | None = None,
         encoding: str | None = None,
         retries: int = 2,
@@ -108,7 +131,12 @@ class HttpFetcher:
                         await asyncio.sleep(wait_for)
                     started = time.perf_counter()
                     response = await self._client.request(
-                        method, url, params=params, data=data, headers=headers
+                        method,
+                        url,
+                        params=params,
+                        data=data,
+                        content=content,
+                        headers=headers,
                     )
                     self._last_request[host] = time.monotonic()
                 if response.status_code in {429, 500, 502, 503, 504}:

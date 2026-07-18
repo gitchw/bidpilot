@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from bidpilot.config import Settings
 from bidpilot.fetch import HttpFetcher
 from bidpilot.intent import IntentParser
-from bidpilot.sources import CEBPubServiceSource, PLAPSource, ZYCGSource
+from bidpilot.sources import CEBPubServiceSource, PLAPSource, SZGGZYSource, ZYCGSource
 
 
 async def run(query: str, output: Path) -> dict:
@@ -19,7 +19,12 @@ async def run(query: str, output: Path) -> dict:
         query,
         now=datetime.now(ZoneInfo(settings.timezone)),
     )
-    sources = [CEBPubServiceSource(settings), PLAPSource(settings), ZYCGSource(settings)]
+    sources = [
+        CEBPubServiceSource(settings),
+        PLAPSource(settings),
+        ZYCGSource(settings),
+        SZGGZYSource(settings),
+    ]
     async with HttpFetcher(settings) as fetcher:
         results = await asyncio.gather(
             *(source.search(spec, fetcher) for source in sources),

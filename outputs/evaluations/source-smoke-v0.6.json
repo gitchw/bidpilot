@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "evaluated_at": "2026-07-18T15:44:35.836215+08:00",
+  "evaluated_at": "2026-07-18T15:56:41.101829+08:00",
   "query": "最近1个月全国服务器采购信息",
   "sources": [
     {
@@ -135,6 +135,51 @@
           "region": null,
           "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422",
           "body_length": 0
+        }
+      ]
+    },
+    {
+      "source_id": "szggzy",
+      "source": "深圳公共资源交易中心",
+      "status": "ok",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "深圳官方平台检索完成，扫描 20 条，读取 20 条公开详情。仅使用公告公开接口，不登录投标工作台或代替用户完成 CA。",
+      "items": [
+        {
+          "title": "【初始合同】深圳技术大学高性能GPU服务器竞价采购合同公示",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "深圳",
+          "url": "http://zfcg.szggzy.com:8081/gsgg/002002/002002001/20260717/edb15f5a-e6ed-4e58-b966-bd58c6e28516.html",
+          "body_length": 420
+        },
+        {
+          "title": "南方科技大学服务器及配套设备采购意向公开",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "深圳",
+          "url": "http://zfcg.szggzy.com:8081/gsgg/002001/002001001/002001001002/20260714/4cfbaba2-1b88-4bf8-80b8-cc4d8ac028aa.html",
+          "body_length": 228
+        },
+        {
+          "title": "深圳理工大学服务器等一批设备采购项目意向公开",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "url": "http://zfcg.szggzy.com:8081/gsgg/002001/002001001/002001001002/20260713/a6f2740c-3d7f-462d-b68c-bb08850094ce.html",
+          "body_length": 438
+        },
+        {
+          "title": "视频云存储服务器采购项目中标结果更正公告",
+          "published_at": "2026-07-10T00:00:00",
+          "region": "深圳",
+          "url": "http://zfcg.szggzy.com:8081/gsgg/002001/002001004/002001004001/20260710/84832fe6-bdd8-41d5-a62f-15cf4193bd5b.html",
+          "body_length": 1143
+        },
+        {
+          "title": "【初始合同】深圳市妇幼保健院信创算力服务器购置合同公示",
+          "published_at": "2026-07-09T00:00:00",
+          "region": "深圳",
+          "url": "http://zfcg.szggzy.com:8081/gsgg/002002/002002001/20260709/43f8248e-bdd9-4f69-85bd-2ab87ca61070.html",
+          "body_length": 462
         }
       ]
     }

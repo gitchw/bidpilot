@@ -42,6 +42,7 @@ from bidpilot.sources import (
     MofcomSource,
     PLAPSource,
     QianlimaSource,
+    SZGGZYSource,
     ZYCGSource,
 )
 from bidpilot.sources.base import SourceAdapter
@@ -75,6 +76,7 @@ class BidPilotService:
         self.parser = IntentParser(settings.timezone)
         self.intent_engine = HybridIntentEngine(settings, self.parser)
         self.sources = sources or [
+            SZGGZYSource(settings),
             CEBPubServiceSource(settings),
             PLAPSource(settings),
             ZYCGSource(settings),

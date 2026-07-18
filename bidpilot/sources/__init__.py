@@ -5,6 +5,7 @@ from bidpilot.sources.ggzy import GGZYSource
 from bidpilot.sources.mofcom import MofcomSource
 from bidpilot.sources.plap import PLAPSource
 from bidpilot.sources.qianlima import QianlimaSource
+from bidpilot.sources.szggzy import SZGGZYSource
 from bidpilot.sources.zycg import ZYCGSource
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "MofcomSource",
     "PLAPSource",
     "QianlimaSource",
+    "SZGGZYSource",
     "ZYCGSource",
 ]

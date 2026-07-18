@@ -1,0 +1,25 @@
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "totalElements": 1,
+    "content": [
+      {
+        "id": 20359755,
+        "contentId": 20359755,
+        "channelId": 2850,
+        "title": "住宅小区新能源汽车充电设施建设管理及新技术应用推广技术服务（2026年度）的采购结果公告",
+        "releaseTime": "2026-04-30 00:00:00",
+        "areaName": "市本级",
+        "purchaseMan": "深圳市住房和建设局",
+        "winnerName": "深圳市新能源汽车运营企业协会",
+        "projectCode": "SZZXDL-2026-00668",
+        "projectName": "住宅小区新能源汽车充电设施建设管理及新技术应用推广技术服务（2026年度）",
+        "appNoticeTypeName": "中标公告",
+        "noticeTypeName": "中标（成交）结果公示",
+        "tradeType": "集中采购",
+        "linkTo": ""
+      }
+    ]
+  }
+}

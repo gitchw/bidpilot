@@ -12,6 +12,7 @@ from bidpilot.sources.ggzy import GGZYSource
 from bidpilot.sources.mofcom import MofcomSource
 from bidpilot.sources.plap import PLAPSource
 from bidpilot.sources.qianlima import QianlimaSource
+from bidpilot.sources.szggzy import SZGGZYSource
 from bidpilot.sources.zycg import ZYCGSource
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -168,3 +169,22 @@ def test_ceb_public_list_parser_keeps_bulletin_id_region_and_publisher():
     assert first.source_metadata["industry"] == "信息电子"
     assert "中国电信阳光采购网" in first.body
     assert items[1].event_type == EventType.AWARD
+
+
+def test_szggzy_public_api_parser_and_detail_preserve_local_evidence():
+    page = json.loads(fixture("szggzy_page.json"))
+    item = SZGGZYSource.parse_page_response(page)[0]
+    assert item.source == "深圳公共资源交易中心"
+    assert item.region == "深圳"
+    assert item.buyer == "深圳市住房和建设局"
+    assert item.project_id == "SZZXDL-2026-00668"
+    assert item.event_type == EventType.AWARD
+    assert "contentId=20359755" in item.source_url
+
+    detailed = SZGGZYSource.apply_detail(
+        item,
+        json.loads(fixture("szggzy_detail.json")),
+    )
+    assert "成交供应商" in detailed.body
+    assert detailed.source_metadata["detail_loaded"] is True
+    assert detailed.attachments[0].url == "https://www.szggzy.com/upload/result.pdf"

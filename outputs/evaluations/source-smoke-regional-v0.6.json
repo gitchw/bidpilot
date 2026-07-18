@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "evaluated_at": "2026-07-18T15:57:15.901409+08:00",
+  "query": "最近3个月深圳充电设施采购信息",
+  "sources": [
+    {
+      "source_id": "cebpubservice",
+      "source": "中国招标投标公共服务平台",
+      "status": "partial",
+      "scanned_count": 0,
+      "candidate_count": 0,
+      "message": "中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。",
+      "items": []
+    },
+    {
+      "source_id": "plap",
+      "source": "军队采购网",
+      "status": "ok",
+      "scanned_count": 1,
+      "candidate_count": 0,
+      "message": "军队采购网公开采购大厅检索完成，官方接口报告 1 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。",
+      "items": []
+    },
+    {
+      "source_id": "zycg",
+      "source": "中央政府采购网",
+      "status": "ok",
+      "scanned_count": 0,
+      "candidate_count": 0,
+      "message": "中央政府采购网公开公告搜索完成。",
+      "items": []
+    },
+    {
+      "source_id": "szggzy",
+      "source": "深圳公共资源交易中心",
+      "status": "ok",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "深圳官方平台检索完成，扫描 20 条，读取 20 条公开详情。仅使用公告公开接口，不登录投标工作台或代替用户完成 CA。",
+      "items": [
+        {
+          "title": "住宅小区新能源汽车充电设施建设管理及新技术应用推广技术服务(2026年度)的采购结果公告",
+          "published_at": "2026-04-30T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/static/jygg/details.html?contentId=20359755&channelId=2850",
+          "body_length": 980
+        },
+        {
+          "title": "安徽公司-2026年电动自行车充电设施安装承包商采购项目(二次)候选人公示",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/static/jygg/details.html?contentId=20515730&channelId=4161",
+          "body_length": 364
+        },
+        {
+          "title": "安徽公司-2026年电动自行车充电设施安装承包商采购项目(二次)",
+          "published_at": "2026-06-23T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/static/jygg/details.html?contentId=20471314&channelId=4161",
+          "body_length": 11303
+        },
+        {
+          "title": "安徽公司-2026年电动自行车充电设施安装承包商采购项目-采购失败公示",
+          "published_at": "2026-06-22T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/static/jygg/details.html?contentId=20469425&channelId=4161",
+          "body_length": 315
+        },
+        {
+          "title": "安徽公司-2026年电动汽车充电设施及车棚安装项目设计服务采购项目结果公示",
+          "published_at": "2026-06-22T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/static/jygg/details.html?contentId=20467684&channelId=4161",
+          "body_length": 266
+        }
+      ]
+    }
+  ]
+}
