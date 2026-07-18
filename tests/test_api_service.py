@@ -131,11 +131,28 @@ def test_api_query_to_docx_flow(tmp_path: Path):
         assert result["records"][0]["project_id"] == "AH-2026-001"
         assert result["intelligence_brief"]["status"] == "not_configured"
         assert result["intelligence_brief"]["priorities"][0]["evidence_id"] == "E01"
+        assert result["opportunity_assessments"]["status"] == "profile_missing"
+        assert result["opportunity_assessments"]["assessments"][0]["evidence_id"] == "E01"
         evidence = client.get(f"/api/v1/runs/{result['run_id']}/evidence")
         assert evidence.status_code == 200
         assert [item["canonical_id"] for item in evidence.json()] == [
             result["records"][0]["canonical_id"]
         ]
+        edit_token = client.post("/api/v1/config/edit-token").json()["edit_token"]
+        profile = client.put(
+            "/api/v1/company-profile",
+            headers={"X-BidPilot-Config-Token": edit_token},
+            json={"offerings": ["GPU 服务器"], "target_regions": ["安徽"]},
+        )
+        assert profile.status_code == 200
+        refreshed = client.post(f"/api/v1/runs/{result['run_id']}/assessments")
+        assert refreshed.json()["status"] == "not_configured"
+        assert (
+            client.get(f"/api/v1/runs/{result['run_id']}").json()["opportunity_assessments"][
+                "status"
+            ]
+            == "not_configured"
+        )
         report_name = Path(result["report_path"]).name
         download = client.get(f"/api/v1/reports/{report_name}")
         assert download.status_code == 200
@@ -668,6 +685,8 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
                 "intent_llm_confidence_threshold": 0.91,
                 "intelligence_brief_mode": "off",
                 "intelligence_brief_max_records": 9,
+                "decision_assessment_mode": "off",
+                "decision_assessment_max_records": 11,
                 "smtp_port": 587,
                 "smtp_security": "starttls",
             },
@@ -700,6 +719,8 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
     assert persisted.ai.intent_llm_confidence_threshold == 0.91
     assert persisted.ai.intelligence_brief_mode == "off"
     assert persisted.ai.intelligence_brief_max_records == 9
+    assert persisted.ai.decision_assessment_mode == "off"
+    assert persisted.ai.decision_assessment_max_records == 11
     assert restarted.settings.smtp_port == 587
     with restarted.db.connection() as conn:
         stored_secret = conn.execute(
@@ -738,7 +759,7 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
                 continue
             operations.append((method.upper(), path, operation))
 
-    assert len(operations) == 45
+    assert len(operations) == 46
     for method, path, operation in operations:
         description = operation.get("description", "")
         assert path in api_reference, f"{method} {path} 未写入独立 API 参考"

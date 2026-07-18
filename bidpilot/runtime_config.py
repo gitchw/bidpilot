@@ -59,6 +59,8 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "retrieval_semantic_threshold",
         "intelligence_brief_mode",
         "intelligence_brief_max_records",
+        "decision_assessment_mode",
+        "decision_assessment_max_records",
         "feishu_webhook_url",
         "feishu_webhook_secret",
         "feishu_app_id",
@@ -111,6 +113,16 @@ class RuntimeConfigUpdate(BaseModel):
     retrieval_semantic_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
     intelligence_brief_mode: Literal["off", "auto"] | None = None
     intelligence_brief_max_records: int | None = Field(default=None, ge=3, le=25)
+    decision_assessment_mode: Literal["off", "auto"] | None = Field(
+        default=None,
+        description="关闭或启用企业画像语义复核；关闭后仍使用本地计分和推荐",
+    )
+    decision_assessment_max_records: int | None = Field(
+        default=None,
+        ge=3,
+        le=25,
+        description="单轮最多发送给模型做语义复核的证据数；其余结果仍由本地规则逐条判断",
+    )
 
     feishu_webhook_url: SecretStr | None = None
     feishu_webhook_secret: SecretStr | None = None
@@ -191,6 +203,12 @@ class AIConfigView(BaseModel):
     retrieval_semantic_threshold: float
     intelligence_brief_mode: Literal["off", "auto"]
     intelligence_brief_max_records: int
+    decision_assessment_mode: Literal["off", "auto"] = Field(
+        description="企业画像 AI 语义复核开关；本地计分始终生效"
+    )
+    decision_assessment_max_records: int = Field(
+        description="最多送入模型复核的证据数，不是最终判断条数上限"
+    )
     llm_api_key: SecretState
     ready: bool
 
@@ -362,6 +380,8 @@ class RuntimeConfiguration:
                 retrieval_semantic_threshold=self.settings.retrieval_semantic_threshold,
                 intelligence_brief_mode=self.settings.intelligence_brief_mode,
                 intelligence_brief_max_records=self.settings.intelligence_brief_max_records,
+                decision_assessment_mode=self.settings.decision_assessment_mode,
+                decision_assessment_max_records=self.settings.decision_assessment_max_records,
                 llm_api_key=secret("llm_api_key"),
                 ready=bool(self.settings.llm_base_url and self.settings.llm_model),
             ),

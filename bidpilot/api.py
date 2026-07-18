@@ -22,6 +22,7 @@ from bidpilot.models import (
     HealthResponse,
     IntentComparison,
     Opportunity,
+    OpportunityAssessmentSet,
     OpportunityCreate,
     OpportunityStage,
     OpportunityUpdate,
@@ -335,6 +336,27 @@ def create_app(
     async def get_run_evidence(run_id: str):
         try:
             return service.get_run_evidence(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.post(
+        "/api/v1/runs/{run_id}/assessments",
+        response_model=OpportunityAssessmentSet,
+        **_api_docs(
+            tag="决策智能",
+            summary="生成或刷新本轮企业适配判断",
+            purpose="把固定运行证据、当前企业画像和有界反馈记忆合并为逐机会适配分、建议参与/观察/跳过、风险与下一步；模型只找语义关联和逐字证据，不直接给分。",
+            parameters="路径 `run_id`；无请求体。模型开关、地址、超时和最多送入模型复核的条数来自网页配置中心；超出模型窗口的其余结果仍会获得本地判断。",
+            returns="HTTP 200；返回模型/回退状态、画像版本、反馈数量、逐条证据编号，以及本地回填的标题、采购人、发布日期、地域、阶段、原文、本地适配分、逐字证据摘录、反馈调整和建议；每条本轮可信结果都有判断。",
+            side_effects="可能调用用户配置的 OpenAI-compatible 模型并消耗额度；通过校验的结果按证据、画像、反馈和模型版本缓存，并写回该运行。不会访问标讯来源。",
+            errors="404：运行不存在；模型未配置、超时、JSON 非法、未知证据或数字幻觉不会返回 502，而是返回确定性安全回退。",
+            example="POST /api/v1/runs/2c4d8f0a1b2c3d4e5f60718293a4b5c6/assessments",
+            responses={404: "运行记录不存在。"},
+        ),
+    )
+    async def assess_run(run_id: str):
+        try:
+            return await service.assess_run(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
 

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from bidpilot.clean import stable_hash
 from bidpilot.config import Settings
 from bidpilot.db import Database
+from bidpilot.decision import OpportunityFitAssessor
 from bidpilot.delivery import DeliveryManager, DeliveryReceipt
 from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
@@ -25,6 +26,7 @@ from bidpilot.models import (
     IntelligenceBrief,
     IntentComparison,
     Opportunity,
+    OpportunityAssessmentSet,
     OpportunityCreate,
     OpportunityStage,
     OpportunityUpdate,
@@ -100,6 +102,7 @@ class BidPilotService:
         self.source_auth = SourceAuthManager(self.db, settings, self.sources)
         self.pipeline = TenderPipeline(settings, self.sources)
         self.intelligence = IntelligenceBriefGenerator(settings)
+        self.fit_assessor = OpportunityFitAssessor(settings)
         self.delivery = DeliveryManager(settings)
         self._live_results: dict[str, RunResult] = {}
         self.worker = None
@@ -180,7 +183,10 @@ class BidPilotService:
                 [record.model_dump(mode="json") for record in output_records],
             )
 
-            intelligence_brief = await self._build_intelligence_brief(spec, output_records)
+            intelligence_brief, opportunity_assessments = await asyncio.gather(
+                self._build_intelligence_brief(spec, output_records),
+                self._build_opportunity_assessments(output_records),
+            )
 
             if output_records or not incremental:
                 report_path = generate_report(
@@ -274,6 +280,7 @@ class BidPilotService:
                 search_explanation=pipeline_result.search_explanation,
                 retrieval=pipeline_result.retrieval,
                 intelligence_brief=intelligence_brief,
+                opportunity_assessments=opportunity_assessments,
                 report_path=str(report_path) if report_path else None,
                 new_count=len(output_records),
                 started_at=started_at,
@@ -292,6 +299,7 @@ class BidPilotService:
                 diagnostics=diagnostics_dump,
                 retrieval=pipeline_result.retrieval.model_dump(mode="json"),
                 brief=intelligence_brief.model_dump(mode="json"),
+                assessment=opportunity_assessments.model_dump(mode="json"),
             )
             self._live_results[run_id] = result
             return result
@@ -344,6 +352,57 @@ class BidPilotService:
                 brief.model_dump(mode="json"),
             )
         return brief
+
+    async def _build_opportunity_assessments(
+        self,
+        records: list[TenderRecord],
+    ) -> OpportunityAssessmentSet:
+        profile = self.get_company_profile()
+        feedback = self.list_feedback()
+        cache_key = self.fit_assessor.cache_key(records, profile, feedback)
+        if (
+            records
+            and self.settings.decision_assessment_mode == "auto"
+            and self.settings.llm_base_url
+            and self.settings.llm_model
+            and profile.version != "empty"
+        ):
+            cached = self.db.get_cached_decision_assessment(cache_key)
+            if cached:
+                try:
+                    assessment = OpportunityAssessmentSet.model_validate(cached)
+                    if assessment.mode == "llm_grounded":
+                        return assessment.model_copy(
+                            update={
+                                "status": "cached",
+                                "cache_hit": True,
+                                "summary": (
+                                    "本轮证据、企业画像、反馈和模型配置均未变化，"
+                                    "已复用证据约束适配判断缓存。"
+                                ),
+                            }
+                        )
+                except (TypeError, ValueError):
+                    pass
+        assessment = await self.fit_assessor.generate(records, profile, feedback)
+        if assessment.mode == "llm_grounded" and assessment.status == "applied":
+            self.db.set_cached_decision_assessment(
+                cache_key,
+                assessment.model_dump(mode="json"),
+            )
+        return assessment
+
+    async def assess_run(self, run_id: str) -> OpportunityAssessmentSet:
+        self.runtime_config.load_persisted()
+        records = self.get_run_evidence(run_id)
+        assessment = await self._build_opportunity_assessments(records)
+        self.db.update_run_assessment(run_id, assessment.model_dump(mode="json"))
+        live = self._live_results.get(run_id)
+        if live is not None:
+            self._live_results[run_id] = live.model_copy(
+                update={"opportunity_assessments": assessment}
+            )
+        return assessment
 
     def _channel_is_configured(self, channel: str) -> bool:
         if channel == "feishu":
@@ -673,6 +732,9 @@ class BidPilotService:
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
             row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
+            row["opportunity_assessments"] = (
+                json.loads(row.pop("assessment_json", "{}") or "{}") or None
+            )
         return rows
 
     def list_delivery_attempts(self, subscription_id: str | None = None) -> list[dict]:
@@ -685,6 +747,9 @@ class BidPilotService:
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
             row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
+            row["opportunity_assessments"] = (
+                json.loads(row.pop("assessment_json", "{}") or "{}") or None
+            )
         return rows
 
     def get_run(self, run_id: str) -> dict | RunResult | None:
@@ -696,6 +761,9 @@ class BidPilotService:
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
             row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
+            row["opportunity_assessments"] = (
+                json.loads(row.pop("assessment_json", "{}") or "{}") or None
+            )
         return row
 
     @staticmethod

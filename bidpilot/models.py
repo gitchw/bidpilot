@@ -132,7 +132,7 @@ class RetrievalTrace(BaseModel):
 class BriefEvidence(BaseModel):
     """A locally hydrated evidence reference; the model never controls its URL."""
 
-    evidence_id: str = Field(pattern=r"^E\d{2}$", description="本轮稳定证据编号")
+    evidence_id: str = Field(pattern=r"^E\d{2,6}$", description="本轮稳定证据编号")
     record_id: str = Field(description="本地可信标讯规范 ID")
     title: str = Field(max_length=500)
     buyer: str | None = Field(default=None, max_length=300)
@@ -271,6 +271,58 @@ class CompanyProfileUpdate(BaseModel):
 class CompanyProfile(CompanyProfileUpdate):
     version: str = Field(default="empty", description="画像内容的本地稳定版本，用于缓存失效")
     updated_at: datetime | None = Field(default=None, description="最后一次网页保存时间")
+
+
+class OpportunityFitAssessment(BaseModel):
+    evidence_id: str = Field(pattern=r"^E\d{2,6}$")
+    canonical_id: str
+    version_hash: str
+    title: str = Field(max_length=500)
+    buyer: str | None = Field(default=None, max_length=300)
+    published_at: datetime
+    region: str | None = Field(default=None, max_length=120)
+    event_type: str = Field(max_length=40)
+    source_url: str = Field(max_length=3000)
+    base_fit_score: float = Field(ge=0, le=100)
+    personalization_adjustment: float = Field(ge=-12, le=12)
+    fit_score: float = Field(ge=0, le=100)
+    recommendation: Literal["bid", "watch", "skip"]
+    matched_profile_terms: list[str] = Field(default_factory=list, max_length=12)
+    evidence_quotes: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description="模型或本地判断实际引用的公告原文短句；模型返回时必须逐字存在于该条证据",
+    )
+    gaps: list[str] = Field(default_factory=list, max_length=5)
+    reason: str = Field(max_length=360)
+    risk: str = Field(default="", max_length=360)
+    next_action: str = Field(max_length=360)
+    personalization_reason: str = Field(default="", max_length=360)
+
+
+class OpportunityAssessmentSet(BaseModel):
+    assessment_version: str = "fit-v1"
+    mode: Literal["llm_grounded", "deterministic"] = "deterministic"
+    status: Literal[
+        "applied",
+        "cached",
+        "disabled",
+        "not_configured",
+        "profile_missing",
+        "invalid_response",
+        "unavailable",
+        "empty",
+    ]
+    profile_version: str = "empty"
+    profile_configured: bool = False
+    feedback_count: int = Field(default=0, ge=0)
+    assessments: list[OpportunityFitAssessment] = Field(default_factory=list)
+    evidence_catalog: list[BriefEvidence] = Field(default_factory=list)
+    generated_at: datetime
+    latency_ms: int = Field(default=0, ge=0)
+    repair_count: int = Field(default=0, ge=0, le=1)
+    cache_hit: bool = False
+    summary: str = Field(max_length=600)
 
 
 class EventType(StrEnum):
@@ -610,6 +662,10 @@ class RunResult(BaseModel):
     intelligence_brief: IntelligenceBrief | None = Field(
         default=None,
         description="只引用本轮真实证据编号的采购需求、优先机会、风险和行动建议",
+    )
+    opportunity_assessments: OpportunityAssessmentSet | None = Field(
+        default=None,
+        description="结合企业画像和有界反馈学习生成的逐机会适配判断",
     )
     report_path: str | None = None
     new_count: int = 0

@@ -55,6 +55,7 @@ class Database:
             diagnostics_json TEXT NOT NULL DEFAULT '[]',
             retrieval_json TEXT NOT NULL DEFAULT '{}',
             brief_json TEXT NOT NULL DEFAULT '{}',
+            assessment_json TEXT NOT NULL DEFAULT '{}',
             error TEXT
         );
         CREATE TABLE IF NOT EXISTS source_runs (
@@ -195,6 +196,12 @@ class Database:
             updated_at TEXT NOT NULL,
             PRIMARY KEY (canonical_id, version_hash)
         );
+        CREATE TABLE IF NOT EXISTS decision_assessments (
+            cache_key TEXT PRIMARY KEY,
+            assessment_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
@@ -209,6 +216,8 @@ class Database:
           ON run_items(run_id, position);
         CREATE INDEX IF NOT EXISTS idx_opportunity_feedback_updated
           ON opportunity_feedback(updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_decision_assessments_used
+          ON decision_assessments(last_used_at DESC);
         """
         with self.connection() as conn:
             conn.executescript(schema)
@@ -235,6 +244,7 @@ class Database:
             self._ensure_column(conn, "source_runs", "rejection_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "retrieval_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "brief_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "runs", "assessment_json", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_subscription "
                 "ON runs(subscription_id, started_at DESC)"
@@ -283,13 +293,15 @@ class Database:
         diagnostics: list[dict[str, Any]],
         retrieval: dict[str, Any] | None = None,
         brief: dict[str, Any] | None = None,
+        assessment: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE runs SET status=?, completed_at=?, report_path=?, result_count=?,
-                  new_count=?, diagnostics_json=?, retrieval_json=?, brief_json=?, error=? WHERE id=?
+                  new_count=?, diagnostics_json=?, retrieval_json=?, brief_json=?,
+                  assessment_json=?, error=? WHERE id=?
                 """,
                 (
                     status.value,
@@ -300,6 +312,7 @@ class Database:
                     json.dumps(diagnostics, ensure_ascii=False),
                     json.dumps(retrieval or {}, ensure_ascii=False),
                     json.dumps(brief or {}, ensure_ascii=False),
+                    json.dumps(assessment or {}, ensure_ascii=False),
                     error,
                     run_id,
                 ),
@@ -339,6 +352,43 @@ class Database:
                   last_used_at=excluded.last_used_at
                 """,
                 (cache_key, json.dumps(brief, ensure_ascii=False), now, now),
+            )
+
+    def get_cached_decision_assessment(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT assessment_json FROM decision_assessments WHERE cache_key=?",
+                (cache_key,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE decision_assessments SET last_used_at=? WHERE cache_key=?",
+                    (utcnow_iso(), cache_key),
+                )
+        if row is None:
+            return None
+        try:
+            return json.loads(row["assessment_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def set_cached_decision_assessment(
+        self,
+        cache_key: str,
+        assessment: dict[str, Any],
+    ) -> None:
+        now = utcnow_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO decision_assessments(
+                  cache_key, assessment_json, created_at, last_used_at
+                ) VALUES(?,?,?,?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                  assessment_json=excluded.assessment_json,
+                  last_used_at=excluded.last_used_at
+                """,
+                (cache_key, json.dumps(assessment, ensure_ascii=False), now, now),
             )
 
     def add_source_run(self, run_id: str, diagnostic: dict[str, Any]) -> None:
@@ -808,6 +858,14 @@ class Database:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return dict(row) if row else None
+
+    def update_run_assessment(self, run_id: str, assessment: dict[str, Any]) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "UPDATE runs SET assessment_json=? WHERE id=?",
+                (json.dumps(assessment, ensure_ascii=False), run_id),
+            )
+        return cursor.rowcount > 0
 
     def create_delivery_attempt(
         self,
