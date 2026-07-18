@@ -16,6 +16,9 @@ from bidpilot import __version__
 from bidpilot.config import Settings, get_settings
 from bidpilot.control import ControlPlane
 from bidpilot.models import (
+    CompanyProfile,
+    CompanyProfileUpdate,
+    FeedbackUpdate,
     HealthResponse,
     IntentComparison,
     Opportunity,
@@ -25,6 +28,7 @@ from bidpilot.models import (
     RunResult,
     SubscriptionCreate,
     SubscriptionUpdate,
+    TenderFeedback,
     TenderQuerySpec,
     TenderRecord,
 )
@@ -84,6 +88,7 @@ OPENAPI_TAGS = [
     {"name": "报告", "description": "列出和下载系统真实生成的 Word 报告。"},
     {"name": "长期订阅", "description": "创建、编辑、暂停、恢复和审计持久化订阅。"},
     {"name": "机会工作台", "description": "把已抓取标讯转为项目级跟进机会并查看生命周期。"},
+    {"name": "决策智能", "description": "管理企业画像、本轮证据快照和用户反馈学习数据。"},
     {"name": "配置中心", "description": "安全管理模型与推送通道，并执行真实连通性测试。"},
     {"name": "来源授权", "description": "由用户本人完成可见浏览器登录，并管理加密的来源会话。"},
 ]
@@ -311,6 +316,168 @@ def create_app(
         if result is None:
             raise HTTPException(status_code=404, detail="运行记录不存在")
         return result
+
+    @app.get(
+        "/api/v1/runs/{run_id}/evidence",
+        response_model=list[TenderRecord],
+        **_api_docs(
+            tag="决策智能",
+            summary="读取单次运行的固定证据快照",
+            purpose="恢复该轮最终返回给用户的可信标讯，为重启后的适配判断和证据问答提供不可串轮的输入。",
+            parameters="路径参数 `run_id` 为运行 ID；无请求体。",
+            returns="HTTP 200；按当时排名返回该轮 TenderRecord 快照，后续全局抓取不会把新公告混入历史运行。",
+            side_effects="无，只读 SQLite 的 run_items；不会调用模型或访问来源。",
+            errors="404：运行不存在。运行存在但当轮无新增时返回空数组。",
+            example="GET /api/v1/runs/2c4d8f0a1b2c3d4e5f60718293a4b5c6/evidence",
+            responses={404: "运行记录不存在。"},
+        ),
+    )
+    async def get_run_evidence(run_id: str):
+        try:
+            return service.get_run_evidence(run_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.get(
+        "/api/v1/company-profile",
+        response_model=CompanyProfile,
+        **_api_docs(
+            tag="决策智能",
+            summary="读取企业能力画像",
+            purpose="让网页和 AI 决策引擎读取用户主动维护的产品、优势、目标地域、排除条件与决策偏好。",
+            parameters="无请求体、无查询参数。",
+            returns="HTTP 200；返回画像字段、内容版本和最后保存时间；首次使用返回可直接编辑的空画像。",
+            side_effects="无。画像只从本机 SQLite 读取，不发送给招标来源。",
+            errors="数据库不可用时返回 500；空画像不是错误。",
+            example="GET /api/v1/company-profile",
+        ),
+    )
+    async def get_company_profile():
+        return service.get_company_profile()
+
+    @app.put(
+        "/api/v1/company-profile",
+        response_model=CompanyProfile,
+        **_api_docs(
+            tag="决策智能",
+            summary="保存企业能力画像",
+            purpose="从网页图形化保存企业能够交付什么、擅长什么、优先哪里和明确不做什么，供后续适配评分使用。",
+            parameters="请求头 `X-BidPilot-Config-Token` 必填；JSON 包含 company_name、offerings、strengths、target_regions、excluded_terms、preferred_buyers 和 decision_focus。未知字段拒绝。",
+            returns="HTTP 200；返回规范化、去重后的画像、稳定版本和保存时间。",
+            side_effects="【本地写入】覆盖默认企业画像并使后续适配缓存失效；不会触发检索、推送或把画像发给外站。",
+            errors="403：短期编辑令牌无效；422：字段、枚举、条目数量或长度非法。",
+            example='PUT /api/v1/company-profile\nX-BidPilot-Config-Token: <token>\n{"company_name":"示例科技","offerings":["AI服务器"],"strengths":["信创适配"],"target_regions":["广东"],"excluded_terms":[],"preferred_buyers":["高校"],"decision_focus":"balanced"}',
+            responses={403: "编辑令牌缺失或过期。", 422: "画像字段未通过校验。"},
+        ),
+    )
+    async def update_company_profile(
+        profile: CompanyProfileUpdate,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_config_token(x_bidpilot_config_token)
+        return service.update_company_profile(profile)
+
+    @app.get(
+        "/api/v1/feedback",
+        response_model=list[TenderFeedback],
+        **_api_docs(
+            tag="决策智能",
+            summary="列出标讯反馈记忆",
+            purpose="查看用户对真实标讯做出的相关、无关、观察和已联系判断，供网页解释个性化学习依据。",
+            parameters="查询参数 `limit` 允许 1～5000，默认 500。",
+            returns="HTTP 200；按最近修改时间返回反馈、可选原因和对应真实 TenderRecord。",
+            side_effects="无；不会重新评分、调用模型或访问来源。",
+            errors="limit 非整数返回 422。孤立或损坏反馈会被安全跳过。",
+            example="GET /api/v1/feedback?limit=100",
+        ),
+    )
+    async def list_feedback(limit: int = 500):
+        return service.list_feedback(min(max(limit, 1), 5000))
+
+    @app.put(
+        "/api/v1/feedback/{canonical_id}/{version_hash}",
+        response_model=TenderFeedback,
+        **_api_docs(
+            tag="决策智能",
+            summary="新增或修改一条标讯反馈",
+            purpose="让用户用明确判断纠正系统；同一公告版本重复提交会更新原反馈，不制造重复记忆。",
+            parameters="路径 canonical_id 与 version_hash 必须对应本地真实 tender_items；请求头必须含短期编辑令牌；JSON verdict 为 relevant/irrelevant/watch/contacted，reason 可选。",
+            returns="HTTP 200；返回保存后的反馈和本地证据记录。",
+            side_effects="【本地写入】新增或覆盖一条反馈；后续个性化评分可使用它，但不能越过地域、日期、类型和排除词硬过滤。",
+            errors="403：令牌无效；404：标讯不存在；422：枚举、原因长度或额外字段非法。",
+            example='PUT /api/v1/feedback/<canonical_id>/<version_hash>\nX-BidPilot-Config-Token: <token>\n{"verdict":"relevant","reason":"与我们的信创服务器方案高度匹配"}',
+            responses={403: "编辑令牌无效。", 404: "标讯证据不存在。", 422: "反馈字段非法。"},
+        ),
+    )
+    async def set_feedback(
+        canonical_id: str,
+        version_hash: str,
+        update: FeedbackUpdate,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_config_token(x_bidpilot_config_token)
+        try:
+            return service.set_feedback(canonical_id, version_hash, update)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.delete(
+        "/api/v1/feedback/{canonical_id}/{version_hash}",
+        **_api_docs(
+            tag="决策智能",
+            summary="删除一条标讯反馈",
+            purpose="撤销对某个公告版本的个性化判断，使后续评分不再使用该条记忆。",
+            parameters="路径 canonical_id 与 version_hash；请求头必须含短期编辑令牌；无请求体。",
+            returns='HTTP 200；返回 `{"deleted":true}`。',
+            side_effects="【删除副作用】永久删除这一条本地反馈，不删除标讯、报告或机会。",
+            errors="403：令牌无效；404：反馈不存在。",
+            example="DELETE /api/v1/feedback/<canonical_id>/<version_hash>\nX-BidPilot-Config-Token: <token>",
+            responses={403: "编辑令牌无效。", 404: "反馈不存在。"},
+        ),
+    )
+    async def delete_feedback(
+        canonical_id: str,
+        version_hash: str,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_config_token(x_bidpilot_config_token)
+        try:
+            service.delete_feedback(canonical_id, version_hash)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+        return {"deleted": True}
+
+    @app.delete(
+        "/api/v1/feedback",
+        **_api_docs(
+            tag="决策智能",
+            summary="清空全部标讯反馈",
+            purpose="在用户明确确认后重置个性化学习，不影响企业画像和历史标讯。",
+            parameters="请求头必须含短期编辑令牌；无请求体。网页必须在调用前二次确认。",
+            returns="HTTP 200；返回 deleted_count，表示实际删除条数。",
+            side_effects="【批量删除】永久清空全部本地反馈；不删除运行、标讯、报告、订阅、机会或画像。",
+            errors="403：编辑令牌无效。数据库错误返回 500。",
+            example="DELETE /api/v1/feedback\nX-BidPilot-Config-Token: <token>",
+            responses={403: "编辑令牌无效。"},
+        ),
+    )
+    async def clear_feedback(
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_config_token(x_bidpilot_config_token)
+        return {"deleted_count": service.clear_feedback()}
 
     @app.get(
         "/api/v1/reports",

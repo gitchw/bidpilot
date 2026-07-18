@@ -199,6 +199,80 @@ class IntelligenceBrief(BaseModel):
     summary: str = Field(max_length=500)
 
 
+class CompanyProfileUpdate(BaseModel):
+    """User-owned business context used for local fit decisions, never source queries."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "company_name": "示例数字科技有限公司",
+                    "offerings": ["AI 服务器", "数据中心集成", "运维服务"],
+                    "strengths": ["信创适配", "本地交付", "等保建设"],
+                    "target_regions": ["广东", "深圳"],
+                    "excluded_terms": ["纯土建", "药品"],
+                    "preferred_buyers": ["高校", "政务数据局"],
+                    "decision_focus": "balanced",
+                }
+            ]
+        },
+    )
+
+    company_name: str = Field(default="", max_length=120, description="企业或团队名称")
+    offerings: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="能够交付的产品与服务；用于适配判断，不会发送给检索来源",
+    )
+    strengths: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="资质、交付、行业或技术优势",
+    )
+    target_regions: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="优先经营地域；空数组表示不额外限制",
+    )
+    excluded_terms: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="企业明确不做或不希望投入的业务词",
+    )
+    preferred_buyers: list[str] = Field(
+        default_factory=list,
+        max_length=30,
+        description="偏好的采购单位或客户类型",
+    )
+    decision_focus: Literal["balanced", "growth", "precision"] = Field(
+        default="balanced",
+        description="平衡、增长优先或精准优先的决策偏好",
+    )
+
+    @field_validator("company_name")
+    @classmethod
+    def normalize_company_name(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator(
+        "offerings",
+        "strengths",
+        "target_regions",
+        "excluded_terms",
+        "preferred_buyers",
+    )
+    @classmethod
+    def normalize_profile_lists(cls, value: list[str]) -> list[str]:
+        cleaned = [" ".join(item.split())[:80] for item in value if item.strip()]
+        return list(dict.fromkeys(cleaned))
+
+
+class CompanyProfile(CompanyProfileUpdate):
+    version: str = Field(default="empty", description="画像内容的本地稳定版本，用于缓存失效")
+    updated_at: datetime | None = Field(default=None, description="最后一次网页保存时间")
+
+
 class EventType(StrEnum):
     INTENTION = "采购意向"
     TENDER = "招标公告"
@@ -215,6 +289,13 @@ class OpportunityStage(StrEnum):
     WON = "won"
     LOST = "lost"
     ARCHIVED = "archived"
+
+
+class FeedbackVerdict(StrEnum):
+    RELEVANT = "relevant"
+    IRRELEVANT = "irrelevant"
+    WATCH = "watch"
+    CONTACTED = "contacted"
 
 
 class IntentSchedule(BaseModel):
@@ -366,6 +447,32 @@ class TenderRecord(BaseModel):
     duplicate_count: int = 1
     lifecycle_id: str
     auth_level: str = "public"
+
+
+class FeedbackUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: FeedbackVerdict = Field(description="相关、无关、观察或已联系")
+    reason: str = Field(
+        default="",
+        max_length=500,
+        description="用户可选的判断原因；不会发送给检索来源",
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class TenderFeedback(BaseModel):
+    canonical_id: str
+    version_hash: str
+    verdict: FeedbackVerdict
+    reason: str = ""
+    record: TenderRecord
+    created_at: datetime
+    updated_at: datetime
 
 
 class OpportunityCreate(BaseModel):

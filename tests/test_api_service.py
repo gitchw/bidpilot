@@ -131,6 +131,11 @@ def test_api_query_to_docx_flow(tmp_path: Path):
         assert result["records"][0]["project_id"] == "AH-2026-001"
         assert result["intelligence_brief"]["status"] == "not_configured"
         assert result["intelligence_brief"]["priorities"][0]["evidence_id"] == "E01"
+        evidence = client.get(f"/api/v1/runs/{result['run_id']}/evidence")
+        assert evidence.status_code == 200
+        assert [item["canonical_id"] for item in evidence.json()] == [
+            result["records"][0]["canonical_id"]
+        ]
         report_name = Path(result["report_path"]).name
         download = client.get(f"/api/v1/reports/{report_name}")
         assert download.status_code == 200
@@ -733,7 +738,7 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
                 continue
             operations.append((method.upper(), path, operation))
 
-    assert len(operations) == 38
+    assert len(operations) == 45
     for method, path, operation in operations:
         description = operation.get("description", "")
         assert path in api_reference, f"{method} {path} 未写入独立 API 参考"

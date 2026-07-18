@@ -173,6 +173,28 @@ class Database:
             created_at TEXT NOT NULL,
             last_used_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS company_profiles (
+            id TEXT PRIMARY KEY,
+            profile_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS run_items (
+            run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+            canonical_id TEXT NOT NULL,
+            version_hash TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, canonical_id, version_hash)
+        );
+        CREATE TABLE IF NOT EXISTS opportunity_feedback (
+            canonical_id TEXT NOT NULL,
+            version_hash TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (canonical_id, version_hash)
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
@@ -183,6 +205,10 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_source_auth_test ON source_authorizations(last_test_at DESC);
         CREATE INDEX IF NOT EXISTS idx_intelligence_briefs_used
           ON intelligence_briefs(last_used_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_run_items_position
+          ON run_items(run_id, position);
+        CREATE INDEX IF NOT EXISTS idx_opportunity_feedback_updated
+          ON opportunity_feedback(updated_at DESC);
         """
         with self.connection() as conn:
             conn.executescript(schema)
@@ -994,3 +1020,133 @@ class Database:
                 (max(1, min(limit, 5000)),),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_company_profile(self, profile_id: str = "default") -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM company_profiles WHERE id=?",
+                (profile_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_company_profile(
+        self,
+        profile: dict[str, Any],
+        profile_id: str = "default",
+    ) -> dict[str, Any]:
+        updated_at = utcnow_iso()
+        payload = json.dumps(profile, ensure_ascii=False)
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO company_profiles(id, profile_json, updated_at)
+                VALUES(?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                  profile_json=excluded.profile_json,
+                  updated_at=excluded.updated_at
+                """,
+                (profile_id, payload, updated_at),
+            )
+        return {"id": profile_id, "profile_json": payload, "updated_at": updated_at}
+
+    def set_run_items(self, run_id: str, records: list[dict[str, Any]]) -> None:
+        with self.connection() as conn:
+            conn.execute("DELETE FROM run_items WHERE run_id=?", (run_id,))
+            conn.executemany(
+                """
+                INSERT INTO run_items(
+                  run_id, canonical_id, version_hash, position, snapshot_json
+                ) VALUES(?,?,?,?,?)
+                """,
+                [
+                    (
+                        run_id,
+                        record["canonical_id"],
+                        record["version_hash"],
+                        position,
+                        json.dumps(record, ensure_ascii=False, default=str),
+                    )
+                    for position, record in enumerate(records)
+                ],
+            )
+
+    def list_run_items(self, run_id: str) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT canonical_id, version_hash, position, snapshot_json
+                FROM run_items WHERE run_id=? ORDER BY position ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_feedback(
+        self,
+        *,
+        canonical_id: str,
+        version_hash: str,
+        verdict: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        now = utcnow_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO opportunity_feedback(
+                  canonical_id, version_hash, verdict, reason, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(canonical_id, version_hash) DO UPDATE SET
+                  verdict=excluded.verdict,
+                  reason=excluded.reason,
+                  updated_at=excluded.updated_at
+                """,
+                (canonical_id, version_hash, verdict, reason, now, now),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM opportunity_feedback
+                WHERE canonical_id=? AND version_hash=?
+                """,
+                (canonical_id, version_hash),
+            ).fetchone()
+        assert row is not None
+        return dict(row)
+
+    def get_feedback(self, canonical_id: str, version_hash: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM opportunity_feedback
+                WHERE canonical_id=? AND version_hash=?
+                """,
+                (canonical_id, version_hash),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_feedback(self, limit: int = 500) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM opportunity_feedback
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, min(limit, 5000)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_feedback(self, canonical_id: str, version_hash: str) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM opportunity_feedback
+                WHERE canonical_id=? AND version_hash=?
+                """,
+                (canonical_id, version_hash),
+            )
+        return cursor.rowcount > 0
+
+    def clear_feedback(self) -> int:
+        with self.connection() as conn:
+            cursor = conn.execute("DELETE FROM opportunity_feedback")
+        return cursor.rowcount

@@ -1,6 +1,6 @@
 # 标擎 BidPilot API 参考（v0.7.0）
 
-本文档对应当前代码中的 38 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。每个接口均说明用途、输入、返回、副作用、常见错误和示例；“副作用”不是警告装饰，而是告诉调用者该请求是否会抓取外部站点、写数据、真实推送、打开可见浏览器或停止进程。
+本文档对应当前代码中的 45 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。每个接口均说明用途、输入、返回、副作用、常见错误和示例；“副作用”不是警告装饰，而是告诉调用者该请求是否会抓取外部站点、写数据、真实推送、打开可见浏览器或停止进程。
 
 ## 1. 调用约定
 
@@ -227,7 +227,72 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 错误：404，运行不存在。
 - 示例：`GET /api/v1/runs/2c4d8f0a1b2c3d4e5f60718293a4b5c6`。
 
-## 4. 报告
+## 4. 决策智能数据
+
+### `GET /api/v1/runs/{run_id}/evidence` — 读取本轮固定证据
+
+- 用途：恢复某次运行当时真正返回的 TenderRecord 集合，供重启后的企业适配判断和证据问答使用，防止后来抓取的新公告串入旧对话。
+- 参数：路径 `run_id`；无请求体、无需编辑令牌。
+- 返回：按当轮排名保存的记录快照；当轮可信新增为 0 时返回空数组，而不是临时查询全局标讯表。
+- 副作用：无；只读 `run_items`，不访问来源、不调用模型、不生成报告。
+- 错误：404 表示运行不存在；损坏的单条快照会被安全跳过并保留其余证据。
+- 示例：`GET /api/v1/runs/2c4d8f0a1b2c3d4e5f60718293a4b5c6/evidence`。
+
+### `GET /api/v1/company-profile` — 读取企业画像
+
+- 用途：读取用户在网页维护的企业名称、产品服务、优势、目标地域、排除词、偏好买方和决策风格。
+- 参数：无。
+- 返回：上述字段、`version` 内容版本和 `updated_at`；首次使用返回 `version=empty` 的空画像，可直接在网页填写。
+- 副作用：无；画像只从本机 SQLite 读取，不会发送给招标来源，也不会在查看时调用模型。
+- 错误：数据库不可用时返回 500；空画像不是错误。
+- 示例：`GET /api/v1/company-profile`。
+
+### `PUT /api/v1/company-profile` — 保存企业画像
+
+- 用途：完全通过网页管理 AI 决策上下文，不要求编辑 `.env`、JSON 或 Python 文件。
+- 参数：请求头 `X-BidPilot-Config-Token`；JSON 字段为 `company_name`、`offerings`、`strengths`、`target_regions`、`excluded_terms`、`preferred_buyers`、`decision_focus`。`decision_focus` 仅可为 `balanced`、`growth`、`precision`，未知字段拒绝。
+- 返回：去空白、去重后的画像、稳定版本和保存时间。
+- 副作用：覆盖默认画像，使后续 AI 适配缓存失效；不发起检索或推送，画像不发送给任何标讯来源。
+- 错误：403 表示编辑令牌缺失或过期；422 表示条目过多、过长、枚举错误或出现额外字段。
+- 示例：先 `POST /api/v1/config/edit-token`，再提交 `{"company_name":"示例科技","offerings":["AI服务器"],"strengths":["信创适配"],"target_regions":["广东"],"excluded_terms":[],"preferred_buyers":["高校"],"decision_focus":"balanced"}`。
+
+### `GET /api/v1/feedback` — 列出反馈记忆
+
+- 用途：查看用户对真实公告做出的“相关、无关、观察、已联系”判断和可选原因，解释后续个性化评分依据。
+- 参数：查询参数 `limit`，默认 500，服务收敛到 1～5000。
+- 返回：反馈时间、判断、原因及对应的本地 TenderRecord；同一公告版本最多一条。
+- 副作用：无；不重新评分、不调用模型、不访问来源。
+- 错误：422 表示 `limit` 不是整数；孤立或损坏反馈会被跳过。
+- 示例：`GET /api/v1/feedback?limit=100`。
+
+### `PUT /api/v1/feedback/{canonical_id}/{version_hash}` — 新增或修改反馈
+
+- 用途：让用户纠正系统；重复评价同一公告版本会更新原反馈，不累计成多票。
+- 参数：路径必须对应 `tender_items` 中真实记录；请求头含短期编辑令牌；JSON `verdict` 为 `relevant`、`irrelevant`、`watch`、`contacted`，`reason` 最多 500 字且可为空。
+- 返回：保存后的反馈与本地证据记录。
+- 副作用：写入或覆盖一条本地反馈；后续只允许产生有界排序调整，不能突破地域、日期、公告类型或排除词硬过滤。
+- 错误：403 表示令牌无效；404 表示公告证据不存在；422 表示枚举、长度或额外字段非法。
+- 示例：`PUT /api/v1/feedback/<canonical_id>/<version_hash>`，请求体 `{"verdict":"relevant","reason":"符合信创服务器交付能力"}`。
+
+### `DELETE /api/v1/feedback/{canonical_id}/{version_hash}` — 删除一条反馈
+
+- 用途：撤销一次个性化判断。
+- 参数：两个路径标识和短期编辑令牌；无请求体。
+- 返回：`{"deleted":true}`。
+- 副作用：永久删除这一条反馈；不删除标讯、报告、机会或画像。
+- 错误：403 表示令牌无效；404 表示反馈不存在。
+- 示例：`DELETE /api/v1/feedback/<canonical_id>/<version_hash>`。
+
+### `DELETE /api/v1/feedback` — 清空全部反馈
+
+- 用途：用户二次确认后完全重置学习记忆。
+- 参数：短期编辑令牌；无请求体。网页调用前必须显示清空确认。
+- 返回：`deleted_count` 实际删除条数；重复清空返回 0。
+- 副作用：批量永久删除全部反馈；企业画像、标讯、运行、报告、订阅、机会和投递账本保持不变。
+- 错误：403 表示令牌无效；数据库异常返回 500。
+- 示例：`DELETE /api/v1/feedback`，并携带 `X-BidPilot-Config-Token`。
+
+## 5. 报告
 
 ### `GET /api/v1/reports` — 报告历史
 
@@ -247,7 +312,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 错误：404，文件不存在、扩展名错误或越过报告目录。
 - 示例：`GET /api/v1/reports/深圳充电桩招标信息_202607181530.docx`。
 
-## 5. 长期订阅
+## 6. 长期订阅
 
 ### `POST /api/v1/subscriptions` — 创建订阅
 
@@ -341,7 +406,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 副作用：无。
 - 错误：404 不存在。
 
-## 6. 机会工作台
+## 7. 机会工作台
 
 ### `POST /api/v1/opportunities` — 加入机会
 
@@ -382,7 +447,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 副作用：无。
 - 错误：404，不存在。
 
-## 7. 配置中心
+## 8. 配置中心
 
 ### `GET /api/v1/config` — 读取脱敏配置
 
@@ -435,7 +500,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 副作用：真实外发；网页会在调用前二次确认。
 - 错误：403 令牌；422 通道未配置/不支持；502 网络、认证或平台响应失败。
 
-## 8. 配置写入示例
+## 9. 配置写入示例
 
 ```python
 import requests

@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from bidpilot.clean import stable_hash
 from bidpilot.config import Settings
 from bidpilot.db import Database
 from bidpilot.delivery import DeliveryManager, DeliveryReceipt
@@ -16,8 +17,11 @@ from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
 from bidpilot.intent import IntentParser
 from bidpilot.models import (
+    CompanyProfile,
+    CompanyProfileUpdate,
     DeliveryPolicy,
     EventType,
+    FeedbackUpdate,
     IntelligenceBrief,
     IntentComparison,
     Opportunity,
@@ -30,6 +34,7 @@ from bidpilot.models import (
     SourceStatus,
     Subscription,
     SubscriptionUpdate,
+    TenderFeedback,
     TenderQuerySpec,
     TenderRecord,
 )
@@ -169,6 +174,11 @@ class BidPilotService:
                     for record in records
                     if (record.canonical_id, record.version_hash) in allowed
                 ]
+
+            self.db.set_run_items(
+                run_id,
+                [record.model_dump(mode="json") for record in output_records],
+            )
 
             intelligence_brief = await self._build_intelligence_brief(spec, output_records)
 
@@ -687,6 +697,91 @@ class BidPilotService:
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
             row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
         return row
+
+    @staticmethod
+    def _profile_from_row(row: dict | None) -> CompanyProfile:
+        if row is None:
+            return CompanyProfile()
+        try:
+            payload = json.loads(row["profile_json"])
+            version = stable_hash(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                length=16,
+            )
+            return CompanyProfile.model_validate(
+                {
+                    **payload,
+                    "version": version,
+                    "updated_at": row["updated_at"],
+                }
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return CompanyProfile()
+
+    def get_company_profile(self) -> CompanyProfile:
+        return self._profile_from_row(self.db.get_company_profile())
+
+    def update_company_profile(self, update: CompanyProfileUpdate) -> CompanyProfile:
+        payload = update.model_dump(mode="json")
+        row = self.db.set_company_profile(payload)
+        return self._profile_from_row(row)
+
+    def get_run_evidence(self, run_id: str) -> list[TenderRecord]:
+        if self.db.get_run(run_id) is None:
+            raise KeyError("运行记录不存在")
+        records = []
+        for row in self.db.list_run_items(run_id):
+            try:
+                records.append(TenderRecord.model_validate_json(row["snapshot_json"]))
+            except (KeyError, ValueError):
+                continue
+        return records
+
+    def _feedback_from_row(self, row: dict) -> TenderFeedback:
+        selected = self.db.get_tender_item(row["canonical_id"], row["version_hash"])
+        if selected is None:
+            raise KeyError("反馈引用的标讯记录不存在")
+        return TenderFeedback(
+            canonical_id=row["canonical_id"],
+            version_hash=row["version_hash"],
+            verdict=row["verdict"],
+            reason=row.get("reason", ""),
+            record=TenderRecord.model_validate_json(selected["payload_json"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def set_feedback(
+        self,
+        canonical_id: str,
+        version_hash: str,
+        update: FeedbackUpdate,
+    ) -> TenderFeedback:
+        if self.db.get_tender_item(canonical_id, version_hash) is None:
+            raise KeyError("只能评价系统已经抓取并验证过的标讯记录")
+        row = self.db.upsert_feedback(
+            canonical_id=canonical_id,
+            version_hash=version_hash,
+            verdict=update.verdict.value,
+            reason=update.reason,
+        )
+        return self._feedback_from_row(row)
+
+    def list_feedback(self, limit: int = 500) -> list[TenderFeedback]:
+        feedback = []
+        for row in self.db.list_feedback(limit):
+            try:
+                feedback.append(self._feedback_from_row(row))
+            except (KeyError, ValueError):
+                continue
+        return feedback
+
+    def delete_feedback(self, canonical_id: str, version_hash: str) -> None:
+        if not self.db.delete_feedback(canonical_id, version_hash):
+            raise KeyError("反馈记录不存在")
+
+    def clear_feedback(self) -> int:
+        return self.db.clear_feedback()
 
     def list_reports(self) -> list[dict]:
         return self.db.list_reports()
