@@ -1,0 +1,4161 @@
+{
+  "schema_version": 2,
+  "mode": "current-v0.6-multi-round-deterministic",
+  "evaluated_at": "2026-07-18T16:31:24.374149+08:00",
+  "queries": [
+    {
+      "query": "最近1个月深圳充电桩招标信息",
+      "spec": {
+        "topic": "充电桩",
+        "keywords": [
+          "充电桩",
+          "充电站",
+          "充电设施",
+          "充换电",
+          "新能源汽车充电"
+        ],
+        "region": "深圳",
+        "region_level": "city",
+        "start_date": "2026-06-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 22896,
+      "scanned": 335,
+      "candidates": 30,
+      "kept": 18,
+      "unique_evidence_urls": 20,
+      "evidence_urls": [
+        "https://www.szggzy.com/jygg/details.html?contentId=20477329&channelId=2851",
+        "https://www.szggzy.com/jygg/details.html?contentId=20477331&channelId=2851",
+        "https://www.szggzy.com/jygg/details.html?contentId=20490765&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20496484&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20497150&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20500985&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20501168&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20504205&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20505254&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20508650&channelId=2851",
+        "https://www.szggzy.com/jygg/details.html?contentId=20509259&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20510287&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20511012&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20511139&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20512360&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20512835&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20513439&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20520172&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20521873&channelId=4161",
+        "https://www.szggzy.com/jygg/details.html?contentId=20523355&channelId=4161"
+      ],
+      "records": [
+        {
+          "title": "惠州深业云栖府项目充电桩系统工程",
+          "published_at": "2026-06-25T00:00:00",
+          "region": "深圳",
+          "buyer": "惠州深业置业有限公司",
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20477331&channelId=2851",
+            "https://www.szggzy.com/jygg/details.html?contentId=20508650&channelId=2851"
+          ],
+          "relevance_score": 86.0,
+          "opportunity_score": 81.9
+        },
+        {
+          "title": "深圳市通产丽星科技集团有限公司采购一台纯电中巴通勤车与一台纯电大巴通勤车、配套充电桩2台及首年车全险项目候选人公示",
+          "published_at": "2026-07-09T00:00:00",
+          "region": "深圳",
+          "buyer": "深圳市通产丽星科技集团有限公司",
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20505254&channelId=4161",
+            "https://www.szggzy.com/jygg/details.html?contentId=20511012&channelId=4161"
+          ],
+          "relevance_score": 86.0,
+          "opportunity_score": 73.9
+        },
+        {
+          "title": "坪山区委党校项目施工总承包-高低压变配电及充电桩工程专业分包(三次招标)公开招标采购公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20521873&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "上城学府充电桩投资运营合作伙伴进行公开遴选的公告",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20520172&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "湾区未来科技园(宝龙生物医药创新生态产业园10-08地块)充电桩工程(二次招标)公开招标采购公告",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20512835&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "湾区未来科技园(宝龙生物医药创新生态产业园10-08地块)充电桩工程流标报告",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20511139&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "汽车充电桩平台托管服务",
+          "published_at": "2026-07-10T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20510287&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "东坑、塘家项目充电桩采购(三次)公开竞价采购公告",
+          "published_at": "2026-07-07T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20501168&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "东坑、塘家项目充电桩采购(二次)流标报告",
+          "published_at": "2026-07-07T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20500985&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "湾区未来科技园(宝龙生物医药创新生态产业园10-08地块)充电桩工程公开招标采购公告",
+          "published_at": "2026-07-02T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20490765&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 71.8
+        },
+        {
+          "title": "惠州深业云栖府项目充电桩系统工程截标信息",
+          "published_at": "2026-06-25T00:00:00",
+          "region": "深圳",
+          "buyer": "惠州深业置业有限公司",
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20477329&channelId=2851"
+          ],
+          "relevance_score": 86.0,
+          "opportunity_score": 70.9
+        },
+        {
+          "title": "东坑、塘家项目充电桩采购(三次)成交候选人公示",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20523355&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "特发口岸2026年深圳湾口岸社会停车场充电桩建设及运营管理服务结果公示",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20513439&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "【内部编号:QHPS202606004】前海石公园P2停车场超充站项目充电桩采购候选人公示",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20512360&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "坪山区委党校项目施工总承包-高低压变配电及充电桩工程专业分包(二次招标)流标报告",
+          "published_at": "2026-07-10T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20509259&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "特发口岸2026年深圳湾口岸社会停车场充电桩建设及运营管理服务候选人公示",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20504205&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "天健投资公司充电桩配套施工工程成交结果公示",
+          "published_at": "2026-07-06T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20497150&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "赣州深燃热力充电桩安装项目(嘉福豪庭)结果公示",
+          "published_at": "2026-07-04T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20496484&channelId=4161"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        }
+      ],
+      "url_validation": [
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20477329&channelId=2851",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20477329&channelId=2851",
+          "latency_ms": 334,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20477331&channelId=2851",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20477331&channelId=2851",
+          "latency_ms": 273,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20490765&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20490765&channelId=4161",
+          "latency_ms": 261,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20496484&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20496484&channelId=4161",
+          "latency_ms": 334,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20497150&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20497150&channelId=4161",
+          "latency_ms": 289,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20500985&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20500985&channelId=4161",
+          "latency_ms": 259,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20501168&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20501168&channelId=4161",
+          "latency_ms": 341,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20504205&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20504205&channelId=4161",
+          "latency_ms": 240,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20505254&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20505254&channelId=4161",
+          "latency_ms": 437,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20508650&channelId=2851",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20508650&channelId=2851",
+          "latency_ms": 461,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20509259&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20509259&channelId=4161",
+          "latency_ms": 454,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20510287&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20510287&channelId=4161",
+          "latency_ms": 463,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20511012&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20511012&channelId=4161",
+          "latency_ms": 459,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20511139&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20511139&channelId=4161",
+          "latency_ms": 512,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20512360&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20512360&channelId=4161",
+          "latency_ms": 525,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20512835&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20512835&channelId=4161",
+          "latency_ms": 544,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20513439&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20513439&channelId=4161",
+          "latency_ms": 708,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20520172&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20520172&channelId=4161",
+          "latency_ms": 682,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20521873&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20521873&channelId=4161",
+          "latency_ms": 685,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20523355&channelId=4161",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20523355&channelId=4161",
+          "latency_ms": 654,
+          "message": "原文入口可直接访问"
+        }
+      ],
+      "url_validation_counts": {
+        "reachable": 20
+      },
+      "sources": [
+        {
+          "source": "深圳公共资源交易中心",
+          "status": "ok",
+          "scanned_count": 20,
+          "fetched_count": 20,
+          "kept_count": 18,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 21768,
+          "message": "深圳官方平台检索完成，扫描 20 条，读取 20 条公开详情。仅使用公告公开接口，不登录投标工作台或代替用户完成 CA。"
+        },
+        {
+          "source": "中国招标投标公共服务平台",
+          "status": "partial",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 13274,
+          "message": "中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。"
+        },
+        {
+          "source": "军队采购网",
+          "status": "ok",
+          "scanned_count": 1,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 1,
+          "rejection_reasons": {
+            "region_mismatch": 1
+          },
+          "latency_ms": 293,
+          "message": "军队采购网公开采购大厅检索完成，官方接口报告 1 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。"
+        },
+        {
+          "source": "中央政府采购网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 1436,
+          "message": "中央政府采购网公开公告搜索完成。"
+        },
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 453,
+          "message": "已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 280,
+          "rejection_reasons": {
+            "keyword_mismatch": 280
+          },
+          "latency_ms": 11012,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "keyword_mismatch": 24
+          },
+          "latency_ms": 391,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 9175,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；请在来源中心点击“打开浏览器授权”。"
+        }
+      ],
+      "rejection_reasons": {
+        "region_mismatch": 1,
+        "outside_time": 10,
+        "keyword_mismatch": 304
+      },
+      "coverage_complete": false,
+      "retrieval": {
+        "plan": {
+          "planner_version": "retrieval-v1",
+          "mode": "deterministic",
+          "llm_status": "disabled",
+          "terms": [
+            {
+              "text": "充电桩",
+              "kind": "topic",
+              "origin": "query",
+              "reason": "用户问题中识别出的核心业务主题"
+            },
+            {
+              "text": "充电站",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "充电设施",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "充换电",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "新能源汽车充电",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "充电基础设施",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：充电桩 的常见采购表述"
+            },
+            {
+              "text": "充换电设备",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：充电桩 的常见采购表述"
+            },
+            {
+              "text": "直流充电机",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：充电桩 的常见采购表述"
+            },
+            {
+              "text": "交流充电设备",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：充电桩 的常见采购表述"
+            }
+          ],
+          "rejected_terms": [],
+          "queries": [
+            {
+              "id": "q-primary",
+              "text": "充电桩",
+              "round": 1,
+              "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+              "term_kind": "topic"
+            },
+            {
+              "id": "q-expand-01",
+              "text": "充电站",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-02",
+              "text": "充电设施",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-03",
+              "text": "充换电",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-04",
+              "text": "新能源汽车充电",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-05",
+              "text": "充电基础设施",
+              "round": 2,
+              "reason": "本地行业词典：充电桩 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-06",
+              "text": "充换电设备",
+              "round": 2,
+              "reason": "本地行业词典：充电桩 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-07",
+              "text": "直流充电机",
+              "round": 2,
+              "reason": "本地行业词典：充电桩 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-08",
+              "text": "交流充电设备",
+              "round": 2,
+              "reason": "本地行业词典：充电桩 的常见采购表述",
+              "term_kind": "industry"
+            }
+          ],
+          "source_priorities": [],
+          "max_rounds": 2,
+          "query_budget_per_source": 2,
+          "latency_ms": 0,
+          "summary": "AI 检索规划已关闭；本轮使用原主题、规则同义词和本地行业词典。"
+        },
+        "rounds": [
+          {
+            "round": 1,
+            "trigger": "所有来源先执行用户核心主题，建立确定性召回基线。",
+            "queries": [
+              {
+                "id": "q-primary",
+                "text": "充电桩",
+                "round": 1,
+                "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+                "term_kind": "topic"
+              }
+            ],
+            "source_calls": 9,
+            "scanned_count": 335,
+            "candidate_count": 30,
+            "unique_candidate_count": 30,
+            "matched_candidate_count": 20,
+            "latency_ms": 21769,
+            "gaps_after_round": [
+              "4 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、全国公共资源交易平台、千里马招标网"
+            ]
+          }
+        ],
+        "gap_analysis": [
+          "4 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、全国公共资源交易平台、千里马招标网"
+        ],
+        "semantic_review_status": "not_needed",
+        "semantic_decisions": [],
+        "unique_raw_candidates": 30,
+        "summary": "使用 9 个受控概念完成 1 轮检索，去重后获得 30 个原始候选；语义复核接受 0 个，最终保留 18 条可追溯标讯。"
+      }
+    },
+    {
+      "query": "最近1个月北京医疗设备采购信息",
+      "spec": {
+        "topic": "医疗设备",
+        "keywords": [
+          "医疗设备"
+        ],
+        "region": "北京",
+        "region_level": "province",
+        "start_date": "2026-06-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 14759,
+      "scanned": 326,
+      "candidates": 25,
+      "kept": 12,
+      "unique_evidence_urls": 15,
+      "evidence_urls": [
+        "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959419.htm",
+        "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959422.htm",
+        "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959424.htm",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00979f169a3c019f1b196c6b20ff.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f02c4905402f6.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f16084565512a.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f591932d56516.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03019f26e552019f26fd264b0552.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019f16093b933a90.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d038b9f3578d1019f3632dbd50ab1.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03cb9f3c0697019f442b24a85c24.html?noticeType=001031&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049c9f225d9d019f3f663da23cfe.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c59e9211fe019f02ef28ca6ff2.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c69e921212019ef32d6cfc5e3a.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f649d9afb256f.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+      ],
+      "records": [
+        {
+          "title": "血小板分析仪等一批医疗设备采购招标公告(2026-VBJWJY-W1005(01-07))",
+          "published_at": "2026-07-06T00:00:00",
+          "region": "北京",
+          "buyer": "某单位 2026 年 07 月 06 日",
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d038b9f3578d1019f3632dbd50ab1.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 93.0,
+          "opportunity_score": 94.0
+        },
+        {
+          "title": "医疗设备技术参数意向公示意向公开(/)(第1包)",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049c9f225d9d019f3f663da23cfe.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c69e921212019ef32d6cfc5e3a.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 84.8
+        },
+        {
+          "title": "医疗设备年度外检招标公告(2026JQYSZX-F3008)",
+          "published_at": "2026-06-30T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019f16093b933a90.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 81.8
+        },
+        {
+          "title": "医疗设备采购项目招标公告(2026-JWBJQH-W4009)",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c59e9211fe019f02ef28ca6ff2.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 81.8
+        },
+        {
+          "title": "血小板分析仪等一批医疗设备采购采购结果公示(2026-VBJWJY-W1005(01-07))(第4包)",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "北京",
+          "buyer": "某单位 2026年6月26日",
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f02c4905402f6.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 86.0,
+          "opportunity_score": 78.9
+        },
+        {
+          "title": "北京大学人民医院医疗设备购置项目第十批中标公告",
+          "published_at": "2026-07-17T18:28:00",
+          "region": "北京",
+          "buyer": "北京大学人民医院",
+          "event_type": "中标公告",
+          "sources": [
+            "中国政府采购网"
+          ],
+          "source_urls": [
+            "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959419.htm",
+            "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959424.htm",
+            "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959422.htm"
+          ],
+          "relevance_score": 86.0,
+          "opportunity_score": 76.9
+        },
+        {
+          "title": "医疗设备进口委托代理服务招标公告(2026-JQYYZX-F3002)",
+          "published_at": "2026-07-01T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00979f169a3c019f1b196c6b20ff.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 73.8
+        },
+        {
+          "title": "血小板分析仪等一批医疗设备采购更正公告(2026-VBJWJY-W1005(01-07))(第1、2、3、5、6、7包)",
+          "published_at": "2026-07-09T00:00:00",
+          "region": "北京",
+          "buyer": "某单位 2026 年 07 月 09 日",
+          "event_type": "更正公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03cb9f3c0697019f442b24a85c24.html?noticeType=001031&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 86.0,
+          "opportunity_score": 70.9
+        },
+        {
+          "title": "多参数监护仪等27项医疗设备维修服务采购公告",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f649d9afb256f.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "血液透析设备等11项医疗设备采购意向公开",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f591932d56516.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "液氮罐等24项医疗设备维修服务采购公告",
+          "published_at": "2026-07-03T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03019f26e552019f26fd264b0552.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        },
+        {
+          "title": "医疗设备年度外检废标公告(2026JQYSZX-F3008)",
+          "published_at": "2026-06-30T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f16084565512a.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 83.0,
+          "opportunity_score": 63.8
+        }
+      ],
+      "url_validation": [
+        {
+          "url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959419.htm",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959419.htm",
+          "latency_ms": 131,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959422.htm",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959422.htm",
+          "latency_ms": 136,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959424.htm",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959424.htm",
+          "latency_ms": 132,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00979f169a3c019f1b196c6b20ff.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00979f169a3c019f1b196c6b20ff.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 256,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f02c4905402f6.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f02c4905402f6.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 526,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f16084565512a.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019f16084565512a.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 556,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f591932d56516.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f591932d56516.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 253,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03019f26e552019f26fd264b0552.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03019f26e552019f26fd264b0552.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 511,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019f16093b933a90.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019f16093b933a90.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 336,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d038b9f3578d1019f3632dbd50ab1.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d038b9f3578d1019f3632dbd50ab1.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 608,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03cb9f3c0697019f442b24a85c24.html?noticeType=001031&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03cb9f3c0697019f442b24a85c24.html?noticeType=001031&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 328,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049c9f225d9d019f3f663da23cfe.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049c9f225d9d019f3f663da23cfe.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 743,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c59e9211fe019f02ef28ca6ff2.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c59e9211fe019f02ef28ca6ff2.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 462,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c69e921212019ef32d6cfc5e3a.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c69e921212019ef32d6cfc5e3a.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 800,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f649d9afb256f.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f649d9afb256f.html?noticeType=00105E&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 835,
+          "message": "原文入口可直接访问"
+        }
+      ],
+      "url_validation_counts": {
+        "reachable": 15
+      },
+      "sources": [
+        {
+          "source": "深圳公共资源交易中心",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "区域官方源仅覆盖深圳，当前查询地域为北京，已跳过。"
+        },
+        {
+          "source": "中国招标投标公共服务平台",
+          "status": "partial",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 11457,
+          "message": "中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。"
+        },
+        {
+          "source": "军队采购网",
+          "status": "ok",
+          "scanned_count": 12,
+          "fetched_count": 12,
+          "kept_count": 11,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 784,
+          "message": "军队采购网公开采购大厅检索完成，官方接口报告 12 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。"
+        },
+        {
+          "source": "中央政府采购网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 1180,
+          "message": "中央政府采购网公开公告搜索完成。"
+        },
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 818,
+          "message": "已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 3,
+          "kept_count": 1,
+          "rejected_count": 277,
+          "rejection_reasons": {
+            "region_mismatch": 250,
+            "keyword_mismatch": 27
+          },
+          "latency_ms": 13529,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "region_mismatch": 16,
+            "keyword_mismatch": 8
+          },
+          "latency_ms": 369,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 8731,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；请在来源中心点击“打开浏览器授权”。"
+        }
+      ],
+      "rejection_reasons": {
+        "outside_time": 10,
+        "region_mismatch": 266,
+        "keyword_mismatch": 35
+      },
+      "coverage_complete": false,
+      "retrieval": {
+        "plan": {
+          "planner_version": "retrieval-v1",
+          "mode": "deterministic",
+          "llm_status": "disabled",
+          "terms": [
+            {
+              "text": "医疗设备",
+              "kind": "topic",
+              "origin": "query",
+              "reason": "用户问题中识别出的核心业务主题"
+            },
+            {
+              "text": "医疗器械",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：医疗设备 的常见采购表述"
+            },
+            {
+              "text": "医用设备",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：医疗设备 的常见采购表述"
+            },
+            {
+              "text": "医学装备",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：医疗设备 的常见采购表述"
+            },
+            {
+              "text": "诊疗设备",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：医疗设备 的常见采购表述"
+            },
+            {
+              "text": "医疗装备",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：医疗设备 的常见采购表述"
+            }
+          ],
+          "rejected_terms": [],
+          "queries": [
+            {
+              "id": "q-primary",
+              "text": "医疗设备",
+              "round": 1,
+              "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+              "term_kind": "topic"
+            },
+            {
+              "id": "q-expand-01",
+              "text": "医疗器械",
+              "round": 2,
+              "reason": "本地行业词典：医疗设备 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-02",
+              "text": "医用设备",
+              "round": 2,
+              "reason": "本地行业词典：医疗设备 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-03",
+              "text": "医学装备",
+              "round": 2,
+              "reason": "本地行业词典：医疗设备 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-04",
+              "text": "诊疗设备",
+              "round": 2,
+              "reason": "本地行业词典：医疗设备 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-05",
+              "text": "医疗装备",
+              "round": 2,
+              "reason": "本地行业词典：医疗设备 的常见采购表述",
+              "term_kind": "industry"
+            }
+          ],
+          "source_priorities": [],
+          "max_rounds": 2,
+          "query_budget_per_source": 2,
+          "latency_ms": 0,
+          "summary": "AI 检索规划已关闭；本轮使用原主题、规则同义词和本地行业词典。"
+        },
+        "rounds": [
+          {
+            "round": 1,
+            "trigger": "所有来源先执行用户核心主题，建立确定性召回基线。",
+            "queries": [
+              {
+                "id": "q-primary",
+                "text": "医疗设备",
+                "round": 1,
+                "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+                "term_kind": "topic"
+              }
+            ],
+            "source_calls": 9,
+            "scanned_count": 326,
+            "candidate_count": 25,
+            "unique_candidate_count": 25,
+            "matched_candidate_count": 15,
+            "latency_ms": 13540,
+            "gaps_after_round": [
+              "4 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、全国公共资源交易平台、千里马招标网"
+            ]
+          }
+        ],
+        "gap_analysis": [
+          "4 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、全国公共资源交易平台、千里马招标网"
+        ],
+        "semantic_review_status": "not_needed",
+        "semantic_decisions": [],
+        "unique_raw_candidates": 25,
+        "summary": "使用 6 个受控概念完成 1 轮检索，去重后获得 25 个原始候选；语义复核接受 0 个，最终保留 12 条可追溯标讯。"
+      }
+    },
+    {
+      "query": "最近3个月江苏数据中心招标信息",
+      "spec": {
+        "topic": "数据中心",
+        "keywords": [
+          "数据中心",
+          "机房",
+          "算力中心",
+          "智算中心"
+        ],
+        "region": "江苏",
+        "region_level": "province",
+        "start_date": "2026-04-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 55437,
+      "scanned": 384,
+      "candidates": 78,
+      "kept": 8,
+      "unique_evidence_urls": 11,
+      "evidence_urls": [
+        "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+        "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E7%AE%97%E5%8A%9B%E4%B8%AD%E5%BF%83",
+        "https://www.cecbid.org.cn/tenders/details/F40FCC1A8B464606C71775ECF8E43B98?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019eed14f78c3710.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019efdb70a4738ef.html?noticeType=001032&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03679f49c51d019f49ce905b02c7.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a09f225da2019f25af99fa22a9.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f25dd11e2299c.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f40ae858b696f.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f58bff0b54e36.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6ed318115440.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+      ],
+      "records": [
+        {
+          "title": "屏蔽机房及配套设备采购竞争性谈判公告(2026-JLSXJN-W3002)",
+          "published_at": "2026-06-22T00:00:00",
+          "region": "江苏",
+          "buyer": "某单位 2026 年 6 月 18 日",
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019eed14f78c3710.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 76.0,
+          "opportunity_score": 81.7
+        },
+        {
+          "title": "某部机房改造项目招标公告(2026-JKBNZE-F4010)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6ed318115440.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 74.6
+        },
+        {
+          "title": "综合楼6楼机房设备采购项目招标公告(2026-JLDJAN-W1001)",
+          "published_at": "2026-07-10T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03679f49c51d019f49ce905b02c7.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 74.6
+        },
+        {
+          "title": "江苏 师范大学高算力 机房 建设项目公开招标公告",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标网"
+          ],
+          "source_urls": [
+            "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+            "https://www.cecbid.org.cn/tenders/details/F40FCC1A8B464606C71775ECF8E43B98?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+            "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E7%AE%97%E5%8A%9B%E4%B8%AD%E5%BF%83"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 72.6
+        },
+        {
+          "title": "屏蔽机房建设项目招标公告(2026-JWEZDB-G1004)",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f58bff0b54e36.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f25dd11e2299c.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 67.6
+        },
+        {
+          "title": "放射诊断科7TMR机房改造工程招标公告(2026-JQ07-G1002)",
+          "published_at": "2026-07-03T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a09f225da2019f25af99fa22a9.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 64.6
+        },
+        {
+          "title": "屏蔽机房建设项目废标公示(2026-JWEZDB-G1004)",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f40ae858b696f.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "专用电信及机房租赁服务项目采购结果更正公告(2026-JCKEAX-F4002)(第1包)",
+          "published_at": "2026-06-25T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "更正公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019efdb70a4738ef.html?noticeType=001032&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        }
+      ],
+      "url_validation": [
+        {
+          "url": "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+          "latency_ms": 398,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E7%AE%97%E5%8A%9B%E4%B8%AD%E5%BF%83",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.cecbid.org.cn/tenders/details/BA90D76E3CC52A7026EF5060578EBEF4?wd=%E6%B1%9F%E8%8B%8F+%E7%AE%97%E5%8A%9B%E4%B8%AD%E5%BF%83",
+          "latency_ms": 401,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.cecbid.org.cn/tenders/details/F40FCC1A8B464606C71775ECF8E43B98?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.cecbid.org.cn/tenders/details/F40FCC1A8B464606C71775ECF8E43B98?wd=%E6%B1%9F%E8%8B%8F+%E6%9C%BA%E6%88%BF",
+          "latency_ms": 405,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019eed14f78c3710.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02849e9211d9019eed14f78c3710.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 607,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019efdb70a4738ef.html?noticeType=001032&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03399e921220019efdb70a4738ef.html?noticeType=001032&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 335,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03679f49c51d019f49ce905b02c7.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03679f49c51d019f49ce905b02c7.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 382,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a09f225da2019f25af99fa22a9.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a09f225da2019f25af99fa22a9.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 588,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f25dd11e2299c.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f25dd11e2299c.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 326,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f40ae858b696f.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049b9f225d97019f40ae858b696f.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 539,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f58bff0b54e36.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f58bff0b54e36.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 815,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6ed318115440.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6ed318115440.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 865,
+          "message": "原文入口可直接访问"
+        }
+      ],
+      "url_validation_counts": {
+        "reachable": 11
+      },
+      "sources": [
+        {
+          "source": "深圳公共资源交易中心",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "完成 3 个受控查询变体。区域官方源仅覆盖深圳，当前查询地域为江苏，已跳过。"
+        },
+        {
+          "source": "中国招标投标公共服务平台",
+          "status": "partial",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 80611,
+          "message": "完成 3 个受控查询变体。中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。"
+        },
+        {
+          "source": "军队采购网",
+          "status": "ok",
+          "scanned_count": 8,
+          "fetched_count": 8,
+          "kept_count": 7,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 2918,
+          "message": "完成 3 个受控查询变体。军队采购网公开采购大厅检索完成，官方接口报告 0 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。；军队采购网公开采购大厅检索完成，官方接口报告 8 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。"
+        },
+        {
+          "source": "中央政府采购网",
+          "status": "partial",
+          "scanned_count": 42,
+          "fetched_count": 40,
+          "kept_count": 0,
+          "rejected_count": 40,
+          "rejection_reasons": {
+            "region_mismatch": 40
+          },
+          "latency_ms": 6709,
+          "message": "完成 3 个受控查询变体。中央政府采购网公开公告搜索完成。其中 20 条电子卖场公告只提供公开标题和原文入口；未绕过详情网关访问限制。；中央政府采购网公开公告搜索完成。其中 2 条电子卖场公告只提供公开标题和原文入口；未绕过详情网关访问限制。"
+        },
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 30,
+          "fetched_count": 30,
+          "kept_count": 1,
+          "rejected_count": 27,
+          "rejection_reasons": {
+            "outside_time": 27
+          },
+          "latency_ms": 2538,
+          "message": "完成 3 个受控查询变体。已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 280,
+          "rejection_reasons": {
+            "region_mismatch": 275,
+            "keyword_mismatch": 5
+          },
+          "latency_ms": 11071,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "region_mismatch": 16,
+            "keyword_mismatch": 8
+          },
+          "latency_ms": 363,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 45377,
+          "message": "完成 3 个受控查询变体。商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；请在来源中心点击“打开浏览器授权”。"
+        }
+      ],
+      "rejection_reasons": {
+        "region_mismatch": 331,
+        "outside_time": 27,
+        "keyword_mismatch": 13
+      },
+      "coverage_complete": false,
+      "retrieval": {
+        "plan": {
+          "planner_version": "retrieval-v1",
+          "mode": "deterministic",
+          "llm_status": "disabled",
+          "terms": [
+            {
+              "text": "数据中心",
+              "kind": "topic",
+              "origin": "query",
+              "reason": "用户问题中识别出的核心业务主题"
+            },
+            {
+              "text": "机房",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "算力中心",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "智算中心",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "IDC",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：数据中心 的常见采购表述"
+            },
+            {
+              "text": "模块化机房",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：数据中心 的常见采购表述"
+            },
+            {
+              "text": "云计算中心",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：数据中心 的常见采购表述"
+            },
+            {
+              "text": "服务器机房",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：数据中心 的常见采购表述"
+            },
+            {
+              "text": "算力基础设施",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：数据中心 的常见采购表述"
+            }
+          ],
+          "rejected_terms": [],
+          "queries": [
+            {
+              "id": "q-primary",
+              "text": "数据中心",
+              "round": 1,
+              "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+              "term_kind": "topic"
+            },
+            {
+              "id": "q-expand-01",
+              "text": "机房",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-02",
+              "text": "算力中心",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-03",
+              "text": "智算中心",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-04",
+              "text": "IDC",
+              "round": 2,
+              "reason": "本地行业词典：数据中心 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-05",
+              "text": "模块化机房",
+              "round": 2,
+              "reason": "本地行业词典：数据中心 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-06",
+              "text": "云计算中心",
+              "round": 2,
+              "reason": "本地行业词典：数据中心 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-07",
+              "text": "服务器机房",
+              "round": 2,
+              "reason": "本地行业词典：数据中心 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-08",
+              "text": "算力基础设施",
+              "round": 2,
+              "reason": "本地行业词典：数据中心 的常见采购表述",
+              "term_kind": "industry"
+            }
+          ],
+          "source_priorities": [],
+          "max_rounds": 2,
+          "query_budget_per_source": 2,
+          "latency_ms": 0,
+          "summary": "AI 检索规划已关闭；本轮使用原主题、规则同义词和本地行业词典。"
+        },
+        "rounds": [
+          {
+            "round": 1,
+            "trigger": "所有来源先执行用户核心主题，建立确定性召回基线。",
+            "queries": [
+              {
+                "id": "q-primary",
+                "text": "数据中心",
+                "round": 1,
+                "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+                "term_kind": "topic"
+              }
+            ],
+            "source_calls": 9,
+            "scanned_count": 334,
+            "candidate_count": 30,
+            "unique_candidate_count": 30,
+            "matched_candidate_count": 0,
+            "latency_ms": 25879,
+            "gaps_after_round": [
+              "通过硬条件且命中受控主题词的候选仅 0 条，低于 5 条补搜线",
+              "5 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、中央政府采购网、全国公共资源交易平台、千里马招标网"
+            ]
+          },
+          {
+            "round": 2,
+            "trigger": "首轮可信候选不足，按受控同义词和行业术语执行一次缺口补搜。",
+            "queries": [
+              {
+                "id": "q-expand-01",
+                "text": "机房",
+                "round": 2,
+                "reason": "意图规则库中的受控同义词",
+                "term_kind": "synonym"
+              },
+              {
+                "id": "q-expand-02",
+                "text": "算力中心",
+                "round": 2,
+                "reason": "意图规则库中的受控同义词",
+                "term_kind": "synonym"
+              }
+            ],
+            "source_calls": 12,
+            "scanned_count": 50,
+            "candidate_count": 50,
+            "unique_candidate_count": 50,
+            "matched_candidate_count": 11,
+            "latency_ms": 28326,
+            "gaps_after_round": [
+              "5 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、中央政府采购网、全国公共资源交易平台、千里马招标网"
+            ]
+          }
+        ],
+        "gap_analysis": [
+          "5 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、中央政府采购网、全国公共资源交易平台、千里马招标网"
+        ],
+        "semantic_review_status": "not_needed",
+        "semantic_decisions": [],
+        "unique_raw_candidates": 78,
+        "summary": "使用 9 个受控概念完成 2 轮检索，去重后获得 78 个原始候选；语义复核接受 0 个，最终保留 8 条可追溯标讯。"
+      }
+    },
+    {
+      "query": "最近1个月全国服务器采购信息",
+      "spec": {
+        "topic": "服务器",
+        "keywords": [
+          "服务器",
+          "计算节点",
+          "算力设备",
+          "机架式服务器",
+          "GPU服务器"
+        ],
+        "region": null,
+        "region_level": "nationwide",
+        "start_date": "2026-06-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 21350,
+      "scanned": 396,
+      "candidates": 91,
+      "kept": 76,
+      "unique_evidence_urls": 80,
+      "evidence_urls": [
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795568",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795571",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796413",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796423",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796424",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796428",
+        "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796429",
+        "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795313",
+        "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795315",
+        "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795317",
+        "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795722",
+        "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795823",
+        "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=796370",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=0f68e97c63814d40b79be921cd09f314&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=5698a60e753048799655c994287f9f57&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=628ef9d9d98d4fceb76c05d1b5e594cd&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=753c53a1062c4ba2bc9745dafcbe0242&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=80bbdd448c054ce19c21a1a2531c61f2&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=854dbf670dee4a1ca479c782dbb96cf4&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f2228360c5ebc&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f407a5800397b&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f604734e86727&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f608844d06925&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6f8a67266a9f&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6fba97ce6d4d&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f024cda019f0309517f6f30&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f213303019f218eeb1f18db&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f39e024019f3a5f36ea20e9&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=91f11dc2f84a40a28590f6a4fd614b03&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=d498e08881ae49999fbbcb83b1f11ad4&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=e92c68c253cf41f88b23d30ce6ebd116&inpvalue=&dataSource=0&tenderAgency=",
+        "https://ctbpsp.com/#/bulletinDetail?uuid=f63a730b359f4bf28ae869801d4ec07e&inpvalue=&dataSource=0&tenderAgency=",
+        "https://www.ccgp.gov.cn/cggg/zygg/gkzb/202607/t20260717_26960603.htm",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c59f2c5d07019f6a3510524280.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f2c5f2d019f4951c8cc5328.html?noticeType=001011&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f5ae288019f64cc4f0d3e4e.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00d29f3f466d019f64f330444a7a.html?noticeType=001069&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f4a168b021259.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64a8165c3562.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64ccd4cb3d78.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f65862e4a54b0.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69ab614c037b.html?noticeType=001052&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69cb5f900830.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69f540c610e0.html?noticeType=001021&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f5b43673b5d66.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f639cb4c050bd.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f64fb5e327c38.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f68b64d4b231d.html?noticeType=001006&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6af1842c5f5f.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6b24abf5611b.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03ed9f3f3788019f5ea2d0741534.html?noticeType=59&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6348c9bd0196.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6dbe864035b9.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+        "https://www.szggzy.com/jygg/details.html?contentId=20475552&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20479552&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20480730&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20482835&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20484542&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20484575&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20485506&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20487362&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20492317&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20492602&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20496737&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20501858&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20502403&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20503075&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20506419&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20506421&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20508093&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20513270&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20515562&channelId=2850",
+        "https://www.szggzy.com/jygg/details.html?contentId=20523647&channelId=2850",
+        "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/0519b6b9-3daf-4ef3-a8b3-f3359b948960.html?id=531889d7-8185-11f1-9615-fa163ee0ead6",
+        "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/4195ac85-64a6-462b-a7f8-ea37d31a45be.html?id=9be438b3-81ab-11f1-9615-fa163ee0ead6",
+        "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/54c14a6c-943e-44d5-8208-29fa4836f370.html?id=170fc037-80eb-11f1-9615-fa163ee0ead6",
+        "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/afa60ecb-9687-40d1-abca-b68010bf0584.html?id=b7d90281-7fe8-11f1-9615-fa163ee0ead6",
+        "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/c30d51d6-f3d9-4e2c-83e2-6f4e002a0a66.html?id=1faa0fea-8028-11f1-9615-fa163ee0ead6",
+        "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/e3325ca9-3fcd-47b2-865e-c6ae65472673.html?id=ce6f20d3-8025-11f1-9615-fa163ee0ead6"
+      ],
+      "records": [
+        {
+          "title": "北京理工大学新能源汽车国家监测与管理平台数据中心服务器托管服务公开招标公告",
+          "published_at": "2026-07-17T21:44:00",
+          "region": "北京",
+          "buyer": "北京理工大学",
+          "event_type": "招标公告",
+          "sources": [
+            "中国政府采购网"
+          ],
+          "source_urls": [
+            "https://www.ccgp.gov.cn/cggg/zygg/gkzb/202607/t20260717_26960603.htm"
+          ],
+          "relevance_score": 76.0,
+          "opportunity_score": 81.7
+        },
+        {
+          "title": "GPU服务器综合采购项目招标公告(2026-JKFZCG-W1002)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "陕西",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6af1842c5f5f.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 79.6
+        },
+        {
+          "title": "网关、服务器、摄像机等视频监控设备(项目编号:2026-JQ02-W1213)采购项目征求意见公告(第一次)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00d29f3f466d019f64f330444a7a.html?noticeType=001069&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 74.6
+        },
+        {
+          "title": "数据中心服务器采购(二次)废标暨三次招标公告(2026-JXNXTY-W1014)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "湖北",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64ccd4cb3d78.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 74.6
+        },
+        {
+          "title": "深度学习服务器采购招标公告(2026-JQ70-W3003)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "河南",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f4a168b021259.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 74.6
+        },
+        {
+          "title": "服务器和计算机采购招标公告",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f2c5f2d019f4951c8cc5328.html?noticeType=001011&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 74.6
+        },
+        {
+          "title": "南方医科大学深圳医院GPU服务器采购意向公开",
+          "published_at": "2026-07-06T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20496737&channelId=2850"
+          ],
+          "relevance_score": 87.0,
+          "opportunity_score": 72.6
+        },
+        {
+          "title": "深圳技术大学高性能GPU服务器竞价采购中标(成交)结果公告",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20484575&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 69.6
+        },
+        {
+          "title": "视频云存储服务器采购项目的更正公告",
+          "published_at": "2026-06-30T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "更正公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20485506&channelId=2850",
+            "https://www.szggzy.com/jygg/details.html?contentId=20508093&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 67.6
+        },
+        {
+          "title": "国产化服务器采购项目询价公告招标公告(2026-JKBNAV-Z4001)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69cb5f900830.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 66.6
+        },
+        {
+          "title": "操作台、电脑及服务器采购项目招标公告(2026-JJDEBC-W4081)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "山东",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6348c9bd0196.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 64.6
+        },
+        {
+          "title": "安全审计设备、防火墙、入侵检测设备等信息安全设备、服务器等计算机设备及信息安全软件等计算机软件采购项目资格预审公告(2025-JH17-W2107)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "山东",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69ab614c037b.html?noticeType=001052&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 64.6
+        },
+        {
+          "title": "某部服务器硬盘采购项目招标公告(2026-JLXLDA-W4003)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "甘肃",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f5b43673b5d66.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 64.6
+        },
+        {
+          "title": "深圳大学城图书馆信息化系统基础硬件设施升级改造项目--超融合服务器竞价采购中标(成交)结果公告",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20480730&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 64.6
+        },
+        {
+          "title": "服务器、存储和安全系统采购意向公告",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "黑龙江",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03ed9f3f3788019f5ea2d0741534.html?noticeType=59&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "南方科技大学服务器及配套设备采购意向公开",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20515562&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "深圳理工大学服务器等一批设备采购项目意向公开",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20513270&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "北京大学深圳医院通用服务器意向公开",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20502403&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "中山大学附属第八医院(深圳福田)数据湖服务器意向公开",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20484542&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "2026年第二批信创服务器集中采购项目(标包四:智能算力服务器)招标公告",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "重庆",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=854dbf670dee4a1ca479c782dbb96cf4&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 87.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "2026年第二批信创服务器集中采购项目(标包三:GPU算力服务器) 招标公告",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "重庆",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=d498e08881ae49999fbbcb83b1f11ad4&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 87.0,
+          "opportunity_score": 62.6
+        },
+        {
+          "title": "【初始合同】深圳技术大学高性能GPU服务器竞价采购合同公示",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20523647&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "GPU服务器等设备采购(第二次)废标公告(2025-JC04-W4001)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "四川",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f68b64d4b231d.html?noticeType=001006&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "128核机架式服务器采购采购结果公示(2026-JJDACF-TX008)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "浙江",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f64fb5e327c38.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "【初始合同】深圳市妇幼保健院信创算力服务器购置合同公示",
+          "published_at": "2026-07-09T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20506421&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "【初始合同】南方科技大学AI服务器采购合同公示",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20503075&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "深圳理工大学算力服务器采购项目竞价采购变更公告",
+          "published_at": "2026-07-07T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "更正公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20501858&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "中国医学科学院阜外医院深圳医院GPU服务器采购竞价采购中标结果更正公告",
+          "published_at": "2026-07-02T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "更正公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20492602&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "南方科技大学AI服务器采购中标(成交)结果公告",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20479552&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "【初始合同】深圳理工大学AI算力服务器采购项目竞价采购合同公示",
+          "published_at": "2026-06-24T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20475552&channelId=2850"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 61.6
+        },
+        {
+          "title": "中国民航科学技术研究院(中国民用航空局航空安全技术中心)机架式服务器反拍采购废标公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795317",
+            "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795315"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 60.6
+        },
+        {
+          "title": "服务器招标公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "陕西",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f39e024019f3a5f36ea20e9&inpvalue=&dataSource=0&tenderAgency=",
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f604734e86727&inpvalue=&dataSource=0&tenderAgency=",
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6fba97ce6d4d&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 58.6
+        },
+        {
+          "title": "中华人民共和国深圳出入境边防检查总站梅沙系统服务器及算力服务器采购项目招标公告",
+          "published_at": "2026-07-16T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/54c14a6c-943e-44d5-8208-29fa4836f370.html?id=170fc037-80eb-11f1-9615-fa163ee0ead6"
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 57.6
+        },
+        {
+          "title": "2026年智算算力服务器租赁服务项目招标公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f608844d06925&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 57.6
+        },
+        {
+          "title": "华泰期货有限公司算力服务器和前置服务器采购项目询价公告",
+          "published_at": "2026-07-02T00:00:00",
+          "region": "广东",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f213303019f218eeb1f18db&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 57.6
+        },
+        {
+          "title": "2026年第二批信创服务器集中采购项目(标包二:海光服务器) 招标公告",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "重庆",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=f63a730b359f4bf28ae869801d4ec07e&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 57.6
+        },
+        {
+          "title": "2026年第二批信创服务器集中采购项目(标包一:鲲鹏服务器) 招标公告",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "重庆",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=5698a60e753048799655c994287f9f57&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 80.0,
+          "opportunity_score": 57.6
+        },
+        {
+          "title": "服务器及云平台软件采购项目流废标公示",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c59f2c5d07019f6a3510524280.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "高性能服务器流标公示(2026-JQ06-W3077)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6dbe864035b9.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "某单位服务器采购意向公开(2026-JLJZGG-W4013)(第1包)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "新疆",
+          "buyer": null,
+          "event_type": "采购意向",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6b24abf5611b.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "服务器采购项目采购结果公示(2025-JC02-W1044)(第1包)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "上海",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69f540c610e0.html?noticeType=001021&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "智能系统服务器采购项目(2026-JQ02-W1145)流废标公示",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f5ae288019f64cc4f0d3e4e.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "某部服务器虚拟化平台采购采购结果公示(2026-JKXWZX-F4001)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "北京",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f65862e4a54b0.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "高性能服务器设备采购采购结果公示(2026-JCFLXX-W4001)",
+          "published_at": "2026-07-16T00:00:00",
+          "region": "湖北",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f639cb4c050bd.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "服务器、电脑及UPS电源采购废标公告(2026-JLDJBO-W3005)",
+          "published_at": "2026-07-15T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "军队采购网"
+          ],
+          "source_urls": [
+            "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64a8165c3562.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "【初始合同】深圳市第三次精神疾病流行病学调查项目服务器采购合同公示",
+          "published_at": "2026-07-09T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20506419&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "视频云存储服务器采购项目中标结果公告",
+          "published_at": "2026-07-02T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20492317&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "【初始合同】深圳理工大学智慧校园项目-服务器存储及安全设备项目合同公示",
+          "published_at": "2026-06-30T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20487362&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "【初始合同】深圳职业技术大学深汕校区(设备)虚拟建模动画云渲染系统设备服务器合同公示",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "深圳",
+          "buyer": null,
+          "event_type": "合同公告",
+          "sources": [
+            "深圳公共资源交易中心"
+          ],
+          "source_urls": [
+            "https://www.szggzy.com/jygg/details.html?contentId=20482835&channelId=2850"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 56.6
+        },
+        {
+          "title": "国产化安全替代服务器、国产化安全替代服务器1-公开招标公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "陕西",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6f8a67266a9f&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "某单位二所服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796429"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "某单位交通研究所服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796428"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "中国极地研究中心(中国极地研究所)服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796424"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "中国水利水电科学研究院服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796423"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "北京中医药大学东直门医院服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "长江南京航道局服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796413"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "国家卫生健康委卫生发展研究中心服务器反拍采购需求公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=796370"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "国家金融监督管理总局安徽监管局12台数据库服务器采购项目招标公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/4195ac85-64a6-462b-a7f8-ea37d31a45be.html?id=9be438b3-81ab-11f1-9615-fa163ee0ead6"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "中国物流信息中心服务器及计算机网络设备采购项目更正公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "更正公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/0519b6b9-3daf-4ef3-a8b3-f3359b948960.html?id=531889d7-8185-11f1-9615-fa163ee0ead6"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "北京外国语大学高性能服务器和存储采购项目中标公告",
+          "published_at": "2026-07-15T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/c30d51d6-f3d9-4e2c-83e2-6f4e002a0a66.html?id=1faa0fea-8028-11f1-9615-fa163ee0ead6"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "国家市场监督管理总局缺陷产品召回技术中心服务器等设备采购项目征求意见公告",
+          "published_at": "2026-07-15T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/e3325ca9-3fcd-47b2-865e-c6ae65472673.html?id=ce6f20d3-8025-11f1-9615-fa163ee0ead6"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "南开大学服务器反拍采购废标公告",
+          "published_at": "2026-07-15T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795823"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "成都铁路公安局服务器反拍采购需求公告",
+          "published_at": "2026-07-15T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795722"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "国家医疗保障局医疗保障事业管理中心经办数据分析服务器采购项目中标公告",
+          "published_at": "2026-07-15T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "中标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/afa60ecb-9687-40d1-abca-b68010bf0584.html?id=b7d90281-7fe8-11f1-9615-fa163ee0ead6"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "服务器维保服务项目招标公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "安徽",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=628ef9d9d98d4fceb76c05d1b5e594cd&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "终端和服务器公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "上海",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=80bbdd448c054ce19c21a1a2531c61f2&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "中国中医科学院西苑医院服务器(询价)采购项目需求公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795571"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "华中科技大学同济医学院附属协和医院服务器(询价)采购项目需求公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795568"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "首都机场集团紧急医学救援中心服务器等协议比价需求公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": null,
+          "buyer": null,
+          "event_type": "其他公告",
+          "sources": [
+            "中央政府采购网"
+          ],
+          "source_urls": [
+            "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795313"
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "高端服务器及存储设备运维服务招标公告",
+          "published_at": "2026-07-08T00:00:00",
+          "region": "江苏",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f407a5800397b&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "服务器-公开招标公告",
+          "published_at": "2026-07-02T00:00:00",
+          "region": "陕西",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f2228360c5ebc&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "中国电信股份有限公司湖南分公司2026年华为服务器/刀片服务器设备维保项目询比公告",
+          "published_at": "2026-06-30T00:00:00",
+          "region": "湖南",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=753c53a1062c4ba2bc9745dafcbe0242&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "国产化服务器",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "河北",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f024cda019f0309517f6f30&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "国产化服务器及配套设备-国产化服务器、国产化服务器及配套设备-交换机、民机试飞外场支持子系统-移动终端招标公告",
+          "published_at": "2026-06-25T00:00:00",
+          "region": "陕西",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=e92c68c253cf41f88b23d30ce6ebd116&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "2026年系统服务器及云服务器集成项目",
+          "published_at": "2026-06-23T00:00:00",
+          "region": "新疆",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=0f68e97c63814d40b79be921cd09f314&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        },
+        {
+          "title": "服务器运维",
+          "published_at": "2026-06-18T00:00:00",
+          "region": "上海",
+          "buyer": null,
+          "event_type": "招标公告",
+          "sources": [
+            "中国招标投标公共服务平台"
+          ],
+          "source_urls": [
+            "https://ctbpsp.com/#/bulletinDetail?uuid=91f11dc2f84a40a28590f6a4fd614b03&inpvalue=&dataSource=0&tenderAgency="
+          ],
+          "relevance_score": 73.0,
+          "opportunity_score": 52.6
+        }
+      ],
+      "url_validation": [
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795568",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795568",
+          "latency_ms": 331,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795571",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=795571",
+          "latency_ms": 286,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796413",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796413",
+          "latency_ms": 285,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422",
+          "latency_ms": 319,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796423",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796423",
+          "latency_ms": 271,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796424",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796424",
+          "latency_ms": 263,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796428",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796428",
+          "latency_ms": 319,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796429",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796429",
+          "latency_ms": 246,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795313",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795313",
+          "latency_ms": 553,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795315",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795315",
+          "latency_ms": 551,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795317",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795317",
+          "latency_ms": 524,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795722",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795722",
+          "latency_ms": 506,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795823",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=795823",
+          "latency_ms": 534,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "http://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=796370",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://mkt.zycg.gov.cn/mall-view/information/detail?noticeId=796370",
+          "latency_ms": 544,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=0f68e97c63814d40b79be921cd09f314&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=0f68e97c63814d40b79be921cd09f314&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 663,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=5698a60e753048799655c994287f9f57&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=5698a60e753048799655c994287f9f57&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 621,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=628ef9d9d98d4fceb76c05d1b5e594cd&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=628ef9d9d98d4fceb76c05d1b5e594cd&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 716,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=753c53a1062c4ba2bc9745dafcbe0242&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=753c53a1062c4ba2bc9745dafcbe0242&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 740,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=80bbdd448c054ce19c21a1a2531c61f2&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=80bbdd448c054ce19c21a1a2531c61f2&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 778,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=854dbf670dee4a1ca479c782dbb96cf4&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=854dbf670dee4a1ca479c782dbb96cf4&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 783,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f2228360c5ebc&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f2228360c5ebc&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 793,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f407a5800397b&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f407a5800397b&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 784,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f604734e86727&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f604734e86727&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 843,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f608844d06925&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f608844d06925&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 867,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6f8a67266a9f&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6f8a67266a9f&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 946,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6fba97ce6d4d&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9494759dbedf91019f6fba97ce6d4d&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 962,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f024cda019f0309517f6f30&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f024cda019f0309517f6f30&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1018,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f213303019f218eeb1f18db&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f213303019f218eeb1f18db&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1028,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f39e024019f3a5f36ea20e9&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f39e024019f3a5f36ea20e9&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1031,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=91f11dc2f84a40a28590f6a4fd614b03&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=91f11dc2f84a40a28590f6a4fd614b03&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1030,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=d498e08881ae49999fbbcb83b1f11ad4&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=d498e08881ae49999fbbcb83b1f11ad4&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1096,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=e92c68c253cf41f88b23d30ce6ebd116&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=e92c68c253cf41f88b23d30ce6ebd116&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1090,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=f63a730b359f4bf28ae869801d4ec07e&inpvalue=&dataSource=0&tenderAgency=",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://ctbpsp.com/#/bulletinDetail?uuid=f63a730b359f4bf28ae869801d4ec07e&inpvalue=&dataSource=0&tenderAgency=",
+          "latency_ms": 1212,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.ccgp.gov.cn/cggg/zygg/gkzb/202607/t20260717_26960603.htm",
+          "state": "reachable",
+          "status_code": 200,
+          "final_url": "https://www.ccgp.gov.cn/cggg/zygg/gkzb/202607/t20260717_26960603.htm",
+          "latency_ms": 1077,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c59f2c5d07019f6a3510524280.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c59f2c5d07019f6a3510524280.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "latency_ms": 1266,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f2c5f2d019f4951c8cc5328.html?noticeType=001011&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f2c5f2d019f4951c8cc5328.html?noticeType=001011&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "latency_ms": 1548,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f5ae288019f64cc4f0d3e4e.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c69f5ae288019f64cc4f0d3e4e.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "latency_ms": 1250,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00d29f3f466d019f64f330444a7a.html?noticeType=001069&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00d29f3f466d019f64f330444a7a.html?noticeType=001069&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "latency_ms": 1260,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f4a168b021259.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f4a168b021259.html?noticeType=001013&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1573,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64a8165c3562.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64a8165c3562.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1317,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64ccd4cb3d78.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f64ccd4cb3d78.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1587,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f65862e4a54b0.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f65862e4a54b0.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1418,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69ab614c037b.html?noticeType=001052&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69ab614c037b.html?noticeType=001052&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+          "latency_ms": 1733,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69cb5f900830.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69cb5f900830.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1479,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69f540c610e0.html?noticeType=001021&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d02bd9f49c5d9019f69f540c610e0.html?noticeType=001021&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+          "latency_ms": 1764,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f5b43673b5d66.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f5b43673b5d66.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1797,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f639cb4c050bd.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f639cb4c050bd.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1645,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f64fb5e327c38.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f64fb5e327c38.html?noticeType=001021&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1687,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f68b64d4b231d.html?noticeType=001006&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f68b64d4b231d.html?noticeType=001006&channel=abbb350b-9b39-4a22-a4e3-94f54dffd929",
+          "latency_ms": 2059,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6af1842c5f5f.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6af1842c5f5f.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1776,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6b24abf5611b.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6b24abf5611b.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 2092,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03ed9f3f3788019f5ea2d0741534.html?noticeType=59&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03ed9f3f3788019f5ea2d0741534.html?noticeType=59&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "latency_ms": 2112,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6348c9bd0196.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6348c9bd0196.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1912,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6dbe864035b9.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6dbe864035b9.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "latency_ms": 1966,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20475552&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20475552&channelId=2850",
+          "latency_ms": 1972,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20479552&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20479552&channelId=2850",
+          "latency_ms": 2000,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20480730&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20480730&channelId=2850",
+          "latency_ms": 2012,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20482835&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20482835&channelId=2850",
+          "latency_ms": 2175,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20484542&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20484542&channelId=2850",
+          "latency_ms": 2182,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20484575&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20484575&channelId=2850",
+          "latency_ms": 2162,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20485506&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20485506&channelId=2850",
+          "latency_ms": 2205,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20487362&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20487362&channelId=2850",
+          "latency_ms": 2200,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20492317&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20492317&channelId=2850",
+          "latency_ms": 2228,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20492602&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20492602&channelId=2850",
+          "latency_ms": 2234,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20496737&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20496737&channelId=2850",
+          "latency_ms": 2296,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20501858&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20501858&channelId=2850",
+          "latency_ms": 2326,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20502403&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20502403&channelId=2850",
+          "latency_ms": 2370,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20503075&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20503075&channelId=2850",
+          "latency_ms": 2349,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20506419&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20506419&channelId=2850",
+          "latency_ms": 2403,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20506421&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20506421&channelId=2850",
+          "latency_ms": 2392,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20508093&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20508093&channelId=2850",
+          "latency_ms": 2452,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20513270&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20513270&channelId=2850",
+          "latency_ms": 2461,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20515562&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20515562&channelId=2850",
+          "latency_ms": 2512,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20523647&channelId=2850",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.szggzy.com/jygg/details.html?contentId=20523647&channelId=2850",
+          "latency_ms": 2514,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/0519b6b9-3daf-4ef3-a8b3-f3359b948960.html?id=531889d7-8185-11f1-9615-fa163ee0ead6",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/0519b6b9-3daf-4ef3-a8b3-f3359b948960.html?id=531889d7-8185-11f1-9615-fa163ee0ead6",
+          "latency_ms": 2727,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/4195ac85-64a6-462b-a7f8-ea37d31a45be.html?id=9be438b3-81ab-11f1-9615-fa163ee0ead6",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/4195ac85-64a6-462b-a7f8-ea37d31a45be.html?id=9be438b3-81ab-11f1-9615-fa163ee0ead6",
+          "latency_ms": 2660,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/54c14a6c-943e-44d5-8208-29fa4836f370.html?id=170fc037-80eb-11f1-9615-fa163ee0ead6",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/54c14a6c-943e-44d5-8208-29fa4836f370.html?id=170fc037-80eb-11f1-9615-fa163ee0ead6",
+          "latency_ms": 2494,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/afa60ecb-9687-40d1-abca-b68010bf0584.html?id=b7d90281-7fe8-11f1-9615-fa163ee0ead6",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/afa60ecb-9687-40d1-abca-b68010bf0584.html?id=b7d90281-7fe8-11f1-9615-fa163ee0ead6",
+          "latency_ms": 2780,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/c30d51d6-f3d9-4e2c-83e2-6f4e002a0a66.html?id=1faa0fea-8028-11f1-9615-fa163ee0ead6",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/c30d51d6-f3d9-4e2c-83e2-6f4e002a0a66.html?id=1faa0fea-8028-11f1-9615-fa163ee0ead6",
+          "latency_ms": 2558,
+          "message": "原文入口可直接访问"
+        },
+        {
+          "url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/e3325ca9-3fcd-47b2-865e-c6ae65472673.html?id=ce6f20d3-8025-11f1-9615-fa163ee0ead6",
+          "state": "reachable",
+          "status_code": 206,
+          "final_url": "https://www.zycg.gov.cn/freecms/site/zygjjgzfcgzx/ggxx/info/2026/e3325ca9-3fcd-47b2-865e-c6ae65472673.html?id=ce6f20d3-8025-11f1-9615-fa163ee0ead6",
+          "latency_ms": 3072,
+          "message": "原文入口可直接访问"
+        }
+      ],
+      "url_validation_counts": {
+        "reachable": 80
+      },
+      "sources": [
+        {
+          "source": "深圳公共资源交易中心",
+          "status": "ok",
+          "scanned_count": 20,
+          "fetched_count": 20,
+          "kept_count": 19,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 20137,
+          "message": "深圳官方平台检索完成，扫描 20 条，读取 20 条公开详情。仅使用公告公开接口，不登录投标工作台或代替用户完成 CA。"
+        },
+        {
+          "source": "中国招标投标公共服务平台",
+          "status": "partial",
+          "scanned_count": 20,
+          "fetched_count": 20,
+          "kept_count": 17,
+          "rejected_count": 1,
+          "rejection_reasons": {
+            "keyword_mismatch": 1
+          },
+          "latency_ms": 1211,
+          "message": "中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。"
+        },
+        {
+          "source": "军队采购网",
+          "status": "ok",
+          "scanned_count": 20,
+          "fetched_count": 20,
+          "kept_count": 20,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 846,
+          "message": "军队采购网公开采购大厅检索完成，官方接口报告 184 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。"
+        },
+        {
+          "source": "中央政府采购网",
+          "status": "partial",
+          "scanned_count": 20,
+          "fetched_count": 20,
+          "kept_count": 19,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 1148,
+          "message": "中央政府采购网公开公告搜索完成。其中 20 条电子卖场公告只提供公开标题和原文入口；未绕过详情网关访问限制。"
+        },
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 876,
+          "message": "已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 1,
+          "kept_count": 1,
+          "rejected_count": 279,
+          "rejection_reasons": {
+            "keyword_mismatch": 279
+          },
+          "latency_ms": 11881,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "keyword_mismatch": 24
+          },
+          "latency_ms": 366,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 2,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 2,
+          "rejection_reasons": {
+            "outside_time": 2
+          },
+          "latency_ms": 8461,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；请在来源中心点击“打开浏览器授权”。"
+        }
+      ],
+      "rejection_reasons": {
+        "keyword_mismatch": 304,
+        "outside_time": 12
+      },
+      "coverage_complete": false,
+      "retrieval": {
+        "plan": {
+          "planner_version": "retrieval-v1",
+          "mode": "deterministic",
+          "llm_status": "disabled",
+          "terms": [
+            {
+              "text": "服务器",
+              "kind": "topic",
+              "origin": "query",
+              "reason": "用户问题中识别出的核心业务主题"
+            },
+            {
+              "text": "计算节点",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "算力设备",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "机架式服务器",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "GPU服务器",
+              "kind": "synonym",
+              "origin": "rules",
+              "reason": "意图规则库中的受控同义词"
+            },
+            {
+              "text": "计算服务器",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：服务器 的常见采购表述"
+            },
+            {
+              "text": "AI服务器",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：服务器 的常见采购表述"
+            },
+            {
+              "text": "信创服务器",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：服务器 的常见采购表述"
+            },
+            {
+              "text": "GPU计算节点",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：服务器 的常见采购表述"
+            },
+            {
+              "text": "算力服务器",
+              "kind": "industry",
+              "origin": "lexicon",
+              "reason": "本地行业词典：服务器 的常见采购表述"
+            }
+          ],
+          "rejected_terms": [],
+          "queries": [
+            {
+              "id": "q-primary",
+              "text": "服务器",
+              "round": 1,
+              "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+              "term_kind": "topic"
+            },
+            {
+              "id": "q-expand-01",
+              "text": "计算节点",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-02",
+              "text": "算力设备",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-03",
+              "text": "机架式服务器",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-04",
+              "text": "GPU服务器",
+              "round": 2,
+              "reason": "意图规则库中的受控同义词",
+              "term_kind": "synonym"
+            },
+            {
+              "id": "q-expand-05",
+              "text": "计算服务器",
+              "round": 2,
+              "reason": "本地行业词典：服务器 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-06",
+              "text": "AI服务器",
+              "round": 2,
+              "reason": "本地行业词典：服务器 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-07",
+              "text": "信创服务器",
+              "round": 2,
+              "reason": "本地行业词典：服务器 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-08",
+              "text": "GPU计算节点",
+              "round": 2,
+              "reason": "本地行业词典：服务器 的常见采购表述",
+              "term_kind": "industry"
+            },
+            {
+              "id": "q-expand-09",
+              "text": "算力服务器",
+              "round": 2,
+              "reason": "本地行业词典：服务器 的常见采购表述",
+              "term_kind": "industry"
+            }
+          ],
+          "source_priorities": [],
+          "max_rounds": 2,
+          "query_budget_per_source": 2,
+          "latency_ms": 0,
+          "summary": "AI 检索规划已关闭；本轮使用原主题、规则同义词和本地行业词典。"
+        },
+        "rounds": [
+          {
+            "round": 1,
+            "trigger": "所有来源先执行用户核心主题，建立确定性召回基线。",
+            "queries": [
+              {
+                "id": "q-primary",
+                "text": "服务器",
+                "round": 1,
+                "reason": "所有来源先执行用户核心主题，建立可比较的确定性基线。",
+                "term_kind": "topic"
+              }
+            ],
+            "source_calls": 9,
+            "scanned_count": 396,
+            "candidate_count": 91,
+            "unique_candidate_count": 91,
+            "matched_candidate_count": 80,
+            "latency_ms": 20138,
+            "gaps_after_round": [
+              "5 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、中央政府采购网、全国公共资源交易平台、千里马招标网"
+            ]
+          }
+        ],
+        "gap_analysis": [
+          "5 个来源存在公开范围、授权或可用性缺口：中国招标投标公共服务平台、中国招标投标网、中央政府采购网、全国公共资源交易平台、千里马招标网"
+        ],
+        "semantic_review_status": "disabled",
+        "semantic_decisions": [],
+        "unique_raw_candidates": 91,
+        "summary": "使用 10 个受控概念完成 1 轮检索，去重后获得 91 个原始候选；语义复核接受 0 个，最终保留 76 条可追溯标讯。"
+      }
+    }
+  ],
+  "totals": {
+    "scanned": 1441,
+    "candidates": 224,
+    "kept": 114,
+    "unique_evidence_urls": 126,
+    "reachable_urls": 126,
+    "access_limited_urls": 0,
+    "broken_urls": 0,
+    "network_error_urls": 0
+  },
+  "benchmark": {
+    "baseline_mode": "legacy-v0.5-single-query",
+    "criteria": {
+      "no_evidence_url_regression": true,
+      "at_least_three_queries_improved": true,
+      "all_evidence_urls_verified": true
+    },
+    "passed": true,
+    "improved_query_count": 4,
+    "comparisons": [
+      {
+        "query": "最近1个月深圳充电桩招标信息",
+        "candidate_delta": 20,
+        "kept_delta": 18,
+        "evidence_url_delta": 20,
+        "improved": true
+      },
+      {
+        "query": "最近1个月北京医疗设备采购信息",
+        "candidate_delta": 12,
+        "kept_delta": 11,
+        "evidence_url_delta": 12,
+        "improved": true
+      },
+      {
+        "query": "最近3个月江苏数据中心招标信息",
+        "candidate_delta": 68,
+        "kept_delta": 8,
+        "evidence_url_delta": 11,
+        "improved": true
+      },
+      {
+        "query": "最近1个月全国服务器采购信息",
+        "candidate_delta": 80,
+        "kept_delta": 75,
+        "evidence_url_delta": 79,
+        "improved": true
+      }
+    ],
+    "regressions": [],
+    "unverified_or_broken_urls": []
+  }
+}

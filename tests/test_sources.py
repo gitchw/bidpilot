@@ -188,3 +188,14 @@ def test_szggzy_public_api_parser_and_detail_preserve_local_evidence():
     assert "成交供应商" in detailed.body
     assert detailed.source_metadata["detail_loaded"] is True
     assert detailed.attachments[0].url == "https://www.szggzy.com/upload/result.pdf"
+
+
+def test_szggzy_replaces_retired_deep_link_with_current_public_detail_route():
+    payload = json.loads(fixture("szggzy_page.json"))
+    payload["data"]["content"][0]["linkTo"] = "http://zfcg.szggzy.com:8081/gsgg/retired-entry.html"
+
+    item = SZGGZYSource.parse_page_response(payload)[0]
+
+    assert item.source_url == (
+        "https://www.szggzy.com/jygg/details.html?contentId=20359755&channelId=2850"
+    )

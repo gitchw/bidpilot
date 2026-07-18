@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections import Counter
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
@@ -62,12 +62,13 @@ class SZGGZYSource(SourceAdapter):
     @staticmethod
     def _safe_source_url(row: dict) -> str:
         content_id = str(row.get("contentId") or row.get("id") or "")
-        candidate = normalize_space(row.get("linkTo") or row.get("url") or "")
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return candidate
+        # The list API still returns legacy ``linkTo`` values for part of the
+        # catalogue (including the retired :8081 government-procurement site).
+        # The current public detail shell is stable across all trade channels
+        # and loads the same content by contentId, so evidence links must use
+        # this canonical route instead of trusting stale deep links.
         return (
-            "https://www.szggzy.com/static/jygg/details.html"
+            "https://www.szggzy.com/jygg/details.html"
             f"?contentId={content_id}&channelId={row.get('channelId', '')}"
         )
 

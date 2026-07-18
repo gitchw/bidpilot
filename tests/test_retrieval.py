@@ -11,6 +11,7 @@ from bidpilot.models import RawTender, SourceSearchResult, SourceStatus, TenderQ
 from bidpilot.pipeline import TenderPipeline
 from bidpilot.retrieval import RetrievalPlanner
 from bidpilot.sources.base import SourceAdapter
+from tools.evaluate_retrieval import classify_url_status, compare_with_baseline
 
 NOW = datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
@@ -292,3 +293,47 @@ async def test_semantic_review_never_overrides_region_hard_filter(tmp_path: Path
     assert len(calls) == 1
     assert result.retrieval.semantic_review_status == "not_needed"
     assert result.diagnostics[0].rejection_reasons["region_mismatch"] == 1
+
+
+def test_retrieval_benchmark_classifies_access_limits_without_calling_them_broken():
+    assert classify_url_status(200) == "reachable"
+    assert classify_url_status(302) == "reachable"
+    assert classify_url_status(403) == "access_limited"
+    assert classify_url_status(429) == "access_limited"
+    assert classify_url_status(404) == "broken"
+    assert classify_url_status(503) == "network_error"
+
+
+def test_retrieval_benchmark_requires_three_improvements_and_no_broken_urls():
+    baseline = {
+        "mode": "legacy-v0.5-single-query",
+        "queries": [
+            {"query": f"q{index}", "candidates": 2, "kept": 1, "unique_evidence_urls": 1}
+            for index in range(4)
+        ],
+    }
+    current = {
+        "queries": [
+            {
+                "query": f"q{index}",
+                "candidates": 3 if index < 3 else 2,
+                "kept": 1,
+                "unique_evidence_urls": 1,
+                "url_validation": [
+                    {
+                        "url": f"https://example.com/{index}",
+                        "state": "access_limited" if index == 0 else "reachable",
+                    }
+                ],
+            }
+            for index in range(4)
+        ]
+    }
+    result = compare_with_baseline(baseline, current)
+    assert result["passed"] is True
+    assert result["improved_query_count"] == 3
+
+    current["queries"][0]["url_validation"][0]["state"] = "broken"
+    failed = compare_with_baseline(baseline, current)
+    assert failed["passed"] is False
+    assert failed["criteria"]["all_evidence_urls_verified"] is False
