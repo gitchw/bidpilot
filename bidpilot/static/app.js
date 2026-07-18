@@ -7,8 +7,23 @@ const state = {
   config: null,
   configEditToken: null,
   activeTab: "search",
+  opportunityView: "opportunities",
   opportunityProjectKeys: new Set(),
+  buyerRadarLoadSequence: 0,
   sources: [],
+  profile: null,
+  profileLoaded: false,
+  profileDirty: false,
+  profileLoadSequence: 0,
+  feedbackMap: new Map(),
+  qaAnswer: null,
+  qaInFlight: false,
+  qaRequestSequence: 0,
+  qaAbortController: null,
+  runInFlight: false,
+  runRequestSequence: 0,
+  intentRequestSequence: 0,
+  assessmentRefreshSequence: 0,
 };
 const OPPORTUNITY_STAGES = {
   new: "待评估", following: "跟进中", bidding: "投标准备",
@@ -17,11 +32,18 @@ const OPPORTUNITY_STAGES = {
 const FILTER_REASON_LABELS = {
   outside_time: "超出时间范围", region_mismatch: "地域不匹配",
   event_type_mismatch: "公告类型不匹配", excluded_keyword: "命中排除词",
-  keyword_mismatch: "主题/同义词未命中", low_relevance: "相关度不足",
+  buyer_mismatch: "采购单位不匹配", keyword_mismatch: "主题/同义词未命中", low_relevance: "相关度不足",
 };
 const SOURCE_STATUS_LABELS = {
   ok: "正常完成", partial: "覆盖不完整",
   auth_required: "需要登录", failed: "抓取失败", skipped: "本轮未调用",
+};
+const FIT_RECOMMENDATION_LABELS = { bid: "建议参与", watch: "持续观察", skip: "暂不投入" };
+const FEEDBACK_LABELS = { relevant: "相关", irrelevant: "无关", watch: "观察", contacted: "已联系" };
+const ASSESSMENT_STATUS_LABELS = {
+  applied: "AI 语义复核已通过", cached: "复用已验证 AI 结果", disabled: "AI 已关闭 · 本地判断",
+  not_configured: "模型未配置 · 本地判断", profile_missing: "画像未填写 · 通用判断",
+  invalid_response: "AI 输出已拒绝 · 本地判断", unavailable: "模型不可用 · 本地判断", empty: "本轮无可信结果",
 };
 
 function escapeHtml(value = "") {
@@ -29,8 +51,8 @@ function escapeHtml(value = "") {
 }
 
 function safeUrl(value = "") {
-  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : "#"; }
-  catch { return "#"; }
+  try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : ""; }
+  catch { return ""; }
 }
 
 function formatTime(value) {
@@ -48,13 +70,38 @@ function formatDateTimeInput(value) {
   return local.toISOString().slice(0, 16);
 }
 
+function feedbackKey(canonicalId, versionHash) { return `${canonicalId}::${versionHash}`; }
+
+function splitProfileList(value = "") {
+  return [...new Set(String(value).split(/[\n,，;；]+/).map((item) => item.trim()).filter(Boolean))];
+}
+
 function toast(message, duration = 3200) {
   const node = $("#toast"); node.textContent = message; node.classList.add("show");
   clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => node.classList.remove("show"), duration);
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+  const { timeoutMs = 180000, ...requestOptions } = options;
+  const controller = new AbortController();
+  const externalSignal = requestOptions.signal;
+  const abortFromExternal = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(path, { ...requestOptions, signal: controller.signal, headers: { "Content-Type": "application/json", ...(requestOptions.headers || {}) } });
+  } catch (error) {
+    const transient = error?.name === "AbortError" || error instanceof TypeError;
+    if (!transient) throw error;
+    const wrapped = new Error(error?.name === "AbortError" ? `页面已停止等待（超过 ${Math.ceil(timeoutMs / 1000)} 秒），后台结果尚未确认，请先刷新状态` : "本地服务连接刚刚中断，结果尚未确认，请刷新后再决定是否重试");
+    wrapped.transient = true;
+    throw wrapped;
+  } finally {
+    window.clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const validation = Array.isArray(data.detail) ? data.detail.map((item) => `${(item.loc || []).slice(1).join(".") || "请求"}：${item.msg}`).join("；") : null;
@@ -69,8 +116,15 @@ function currentChannel() { return $("#delivery-channel").value || "local"; }
 
 async function parseIntent() {
   const query = currentQuery(); if (query.length < 2) return toast("请先输入查询问题");
-  const spec = await api("/api/v1/intent/parse", { method: "POST", body: JSON.stringify({ query }) });
-  state.spec = spec; renderIntent(spec); return spec;
+  const sequence = ++state.intentRequestSequence;
+  const button = $("#parse-button"); button.disabled = true; button.textContent = "正在解析…";
+  try {
+    const spec = await api("/api/v1/intent/parse", { method: "POST", body: JSON.stringify({ query }) });
+    if (sequence !== state.intentRequestSequence || currentQuery() !== query) return null;
+    state.spec = spec; renderIntent(spec); return spec;
+  } finally {
+    if (sequence === state.intentRequestSequence && !state.runInFlight) { button.disabled = false; button.textContent = "解析意图"; }
+  }
 }
 
 function renderIntent(spec) {
@@ -112,22 +166,50 @@ function animatePipeline() {
   }, 1200);
 }
 
+function setRunControlsBusy(busy) {
+  state.runInFlight = busy;
+  ["#query-input", "#delivery-channel", "#delivery-policy", "#parse-button"].forEach((selector) => { const control = $(selector); if (control) control.disabled = busy; });
+  $$("[data-query]").forEach((control) => { control.disabled = busy; });
+  const button = $("#run-button"); button.disabled = busy;
+  button.querySelector("span").textContent = busy ? "多源采集中…" : "启动情报任务";
+}
+
 async function runQuery() {
   const query = currentQuery(); if (query.length < 2) return toast("请先输入查询问题");
-  const button = $("#run-button"); button.disabled = true; button.querySelector("span").textContent = "多源采集中…";
+  if (state.runInFlight) return toast("当前情报任务正在执行，请等待本轮完成");
+  const sequence = ++state.runRequestSequence;
+  let runCompleted = false;
+  setRunControlsBusy(true);
+  state.qaAbortController?.abort(); state.qaAbortController = null; state.qaInFlight = false; state.qaRequestSequence += 1;
   try {
-    if (!state.spec || state.spec.raw_query !== query) await parseIntent();
+    if (!state.spec || state.spec.raw_query !== query) {
+      const parsed = await parseIntent();
+      if (!parsed || currentQuery() !== query) throw new Error("查询内容在解析期间发生变化，请确认后重新启动");
+    }
     $("#run-panel").classList.remove("hidden"); $("#results-panel").classList.add("hidden"); animatePipeline();
     $("#run-panel").scrollIntoView({ behavior: "smooth", block: "center" });
     const run = await api("/api/v1/runs", { method: "POST", body: JSON.stringify({ query, delivery_channel: currentChannel() }) });
-    state.run = run; clearInterval(window.__pipeTimer); $$(".pipe-step").forEach((step) => { step.classList.remove("active"); step.classList.add("done"); });
-    $("#run-state").innerHTML = "✓ 执行完成"; renderResults(run); await Promise.all([loadReports(), loadSources()]);
-  } catch (error) { clearInterval(window.__pipeTimer); toast(error.message, 5000); $("#run-state").textContent = "执行失败"; }
-  finally { button.disabled = false; button.querySelector("span").textContent = "启动情报任务"; }
+    if (sequence !== state.runRequestSequence) return;
+    state.run = run; state.qaAnswer = null; runCompleted = true;
+    clearInterval(window.__pipeTimer); $$(".pipe-step").forEach((step) => { step.classList.remove("active"); step.classList.add("done"); });
+    $("#run-state").innerHTML = "✓ 执行完成"; renderResults(run);
+    const auxiliary = await Promise.allSettled([loadFeedbackMemory(false), loadReports(), loadSources()]);
+    if (auxiliary[0].status === "fulfilled") renderResults(run, false);
+    const failedPanels = ["反馈记忆", "报告列表", "来源状态"].filter((_, index) => auxiliary[index].status === "rejected");
+    if (failedPanels.length) toast(`本轮检索已完成，但${failedPanels.join("、")}暂未刷新`, 8000);
+  } catch (error) {
+    clearInterval(window.__pipeTimer);
+    if (!runCompleted) {
+      toast(error.transient ? `${error.message}；请先查看“报告历史”，避免重复执行` : error.message, 8000);
+      $("#run-state").textContent = error.transient ? "结果待确认" : "执行失败";
+    }
+  }
+  finally { if (sequence === state.runRequestSequence) setRunControlsBusy(false); }
 }
 
-function renderResults(run) {
+function renderResults(run, scroll = true) {
   $("#results-panel").classList.remove("hidden");
+  const refreshAssessments = $("#refresh-assessments"); if (refreshAssessments) { refreshAssessments.disabled = !run?.run_id; refreshAssessments.textContent = "刷新适配判断"; }
   const limitedSources = run.diagnostics.filter((item) => ["partial", "auth_required", "failed"].includes(item.status)).length;
   $("#result-summary").textContent = `${run.new_count} 条可信结果 · ${limitedSources ? `${limitedSources} 个来源覆盖受限` : "已配置来源均正常"}`;
   const download = $("#download-report");
@@ -145,20 +227,183 @@ function renderResults(run) {
   }).join("");
   renderIntelligenceBrief(run);
   renderRetrievalTrace(run);
+  renderRunQA(run);
   const list = $("#result-list"), empty = $("#empty-state");
   if (!run.records.length) {
     list.innerHTML = ""; empty.classList.remove("hidden"); renderEmptyDiagnosis(explanation, empty);
   }
   else {
     empty.classList.add("hidden");
+    const assessments = new Map((run.opportunity_assessments?.assessments || []).map((item) => [feedbackKey(item.canonical_id, item.version_hash), item]));
     list.innerHTML = run.records.map((item) => {
-      const links = item.source_urls.map((url, i) => `<a href="${escapeHtml(safeUrl(url))}" target="_blank" rel="noreferrer">来源 ${i + 1} ↗</a>`).join("");
+      const links = item.source_urls.map((url, i) => { const sourceUrl = safeUrl(url); return sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">来源 ${i + 1} ↗</a>` : ""; }).join("");
       const tracked = state.opportunityProjectKeys.has(item.project_key);
-      return `<article class="result-card"><div class="result-top"><div><h3>${escapeHtml(item.title)}</h3><div class="record-meta"><span><b>${escapeHtml(item.event_type)}</b></span><span>${escapeHtml(item.published_at.slice(0,10))}</span><span>${escapeHtml(item.region || "地域未标注")}</span><span>${escapeHtml(item.buyer || "采购人未提取")}</span><span>合并 ${item.duplicate_count} 条</span></div></div><div class="score">${Math.round(item.opportunity_score)}</div></div><p class="summary">${escapeHtml(item.summary)}</p><div class="record-links">${links}<button class="add-opportunity" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}" ${tracked ? "disabled" : ""}>${tracked ? "✓ 已加入" : "＋ 加入机会"}</button></div></article>`;
+      const key = feedbackKey(item.canonical_id, item.version_hash);
+      return `<article class="result-card" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}"><div class="result-top"><div><h3>${escapeHtml(item.title)}</h3><div class="record-meta"><span><b>${escapeHtml(item.event_type)}</b></span><span>${escapeHtml(item.published_at.slice(0,10))}</span><span>${escapeHtml(item.region || "地域未标注")}</span><span>${escapeHtml(item.buyer || "采购人未提取")}</span><span>合并 ${item.duplicate_count} 条</span></div></div><div class="score" title="原始机会分">${Math.round(item.opportunity_score)}</div></div><p class="summary">${escapeHtml(item.summary)}</p>${renderFitAssessment(assessments.get(key), run.opportunity_assessments)}${renderFeedbackControls(item)}<div class="record-links">${links}<button class="add-opportunity" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}" ${tracked ? "disabled" : ""}>${tracked ? "✓ 已加入" : "＋ 加入机会"}</button></div></article>`;
     }).join("");
     bindResultOpportunityActions();
+    bindResultFeedbackActions();
   }
-  $("#results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll) $("#results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderFitAssessment(assessment, assessmentSet) {
+  if (!assessment) return `<div class="fit-panel missing"><div><b>企业适配判断尚未生成</b><span>刷新本轮判断后会显示本地分数、风险和建议。</span></div></div>`;
+  const recommendation = FIT_RECOMMENDATION_LABELS[assessment.recommendation] || assessment.recommendation;
+  const adjustment = Number(assessment.personalization_adjustment || 0);
+  const adjustmentText = `${adjustment > 0 ? "+" : ""}${adjustment}`;
+  const matched = (assessment.matched_profile_terms || []).map((term) => `<span>${escapeHtml(term)}</span>`).join("");
+  const gaps = (assessment.gaps || []).map((gap) => `<li>${escapeHtml(gap)}</li>`).join("");
+  const quotes = (assessment.evidence_quotes || []).map((quote) => `<blockquote>${escapeHtml(quote)}</blockquote>`).join("");
+  const sourceUrl = safeUrl(assessment.source_url);
+  const evidenceSource = sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">打开官方原文核验 ↗</a>` : `<span class="missing-source">原文链接未保留</span>`;
+  const modeLabel = ASSESSMENT_STATUS_LABELS[assessmentSet?.status] || assessmentSet?.status || "本地判断";
+  return `<section class="fit-panel ${escapeHtml(assessment.recommendation)}"><div class="fit-panel-head"><div><span class="fit-recommendation">${escapeHtml(recommendation)}</span><small>${escapeHtml(modeLabel)} · ${escapeHtml(assessment.evidence_id)}</small></div><div class="fit-score"><b>${Math.round(assessment.fit_score)}</b><span>适配分</span></div></div><div class="fit-score-ledger"><span><small>本地基础分</small><b>${assessment.base_fit_score}</b></span><span class="${adjustment > 0 ? "positive" : adjustment < 0 ? "negative" : ""}"><small>反馈影响</small><b>${adjustmentText}</b></span><span><small>最终建议</small><b>${escapeHtml(recommendation)}</b></span></div><p class="fit-reason">${escapeHtml(assessment.reason)}</p>${matched ? `<div class="fit-terms"><small>画像关联</small>${matched}</div>` : `<div class="fit-terms empty"><small>画像关联</small><em>尚未确认明确画像词</em></div>`}${gaps ? `<ul class="fit-gaps">${gaps}</ul>` : ""}<div class="fit-action"><div><small>主要风险</small><p>${escapeHtml(assessment.risk)}</p></div><div><small>下一步</small><p>${escapeHtml(assessment.next_action)}</p></div></div><p class="fit-personalization">${escapeHtml(assessment.personalization_reason)}</p>${quotes ? `<details class="fit-evidence"><summary>查看 AI / 本地判断实际引用的逐字证据</summary>${quotes}${evidenceSource}</details>` : ""}</section>`;
+}
+
+function renderFeedbackControls(item) {
+  const current = state.feedbackMap.get(feedbackKey(item.canonical_id, item.version_hash));
+  const buttons = Object.entries(FEEDBACK_LABELS).map(([verdict, label]) => `<button class="feedback-verdict ${current?.verdict === verdict ? "active" : ""}" data-verdict="${verdict}" aria-pressed="${current?.verdict === verdict}">${label}</button>`).join("");
+  return `<div class="feedback-panel"><div class="feedback-panel-head"><div><b>这条判断对吗？</b><span>你的直接反馈优先，并对相似机会产生最多 ±12 分的透明调整。</span></div><div class="feedback-panel-status">${current ? `<span class="feedback-current">当前：${escapeHtml(FEEDBACK_LABELS[current.verdict] || current.verdict)}</span>` : ""}<span class="feedback-operation" aria-live="polite"></span></div></div><div class="feedback-row">${buttons}<input class="feedback-reason" maxlength="500" value="${escapeHtml(current?.reason || "")}" placeholder="可选原因，例如：符合信创服务器交付能力"><button class="secondary-button compact update-feedback-reason" ${current ? "" : "disabled"}>保存原因</button><button class="feedback-delete ${current ? "" : "hidden"}">撤销反馈</button></div></div>`;
+}
+
+function setFeedbackControlsBusy(card, busy, message = "") {
+  const current = state.feedbackMap.get(feedbackKey(card.dataset.canonical, card.dataset.version));
+  card.querySelector(".feedback-panel")?.setAttribute("aria-busy", String(busy));
+  card.querySelectorAll(".feedback-verdict").forEach((control) => { control.disabled = busy; });
+  const reason = card.querySelector(".feedback-reason"); if (reason) reason.disabled = busy;
+  const update = card.querySelector(".update-feedback-reason"); if (update) update.disabled = busy || !current;
+  const remove = card.querySelector(".feedback-delete"); if (remove) remove.disabled = busy || !current;
+  const operation = card.querySelector(".feedback-operation"); if (operation) operation.textContent = message;
+}
+
+function bindResultFeedbackActions() {
+  $$(".result-card").forEach((card) => {
+    card.querySelectorAll(".feedback-verdict").forEach((button) => button.addEventListener("click", () => saveResultFeedback(card, button.dataset.verdict, button)));
+    card.querySelector(".update-feedback-reason")?.addEventListener("click", (event) => {
+      const current = state.feedbackMap.get(feedbackKey(card.dataset.canonical, card.dataset.version));
+      if (current) saveResultFeedback(card, current.verdict, event.currentTarget);
+    });
+    card.querySelector(".feedback-delete")?.addEventListener("click", (event) => deleteResultFeedback(card, event.currentTarget));
+  });
+}
+
+async function saveResultFeedback(card, verdict, button) {
+  const canonical = card.dataset.canonical, version = card.dataset.version;
+  const reason = card.querySelector(".feedback-reason").value.trim();
+  setFeedbackControlsBusy(card, true, "正在保存并重新计算…");
+  let saved;
+  try {
+    saved = await configApi(`/api/v1/feedback/${encodeURIComponent(canonical)}/${encodeURIComponent(version)}`, { method: "PUT", body: JSON.stringify({ verdict, reason }), timeoutMs: 15000 });
+  } catch (error) { toast(`反馈没有保存：${error.message}`, 8000); }
+  if (!saved) { if (card.isConnected) setFeedbackControlsBusy(card, false); return; }
+  state.feedbackMap.set(feedbackKey(canonical, version), saved); renderResults(state.run, false);
+  toast(`反馈已保存为“${FEEDBACK_LABELS[verdict]}”，正在重新计算适配分`);
+  try { await refreshCurrentAssessments(); toast(`适配分已使用“${FEEDBACK_LABELS[verdict]}”反馈重新计算`); }
+  catch (error) { toast(`反馈已保存，但适配分暂未刷新：${error.message}`, 8000); }
+  try { await loadFeedbackMemory(state.activeTab === "decision"); }
+  catch (error) { toast(`反馈已保存，但反馈列表暂未刷新：${error.message}`, 8000); }
+}
+
+async function deleteResultFeedback(card, button) {
+  const canonical = card.dataset.canonical, version = card.dataset.version;
+  setFeedbackControlsBusy(card, true, "正在撤销并重新计算…");
+  let deleted = false;
+  try {
+    await configApi(`/api/v1/feedback/${encodeURIComponent(canonical)}/${encodeURIComponent(version)}`, { method: "DELETE", timeoutMs: 15000 });
+    deleted = true;
+  } catch (error) {
+    if (error.transient) {
+      try { await loadFeedbackMemory(false); deleted = !state.feedbackMap.has(feedbackKey(canonical, version)); }
+      catch { deleted = false; }
+    }
+    if (!deleted) toast(`反馈撤销结果尚未确认：${error.message}`, 8000);
+  }
+  if (!deleted) { if (card.isConnected) setFeedbackControlsBusy(card, false); return; }
+  state.feedbackMap.delete(feedbackKey(canonical, version)); renderResults(state.run, false); renderDecisionSummary();
+  toast("反馈已撤销，正在移除个性化影响");
+  try { await refreshCurrentAssessments(); toast("反馈已撤销，个性化影响已移除"); }
+  catch (error) { toast(`反馈已撤销，但适配分暂未刷新：${error.message}`, 8000); }
+  try { await loadFeedbackMemory(state.activeTab === "decision"); }
+  catch (error) { toast(`反馈已撤销，但反馈列表暂未刷新：${error.message}`, 8000); }
+}
+
+async function refreshCurrentAssessments() {
+  if (!state.run?.run_id) return;
+  const runId = state.run.run_id;
+  const sequence = ++state.assessmentRefreshSequence;
+  $$("#result-list .result-card").forEach((card) => setFeedbackControlsBusy(card, true, "正在刷新本轮适配判断…"));
+  const refreshButton = $("#refresh-assessments"); if (refreshButton) { refreshButton.disabled = true; refreshButton.textContent = "刷新中…"; }
+  try {
+    const assessments = await api(`/api/v1/runs/${encodeURIComponent(runId)}/assessments`, { method: "POST" });
+    if (sequence !== state.assessmentRefreshSequence || state.run?.run_id !== runId) return;
+    state.run.opportunity_assessments = assessments;
+    renderResults(state.run, false);
+  } finally {
+    if (sequence === state.assessmentRefreshSequence && state.run?.run_id === runId) {
+      $$("#result-list .result-card").forEach((card) => setFeedbackControlsBusy(card, false));
+      if (refreshButton) { refreshButton.disabled = false; refreshButton.textContent = "刷新适配判断"; }
+    }
+  }
+}
+
+function renderRunQA(run) {
+  const root = $("#run-qa");
+  if (!root || !run?.run_id) { root?.classList.add("hidden"); return; }
+  root.classList.remove("hidden");
+  if (state.qaAnswer?.run_id === run.run_id) renderRunQAAnswer(state.qaAnswer);
+  else { $("#run-qa-answer").classList.add("hidden"); $("#run-qa-state").textContent = "等待提问"; $("#run-qa-state").className = "state-badge muted"; }
+}
+
+function renderRunQAAnswer(answer) {
+  const root = $("#run-qa-answer"), badge = $("#run-qa-state");
+  const labels = {
+    applied: "AI 逐字选证", cached: "复用已验证答案", not_configured: "模型未配置 · 本地抽取",
+    unavailable: "模型不可用 · 本地抽取", invalid_response: "AI 输出被拒绝 · 本地抽取",
+    insufficient_evidence: "证据不足", refused: "安全拒绝", empty: "本轮无证据", evidence_incomplete: "证据快照损坏",
+  };
+  const ok = answer.answerable;
+  badge.textContent = labels[answer.status] || answer.status; badge.className = `state-badge ${ok ? "success" : ["refused", "evidence_incomplete"].includes(answer.status) ? "danger" : "warning"}`;
+  const citations = (answer.claims || []).flatMap((claim) => claim.citations || []).map((citation) => {
+    const sourceUrl = safeUrl(citation.source_url);
+    const source = sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(citation.title)} ↗</a>` : `<span class="missing-source">原文链接未保留 · ${escapeHtml(citation.title)}</span>`;
+    return `<article><div><b>${escapeHtml(citation.evidence_id)}</b><span>${escapeHtml(citation.event_type)} · ${escapeHtml(citation.published_at.slice(0,10))}</span></div><p>${escapeHtml(citation.quote)}</p>${source}</article>`;
+  }).join("");
+  const limitations = (answer.limitations || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  root.innerHTML = `<p class="run-qa-answer-text">${escapeHtml(answer.answer).replaceAll("\n", "<br>")}</p><div class="run-qa-meta"><span>本轮 ${answer.total_evidence_count} 条</span><span>本次上下文 ${answer.context_evidence_count} 条</span><span>${answer.context_truncated ? "已做有界选取" : "使用完整本轮证据"}</span><span>${answer.latency_ms || 0} ms</span></div>${citations ? `<div class="run-qa-citations">${citations}</div>` : ""}${limitations ? `<details><summary>回答边界与限制</summary><ul>${limitations}</ul></details>` : ""}<small>${escapeHtml(answer.summary)}</small>`;
+  root.classList.remove("hidden");
+}
+
+function renderRunQAError(message) {
+  const root = $("#run-qa-answer"), badge = $("#run-qa-state");
+  badge.textContent = "回答未完成"; badge.className = "state-badge danger";
+  root.innerHTML = `<p class="run-qa-answer-text">${escapeHtml(message)}</p><small>本次没有展示或缓存未经验证的模型内容。请检查模型连接后重试，或换成指定 E 编号的问题。</small>`;
+  root.classList.remove("hidden");
+}
+
+async function askRunEvidence() {
+  if (!state.run?.run_id) return toast("请先完成一次情报检索");
+  if (state.qaInFlight) return toast("正在核对上一条问题，请等待回答完成");
+  const question = $("#run-question").value.trim(); if (question.length < 2) return toast("请先输入至少 2 个字的问题");
+  const runId = state.run.run_id;
+  const sequence = ++state.qaRequestSequence;
+  const controller = new AbortController(); state.qaAbortController = controller; state.qaInFlight = true;
+  const button = $("#ask-run"), input = $("#run-question"); button.disabled = true; input.disabled = true; button.textContent = "正在核对本轮证据…";
+  $$("[data-run-question]").forEach((control) => { control.disabled = true; });
+  $("#run-qa-state").textContent = "正在逐字核验"; $("#run-qa-state").className = "state-badge muted";
+  try {
+    const answer = await api(`/api/v1/runs/${encodeURIComponent(runId)}/ask`, { method: "POST", body: JSON.stringify({ question }), signal: controller.signal });
+    if (sequence !== state.qaRequestSequence || state.run?.run_id !== runId || answer.run_id !== runId) return;
+    state.qaAnswer = answer; renderRunQAAnswer(answer);
+  } catch (error) {
+    if (sequence === state.qaRequestSequence && state.run?.run_id === runId) renderRunQAError(error.message);
+  }
+  finally {
+    if (sequence === state.qaRequestSequence && state.run?.run_id === runId) {
+      state.qaInFlight = false; state.qaAbortController = null; button.disabled = false; input.disabled = false; button.textContent = "根据本轮证据回答";
+      $$("[data-run-question]").forEach((control) => { control.disabled = false; });
+    }
+  }
 }
 
 function renderIntelligenceBrief(run) {
@@ -175,10 +420,16 @@ function renderIntelligenceBrief(run) {
   const catalog = new Map((brief.evidence_catalog || []).map((item) => [item.evidence_id, item]));
   const references = (ids) => (ids || []).map((id) => {
     const evidence = catalog.get(id);
-    return evidence ? `<a href="${escapeHtml(evidence.source_url)}" target="_blank" rel="noopener" title="${escapeHtml(evidence.title)}">${escapeHtml(id)}</a>` : `<span>${escapeHtml(id)}</span>`;
+    if (!evidence) return `<span>${escapeHtml(id)}</span>`;
+    const sourceUrl = safeUrl(evidence.source_url);
+    return sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener" title="${escapeHtml(evidence.title)}">${escapeHtml(id)}</a>` : `<span title="原文链接未保留">${escapeHtml(id)}</span>`;
   }).join(" ");
   const needs = (brief.buyer_needs || []).map((item) => `<li><span>${references(item.evidence_ids)}</span><p>${escapeHtml(item.text)}</p></li>`).join("");
-  const priorities = (brief.priorities || []).map((item) => `<article class="brief-priority"><div><span>${escapeHtml(item.evidence_id)}</span><small>${escapeHtml(item.event_type)} · ${Math.round(item.opportunity_score)} 分</small></div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.buyer || "采购人待原文确认")}</p><dl><div><dt>为什么优先</dt><dd>${escapeHtml(item.reason)}</dd></div><div><dt>下一步</dt><dd>${escapeHtml(item.recommended_action)}</dd></div></dl><a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">核验证据原文 ↗</a></article>`).join("");
+  const priorities = (brief.priorities || []).map((item) => {
+    const sourceUrl = safeUrl(item.source_url);
+    const source = sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">核验证据原文 ↗</a>` : `<span class="missing-source">原文链接未保留</span>`;
+    return `<article class="brief-priority"><div><span>${escapeHtml(item.evidence_id)}</span><small>${escapeHtml(item.event_type)} · ${Math.round(item.opportunity_score)} 分</small></div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.buyer || "采购人待原文确认")}</p><dl><div><dt>为什么优先</dt><dd>${escapeHtml(item.reason)}</dd></div><div><dt>下一步</dt><dd>${escapeHtml(item.recommended_action)}</dd></div></dl>${source}</article>`;
+  }).join("");
   const risks = (brief.risks || []).map((item) => `<li class="${escapeHtml(item.level)}"><b>${escapeHtml(riskLabels[item.level] || item.level)}</b><p>${escapeHtml(item.text)}</p><span>${references(item.evidence_ids)}</span></li>`).join("");
   const actions = (brief.actions || []).map((item) => `<li><b>${escapeHtml(item.priority)}</b><p>${escapeHtml(item.text)}</p><span>${references(item.evidence_ids)}</span></li>`).join("");
   const fallback = brief.mode !== "llm_grounded";
@@ -252,14 +503,16 @@ function opportunityStageOptions(selected) {
 
 function opportunityCard(item) {
   const record = item.record;
-  const source = record.source_urls[0] ? `<a href="${escapeHtml(safeUrl(record.source_urls[0]))}" target="_blank" rel="noreferrer">原文 ↗</a>` : "";
+  const sourceUrl = safeUrl(record.source_urls[0] || "");
+  const source = sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">原文 ↗</a>` : `<span class="missing-source">原文链接未保留</span>`;
   const tags = item.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
-  return `<article class="opportunity-card ${item.is_read ? "" : "unread"}" data-id="${escapeHtml(item.id)}">
-    <div class="opportunity-card-head"><div><div class="opportunity-kicker"><span>${escapeHtml(record.event_type)}</span><span>${escapeHtml(record.region || "地域未标注")}</span></div><h3>${escapeHtml(record.title)}</h3></div><div class="score">${Math.round(record.opportunity_score)}</div></div>
+  const archived = item.stage === "archived";
+  return `<article class="opportunity-card ${item.is_read ? "" : "unread"}" data-id="${escapeHtml(item.id)}" data-project="${escapeHtml(item.project_key)}">
+    <div class="opportunity-card-head"><div><div class="opportunity-kicker"><span>${escapeHtml(record.event_type)}</span><span>${escapeHtml(record.region || "地域未标注")}</span></div><span class="workspace-stage ${escapeHtml(item.stage)}">工作阶段：${escapeHtml(OPPORTUNITY_STAGES[item.stage] || item.stage)}</span><h3>${escapeHtml(record.title)}</h3></div><div class="score">${Math.round(record.opportunity_score)}</div></div>
     <p class="opportunity-buyer">${escapeHtml(record.buyer || "采购人未提取")} · ${escapeHtml(record.published_at.slice(0, 10))}</p>
     <div class="opportunity-tags">${tags || "<span>未设置标签</span>"}</div>
     <div class="opportunity-next"><span><small>负责人</small><b>${escapeHtml(item.owner || "待分配")}</b></span><span><small>下一步</small><b>${item.next_action_at ? formatTime(item.next_action_at) : "待安排"}</b></span></div>
-    <div class="opportunity-links">${source}<button class="mark-read">${item.is_read ? "标为未读" : "标为已读"}</button><button class="view-timeline" aria-expanded="false">生命周期</button></div>
+    <div class="opportunity-links">${source}<button class="mark-read">${item.is_read ? "标为未读" : "标为已读"}</button><button class="view-timeline" aria-expanded="false">查看原公告时间线</button><button class="archive-opportunity">${archived ? "恢复到待评估" : "归档保留"}</button><button class="delete-opportunity" data-confirm="false">删除卡片</button></div>
     <details class="opportunity-editor"><summary>跟进设置</summary><div class="opportunity-form">
       <label><span>阶段</span><select class="opportunity-stage" aria-label="机会阶段">${opportunityStageOptions(item.stage)}</select></label>
       <label><span>负责人</span><input class="opportunity-owner" maxlength="100" value="${escapeHtml(item.owner)}" placeholder="姓名或团队"></label>
@@ -267,7 +520,7 @@ function opportunityCard(item) {
       <label><span>标签</span><input class="opportunity-tags-input" maxlength="240" value="${escapeHtml(item.tags.join("，"))}" placeholder="重点，GPU，教育"></label>
       <label class="opportunity-notes-label"><span>跟进备注</span><textarea class="opportunity-notes" rows="3" maxlength="4000" placeholder="记录判断、风险与下一步">${escapeHtml(item.notes)}</textarea></label>
     </div><button class="primary-button compact save-opportunity">保存跟进</button></details>
-    <div class="opportunity-timeline hidden"></div>
+    <div class="opportunity-delete-note hidden" aria-live="polite"></div><div class="opportunity-timeline hidden"></div>
   </article>`;
 }
 
@@ -313,6 +566,7 @@ async function loadOpportunities() {
 function bindOpportunityActions() {
   $$(".opportunity-card").forEach((card) => {
     const id = card.dataset.id;
+    const projectKey = card.dataset.project;
     card.querySelector(".save-opportunity").addEventListener("click", async (event) => {
       const button = event.currentTarget; button.disabled = true; button.textContent = "保存中…";
       const tags = card.querySelector(".opportunity-tags-input").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean);
@@ -334,6 +588,72 @@ function bindOpportunityActions() {
         toast(error.message, 5000);
       }
     });
+    card.querySelector(".archive-opportunity").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const archived = card.querySelector(".opportunity-stage").value === "archived";
+      button.disabled = true;
+      button.textContent = archived ? "恢复中…" : "归档中…";
+      try {
+        await api(`/api/v1/opportunities/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ stage: archived ? "new" : "archived" }),
+        });
+        toast(archived ? "卡片已恢复到“待评估”，可以继续跟进" : "卡片已归档保留，跟进信息和原公告时间线都没有删除", 5000);
+        await loadOpportunities();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = archived ? "恢复到待评估" : "归档保留";
+        toast(error.message, 5000);
+      }
+    });
+    card.querySelector(".delete-opportunity").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const note = card.querySelector(".opportunity-delete-note");
+      if (button.dataset.confirm !== "true") {
+        button.dataset.confirm = "true";
+        button.classList.add("armed");
+        button.textContent = "再次点击，确认删除";
+        note.classList.remove("hidden");
+        note.innerHTML = "<b>只删除这张工作台卡片。</b><span>原始标讯、报告、反馈和来源证据仍会保留，以后可以从检索结果重新加入。</span><button type=\"button\" class=\"cancel-opportunity-delete\">取消</button>";
+        note.querySelector(".cancel-opportunity-delete").addEventListener("click", () => {
+          button.dataset.confirm = "false";
+          button.classList.remove("armed");
+          button.textContent = "删除卡片";
+          note.classList.add("hidden");
+          note.replaceChildren();
+        }, { once: true });
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "正在删除…";
+      note.querySelector(".cancel-opportunity-delete")?.setAttribute("disabled", "");
+      try {
+        await api(`/api/v1/opportunities/${id}`, { method: "DELETE", timeoutMs: 30000 });
+        state.opportunityProjectKeys.delete(projectKey);
+        toast("工作台卡片已删除；原始标讯仍然保留，可随时重新加入", 5500);
+        await loadOpportunities();
+      } catch (error) {
+        if (error.transient) {
+          try {
+            await api(`/api/v1/opportunities/${id}`, { timeoutMs: 10000 });
+          } catch (checkError) {
+            if (checkError.status === 404) {
+              state.opportunityProjectKeys.delete(projectKey);
+              toast("删除请求已生效；原始标讯仍然保留，可随时重新加入", 5500);
+              await loadOpportunities();
+              return;
+            }
+          }
+        }
+        button.disabled = false;
+        button.dataset.confirm = "false";
+        button.classList.remove("armed");
+        button.textContent = "删除卡片";
+        note.classList.remove("hidden");
+        note.textContent = `${error.message}。卡片状态尚未确认，请刷新后再操作。`;
+        toast(error.message, 5000);
+      }
+    });
     card.querySelector(".view-timeline").addEventListener("click", async (event) => {
       const button = event.currentTarget;
       const root = card.querySelector(".opportunity-timeline");
@@ -342,10 +662,127 @@ function bindOpportunityActions() {
       root.classList.remove("hidden"); root.textContent = "正在读取项目生命周期…";
       try {
         const events = await api(`/api/v1/opportunities/${id}/timeline`);
-        root.innerHTML = events.map((event) => `<div class="timeline-event"><i></i><div><b>${escapeHtml(event.event_type)} · ${escapeHtml(event.published_at.slice(0, 10))}</b><p>${escapeHtml(event.title)}</p><a href="${escapeHtml(safeUrl(event.source_urls[0] || ""))}" target="_blank" rel="noreferrer">查看证据 ↗</a></div></div>`).join("");
+        root.innerHTML = events.map((event) => { const sourceUrl = safeUrl(event.source_urls[0] || ""); const source = sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">查看证据 ↗</a>` : `<span class="missing-source">原文链接未保留</span>`; return `<div class="timeline-event"><i></i><div><b>${escapeHtml(event.event_type)} · ${escapeHtml(event.published_at.slice(0, 10))}</b><p>${escapeHtml(event.title)}</p>${source}</div></div>`; }).join("");
       } catch (error) { root.textContent = error.message; }
     });
   });
+}
+
+function buyerRadarCard(item) {
+  const stages = Object.entries(item.stage_counts || {}).map(([stage, count]) => `<span><b>${escapeHtml(stage)}</b>${count} 条</span>`).join("");
+  const topics = (item.top_topics || []).map((topic) => `<span><b>${escapeHtml(topic.name)}</b>${topic.notice_count} 条</span>`).join("");
+  const activities = (item.recent_activities || []).map((activity) => {
+    const sourceUrl = safeUrl(activity.source_url || "");
+    const source = sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">核验官方原文 ↗</a>` : `<span class="missing-source">原文链接未保留</span>`;
+    return `<article class="buyer-activity"><div><span>${escapeHtml(activity.event_type)}</span><time>${escapeHtml(activity.published_at.slice(0, 10))}</time></div><h4>${escapeHtml(activity.title)}</h4><p>${escapeHtml(activity.summary || "该公告没有可用摘要，请以原文为准。")}</p><footer><span>${escapeHtml(activity.region || "地域未标注")} · ${escapeHtml(activity.source_name || "来源未标注")}</span>${source}</footer></article>`;
+  }).join("");
+  const topic = item.top_topics?.[0]?.name || "采购项目";
+  const monitorName = `${item.buyer_name}采购监控`.slice(0, 100);
+  const monitorQuery = `每天9点汇总最近1个月${topic}采购公告`.slice(0, 500);
+  const channelChoices = channelOptions("local") || '<option value="local">本地报告</option>';
+  return `<article class="buyer-radar-card" data-buyer-id="${escapeHtml(item.buyer_id)}">
+    <div class="buyer-radar-card-head"><div><p class="eyebrow">VERIFIED LOCAL BUYER</p><h3>${escapeHtml(item.buyer_name)}</h3><span>${escapeHtml((item.sources || []).join(" · ") || "来源未标注")}</span></div><div class="buyer-activity-count"><b>${item.notice_count}</b><span>本地公告</span></div></div>
+    <div class="buyer-radar-metrics"><span><small>估算项目</small><b>${item.project_count}</b></span><span><small>内容版本</small><b>${item.version_count}</b></span><span><small>最早活动</small><b>${escapeHtml(item.first_activity_at.slice(0, 10))}</b></span><span><small>最近活动</small><b>${escapeHtml(item.latest_activity_at.slice(0, 10))}</b></span></div>
+    <div class="buyer-radar-section"><small>公告生命周期（不是销售跟进阶段）</small><div class="buyer-stage-chips">${stages || "<span>暂无可统计阶段</span>"}</div></div>
+    <div class="buyer-radar-section"><small>本地公告高频主题（不是采购预测）</small><div class="buyer-topic-chips">${topics || "<span>暂无可统计主题</span>"}</div></div>
+    <details class="buyer-activities"><summary>查看近期原文证据（${item.recent_activities.length} 条）</summary><div>${activities || '<p class="buyer-empty-copy">暂无可展示活动。</p>'}</div></details>
+    <details class="buyer-monitor-editor"><summary>＋ 为这个采购单位创建自动监控</summary><div>
+      <label><span>任务名称</span><input class="buyer-monitor-name" maxlength="100" value="${escapeHtml(monitorName)}"></label>
+      <label class="wide"><span>自然语言规则</span><textarea class="buyer-monitor-query" rows="3" maxlength="500">${escapeHtml(monitorQuery)}</textarea><small>必须写清每天、每周、每月或未来某个时间；采购单位已由系统锁定，不必重复填写。</small></label>
+      <label><span>投递方式</span><select class="buyer-monitor-channel">${channelChoices}</select></label>
+      <label><span>无新增时</span><select class="buyer-monitor-policy"><option value="on_change">保持安静</option><option value="always">也发送回执</option></select></label>
+      <label class="buyer-monitor-immediate"><input class="buyer-monitor-run" type="checkbox" checked><span><b>创建后立即检查一次</b><small>长期任务仍会持久保存；worker 离线时会等待恢复。</small></span></label>
+      <div class="buyer-monitor-action"><button class="primary-button compact create-buyer-monitor">创建精准监控</button><span class="buyer-monitor-state" aria-live="polite"></span></div>
+    </div></details>
+  </article>`;
+}
+
+function bindBuyerRadarActions() {
+  $$(".buyer-radar-card").forEach((card) => {
+    card.querySelector(".create-buyer-monitor").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const status = card.querySelector(".buyer-monitor-state");
+      const name = card.querySelector(".buyer-monitor-name").value.trim();
+      const query = card.querySelector(".buyer-monitor-query").value.trim();
+      if (!name) return toast("请先填写任务名称");
+      if (query.length < 2) return toast("请写清要监控的主题和执行时间");
+      button.disabled = true;
+      button.textContent = "正在创建…";
+      status.textContent = "正在锁定采购单位并解析执行计划…";
+      try {
+        const runImmediately = card.querySelector(".buyer-monitor-run").checked;
+        const subscription = await api(`/api/v1/buyers/${card.dataset.buyerId}/subscriptions`, {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            query,
+            delivery_channel: card.querySelector(".buyer-monitor-channel").value || "local",
+            delivery_policy: card.querySelector(".buyer-monitor-policy").value,
+            run_immediately: runImmediately,
+          }),
+        });
+        status.textContent = `已锁定：${subscription.spec.buyer_keywords.join("、")}；正在打开订阅中心。`;
+        toast(`精准监控已创建：${subscription.name}`, 5000);
+        await activateTab("subscriptions");
+        if (runImmediately) pollSubscription(subscription.id, subscription.last_run_at);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "创建精准监控";
+        status.textContent = error.message;
+        toast(error.message, 6000);
+      }
+    });
+  });
+}
+
+async function loadBuyerRadar() {
+  const sequence = ++state.buyerRadarLoadSequence;
+  const search = $("#buyer-radar-search").value.trim();
+  const limit = $("#buyer-radar-limit").value || "50";
+  const summary = $("#buyer-radar-summary"), coverage = $("#buyer-radar-coverage"), grid = $("#buyer-radar-grid");
+  summary.innerHTML = '<div class="loading-card">正在统计本地买方证据…</div>';
+  grid.setAttribute("aria-busy", "true");
+  try {
+    await loadSystemStatus().catch(() => null);
+    const params = new URLSearchParams({ limit, activity_limit: "5" });
+    if (search) params.set("search", search);
+    const result = await api(`/api/v1/buyers?${params}`);
+    if (sequence !== state.buyerRadarLoadSequence) return null;
+    summary.innerHTML = [
+      [search ? "匹配采购单位" : "本地采购单位", search ? result.matched_buyer_count : result.total_buyer_count],
+      ["已识别公告", result.identified_buyer_notice_count],
+      ["识别覆盖率", `${result.buyer_coverage_rate}%`],
+      ["未识别公告", result.unknown_buyer_notice_count],
+    ].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
+    coverage.innerHTML = `<b>先看数据边界：</b><span>当前只统计本机已保存的 ${result.total_local_notice_count} 条去重公告；返回 ${result.returned_buyer_count} 家。项目数是估算，不代表采购方官方项目总量。${result.invalid_version_count ? `另有 ${result.invalid_version_count} 个损坏历史版本未参与统计。` : "历史快照均可读取。"}</span>`;
+    if (!result.buyers.length) {
+      grid.innerHTML = `<section class="buyer-radar-zero"><span>◎</span><h2>${search ? "没有匹配的本地采购单位" : "本地还没有可识别的采购单位"}</h2><p>${search ? "换一个采购单位简称、产品主题或来源名称，也可以清空搜索查看全部。" : "先去“情报检索”执行真实查询；系统只会聚合实际保存的公告，不填充演示假数据。"}</p><button class="secondary-button" data-buyer-empty-action="${search ? "clear" : "search"}">${search ? "清空搜索" : "去情报检索"}</button></section>`;
+      grid.querySelector("[data-buyer-empty-action]").addEventListener("click", async (event) => {
+        if (event.currentTarget.dataset.buyerEmptyAction === "clear") { $("#buyer-radar-search").value = ""; await loadBuyerRadar(); }
+        else { await activateTab("search"); $("#query-input").focus(); }
+      });
+    } else {
+      grid.innerHTML = result.buyers.map(buyerRadarCard).join("");
+      bindBuyerRadarActions();
+    }
+    return result;
+  } finally {
+    if (sequence === state.buyerRadarLoadSequence) grid.removeAttribute("aria-busy");
+  }
+}
+
+async function setOpportunityWorkspaceView(view) {
+  const buyers = view === "buyers";
+  state.opportunityView = buyers ? "buyers" : "opportunities";
+  $("#opportunity-workspace-view").classList.toggle("hidden", buyers);
+  $("#buyer-radar-view").classList.toggle("hidden", !buyers);
+  $$("[data-workspace-view]").forEach((button) => {
+    const active = button.dataset.workspaceView === state.opportunityView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  if (buyers) await loadBuyerRadar();
+  else await loadOpportunities();
 }
 
 async function loadSources() {
@@ -357,6 +794,7 @@ async function loadSources() {
   const rows = statusRows.map((row) => ({ ...row, health: healthById.get(row.id) || null }));
   state.sources = rows;
   state.sourceHealth = health;
+  const proofSourceCount = $("#proof-source-count"); if (proofSourceCount) proofSourceCount.textContent = rows.length;
   $("#source-list").innerHTML = rows.map((row) => {
     const warning = !row.configured || ["partial", "failed", "auth_required"].includes(row.last_status);
     const detail = row.last_message || (row.configured ? "等待首次运行" : "待授权或配置");
@@ -412,7 +850,8 @@ function sourceCapabilityTags(row) {
 function sourceAuthActions(row) {
   const auth = row.authorization || {};
   if (!auth.managed) {
-    return auth.login_url ? `<a class="secondary-button compact" href="${escapeHtml(safeUrl(auth.login_url))}" target="_blank" rel="noreferrer">打开原站工作台 ↗</a>` : "";
+    const loginUrl = safeUrl(auth.login_url || "");
+    return loginUrl ? `<a class="secondary-button compact" href="${escapeHtml(loginUrl)}" target="_blank" rel="noreferrer">打开原站工作台 ↗</a>` : "";
   }
   if (auth.state === "authorizing") {
     return `<button class="primary-button compact source-auth-complete" data-source-id="${escapeHtml(row.id)}" data-session-id="${escapeHtml(auth.active_session_id || "")}">我已登录，完成授权</button><button class="secondary-button compact source-auth-clear" data-source-id="${escapeHtml(row.id)}">取消并清理</button>`;
@@ -518,19 +957,197 @@ async function loadSystemStatus() {
 
 async function ensureConfigEditToken(force = false) {
   if (state.configEditToken && !force) return state.configEditToken;
-  const response = await api("/api/v1/config/edit-token", { method: "POST" });
+  let response;
+  try {
+    response = await api("/api/v1/config/edit-token", { method: "POST", timeoutMs: 12000 });
+  } catch (error) {
+    if (!error.transient) throw error;
+    response = await api("/api/v1/config/edit-token", { method: "POST", timeoutMs: 12000 });
+  }
   state.configEditToken = response.edit_token;
   return state.configEditToken;
 }
 
-async function configApi(path, options = {}, retry = true) {
+async function configApi(path, options = {}, retryToken = true, retryNetwork = true) {
   const token = await ensureConfigEditToken();
   try {
     return await api(path, { ...options, headers: { ...(options.headers || {}), "X-BidPilot-Config-Token": token } });
   } catch (error) {
-    if (retry && error.status === 403) { await ensureConfigEditToken(true); return configApi(path, options, false); }
+    if (retryToken && error.status === 403) { await ensureConfigEditToken(true); return configApi(path, options, false, retryNetwork); }
+    const method = String(options.method || "GET").toUpperCase();
+    if (retryNetwork && error.transient && method === "PUT") return configApi(path, options, retryToken, false);
     throw error;
   }
+}
+
+async function loadFeedbackMemory(render = true) {
+  const rows = await api("/api/v1/feedback?limit=5000");
+  state.feedbackMap = new Map(rows.map((item) => [feedbackKey(item.canonical_id, item.version_hash), item]));
+  if (render) { renderFeedbackMemory(rows); renderDecisionSummary(); }
+  return rows;
+}
+
+function setProfileControlsLoading(loading) {
+  $("#profile-fields").disabled = loading;
+  $("#save-profile").disabled = loading || !state.profileLoaded;
+}
+
+async function loadCompanyProfile(force = false) {
+  if (state.profileLoaded && !force) { renderCompanyProfile(state.profile); setProfileControlsLoading(false); return state.profile; }
+  const sequence = ++state.profileLoadSequence;
+  setProfileControlsLoading(true); $("#reload-profile").classList.add("hidden");
+  const badge = $("#profile-state"); badge.textContent = "正在读取画像"; badge.className = "state-badge muted";
+  $("#profile-save-result").textContent = "读取完成前不会允许空表单覆盖已有画像";
+  try {
+    const profile = await api("/api/v1/company-profile");
+    if (sequence !== state.profileLoadSequence) return null;
+    state.profile = profile; state.profileLoaded = true; state.profileDirty = false;
+    renderCompanyProfile(profile); setProfileControlsLoading(false); return profile;
+  } catch (error) {
+    if (sequence !== state.profileLoadSequence) return null;
+    state.profileLoaded = false; setProfileControlsLoading(true);
+    badge.textContent = "画像读取失败"; badge.className = "state-badge danger";
+    $("#profile-save-result").textContent = `${error.message}。请点击“重新读取画像”，系统不会提交当前空表单。`;
+    $("#reload-profile").classList.remove("hidden");
+    throw error;
+  }
+}
+
+async function loadDecisionCenter() {
+  const [profileResult, feedbackResult] = await Promise.allSettled([loadCompanyProfile(false), loadFeedbackMemory(false)]);
+  if (feedbackResult.status === "fulfilled") renderFeedbackMemory(feedbackResult.value);
+  else $("#feedback-memory").innerHTML = `<div class="feedback-zero"><span>!</span><b>反馈记忆暂时读取失败</b><p>${escapeHtml(feedbackResult.reason?.message || "请检查本地服务后重试")}</p></div>`;
+  renderDecisionSummary();
+  if (profileResult.status === "rejected" || feedbackResult.status === "rejected") toast("决策中心有部分数据暂未读取，请按页面提示重试", 8000);
+}
+
+function profileConfigured(profile = state.profile) {
+  return Boolean(profile && (profile.offerings?.length || profile.strengths?.length || profile.target_regions?.length || profile.excluded_terms?.length || profile.preferred_buyers?.length));
+}
+
+function renderDecisionSummary() {
+  const root = $("#decision-summary"); if (!root) return;
+  const feedback = [...state.feedbackMap.values()];
+  const positive = feedback.filter((item) => ["relevant", "contacted"].includes(item.verdict)).length;
+  const negative = feedback.filter((item) => item.verdict === "irrelevant").length;
+  root.innerHTML = [["画像状态", profileConfigured() ? "已生效" : "待填写"], ["产品 / 服务", state.profile?.offerings?.length || 0], ["反馈记忆", feedback.length], ["正向 / 无关", `${positive} / ${negative}`]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${escapeHtml(value)}</b></div>`).join("");
+  const clear = $("#clear-feedback"); if (clear) clear.disabled = !feedback.length;
+}
+
+function renderCompanyProfile(profile) {
+  $("#profile-company-name").value = profile.company_name || "";
+  $("#profile-offerings").value = (profile.offerings || []).join("\n");
+  $("#profile-strengths").value = (profile.strengths || []).join("\n");
+  $("#profile-regions").value = (profile.target_regions || []).join("\n");
+  $("#profile-excluded").value = (profile.excluded_terms || []).join("\n");
+  $("#profile-buyers").value = (profile.preferred_buyers || []).join("\n");
+  $("#profile-focus").value = profile.decision_focus || "balanced";
+  const badge = $("#profile-state"); badge.textContent = profileConfigured(profile) ? "画像已生效" : "画像待填写"; badge.className = `state-badge ${profileConfigured(profile) ? "success" : "warning"}`;
+  $("#profile-save-result").textContent = profile.updated_at ? `上次保存：${formatTime(profile.updated_at)} · 版本 ${profile.version}` : "首次保存后立即生效";
+  $("#reload-profile").classList.add("hidden");
+}
+
+function collectCompanyProfile() {
+  return {
+    company_name: $("#profile-company-name").value.trim(),
+    offerings: splitProfileList($("#profile-offerings").value),
+    strengths: splitProfileList($("#profile-strengths").value),
+    target_regions: splitProfileList($("#profile-regions").value),
+    excluded_terms: splitProfileList($("#profile-excluded").value),
+    preferred_buyers: splitProfileList($("#profile-buyers").value),
+    decision_focus: $("#profile-focus").value,
+  };
+}
+
+async function saveCompanyProfile() {
+  if (!state.profileLoaded) return toast("企业画像尚未读取完成，当前不会提交空表单", 8000);
+  const button = $("#save-profile"); button.disabled = true; button.textContent = "正在保存画像…";
+  try {
+    const profile = await configApi("/api/v1/company-profile", { method: "PUT", body: JSON.stringify(collectCompanyProfile()), timeoutMs: 30000 });
+    state.profile = profile; state.profileDirty = false; renderCompanyProfile(profile); renderDecisionSummary();
+    toast("企业画像已保存，正在刷新本轮适配判断");
+    if (state.run?.run_id) {
+      try { await refreshCurrentAssessments(); }
+      catch (error) { toast(`画像已保存，但本轮适配分暂未刷新：${error.message}`, 8000); }
+    }
+  } catch (error) { toast(`画像没有保存：${error.message}`, 8000); }
+  finally { button.disabled = !state.profileLoaded; button.textContent = "保存并立即用于后续判断"; }
+}
+
+function renderFeedbackMemory(rows = [...state.feedbackMap.values()]) {
+  const root = $("#feedback-memory"); if (!root) return;
+  if (!rows.length) { root.innerHTML = `<div class="feedback-zero"><span>◎</span><b>还没有反馈记忆</b><p>完成一次检索后，在结果卡选择“相关 / 无关 / 观察 / 已联系”。系统不会放入演示数据。</p><button class="secondary-button" data-go-search>去完成一次真实检索</button></div>`; root.querySelector("[data-go-search]")?.addEventListener("click", () => activateTab("search")); return; }
+  root.innerHTML = rows.map((item) => {
+    const options = Object.entries(FEEDBACK_LABELS).map(([value, label]) => `<option value="${value}" ${item.verdict === value ? "selected" : ""}>${label}</option>`).join("");
+    return `<article data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}"><div><span class="feedback-badge ${escapeHtml(item.verdict)}">${escapeHtml(FEEDBACK_LABELS[item.verdict] || item.verdict)}</span><small>${escapeHtml(formatTime(item.updated_at))}</small></div><h3>${escapeHtml(item.record.title)}</h3><p>${escapeHtml(item.reason || "未填写原因")}</p><div class="feedback-memory-meta"><span>${escapeHtml(item.record.buyer || "采购人未提取")} · ${escapeHtml(item.record.event_type)}</span><button class="feedback-memory-delete">撤销</button></div><details class="feedback-memory-editor"><summary>修改判断或原因</summary><div><label><span>判断</span><select class="feedback-memory-verdict">${options}</select></label><label><span>原因（可选）</span><input class="feedback-memory-reason" maxlength="500" value="${escapeHtml(item.reason || "")}" placeholder="补充为什么相关或无关"></label><button class="secondary-button compact feedback-memory-save">保存修改</button><span class="feedback-memory-state" aria-live="polite"></span></div></details></article>`;
+  }).join("");
+  $$("#feedback-memory .feedback-memory-save").forEach((button) => button.addEventListener("click", () => saveFeedbackMemoryCard(button.closest("article"), button)));
+  $$("#feedback-memory .feedback-memory-delete").forEach((button) => button.addEventListener("click", () => deleteFeedbackMemoryCard(button.closest("article"), button)));
+}
+
+async function saveFeedbackMemoryCard(card, button) {
+  const canonical = card.dataset.canonical, version = card.dataset.version;
+  const verdict = card.querySelector(".feedback-memory-verdict").value;
+  const reason = card.querySelector(".feedback-memory-reason").value.trim();
+  const stateNode = card.querySelector(".feedback-memory-state"); button.disabled = true; stateNode.textContent = "正在保存…";
+  let saved;
+  try {
+    saved = await configApi(`/api/v1/feedback/${encodeURIComponent(canonical)}/${encodeURIComponent(version)}`, { method: "PUT", body: JSON.stringify({ verdict, reason }), timeoutMs: 15000 });
+  } catch (error) {
+    stateNode.textContent = `没有保存：${error.message}`; button.disabled = false; return;
+  }
+  state.feedbackMap.set(feedbackKey(canonical, version), saved); renderFeedbackMemory(); renderDecisionSummary();
+  toast(`反馈已修改为“${FEEDBACK_LABELS[verdict]}”`);
+  if (state.run?.run_id) {
+    try { await refreshCurrentAssessments(); }
+    catch (error) { toast(`反馈已保存，但适配分暂未刷新：${error.message}`, 8000); }
+  }
+}
+
+async function deleteFeedbackMemoryCard(card, button) {
+  const canonical = card.dataset.canonical, version = card.dataset.version;
+  const key = feedbackKey(canonical, version); button.disabled = true; button.textContent = "撤销中…";
+  let deleted = false;
+  try {
+    await configApi(`/api/v1/feedback/${encodeURIComponent(canonical)}/${encodeURIComponent(version)}`, { method: "DELETE", timeoutMs: 15000 }); deleted = true;
+  } catch (error) {
+    if (error.transient) {
+      try { await loadFeedbackMemory(false); deleted = !state.feedbackMap.has(key); }
+      catch { deleted = false; }
+    }
+    if (!deleted) { button.disabled = false; button.textContent = "撤销"; toast(`撤销结果尚未确认：${error.message}`, 8000); return; }
+  }
+  state.feedbackMap.delete(key); renderFeedbackMemory(); renderDecisionSummary(); toast("反馈已撤销");
+  if (state.run?.run_id) {
+    try { await refreshCurrentAssessments(); }
+    catch (error) { toast(`反馈已撤销，但适配分暂未刷新：${error.message}`, 8000); }
+  }
+}
+
+async function clearAllFeedback() {
+  if (!state.feedbackMap.size) return toast("当前没有可清空的反馈");
+  const knownCount = state.feedbackMap.size;
+  if (!window.confirm(`确定清空全部反馈吗？当前已读取 ${knownCount} 条；企业画像、原公告和报告不会删除。`)) return;
+  const button = $("#clear-feedback"); button.disabled = true;
+  let result = null;
+  try {
+    result = await configApi("/api/v1/feedback", { method: "DELETE", timeoutMs: 15000 });
+  } catch (error) {
+    if (error.transient) {
+      try { const remaining = await loadFeedbackMemory(false); if (!remaining.length) result = { deleted_count: knownCount, confirmed_after_reconnect: true }; }
+      catch { result = null; }
+    }
+    if (!result) toast(`清空结果尚未确认：${error.message}`, 8000);
+  }
+  if (result) {
+    state.feedbackMap.clear(); renderFeedbackMemory(); renderDecisionSummary();
+    toast(`已清空 ${result.deleted_count} 条反馈，正在移除个性化影响`);
+    if (state.run?.run_id) {
+      try { await refreshCurrentAssessments(); toast("全部反馈已清空，个性化调整归零"); }
+      catch (error) { toast(`反馈已清空，但适配分暂未刷新：${error.message}`, 8000); }
+    }
+  }
+  button.disabled = !state.feedbackMap.size;
 }
 
 function setConfigStatus(id, ready, readyLabel = "已就绪") {
@@ -552,6 +1169,7 @@ function renderConfig(config) {
     llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout, intent_llm_mode: config.ai.intent_llm_mode, intent_llm_confidence_threshold: config.ai.intent_llm_confidence_threshold,
     retrieval_llm_mode: config.ai.retrieval_llm_mode, retrieval_max_rounds: config.ai.retrieval_max_rounds, retrieval_query_budget_per_source: config.ai.retrieval_query_budget_per_source, retrieval_semantic_review: config.ai.retrieval_semantic_review, retrieval_semantic_threshold: config.ai.retrieval_semantic_threshold,
     intelligence_brief_mode: config.ai.intelligence_brief_mode, intelligence_brief_max_records: config.ai.intelligence_brief_max_records,
+    decision_assessment_mode: config.ai.decision_assessment_mode, decision_assessment_max_records: config.ai.decision_assessment_max_records,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
     delivery_webhook_timeout: config.generic_webhook.timeout,
@@ -756,6 +1374,7 @@ async function createSubscriptionFromQuery() {
   const button = $("#create-subscription-button"); button.disabled = true;
   try {
     const query = currentQuery(); const spec = state.spec || await parseIntent();
+    if (!spec) return toast("查询内容发生变化，请重新解析后再创建订阅", 6000);
     if (spec.schedule.kind === "immediate") return toast("问题中需要包含每天、每周或未来发送时间");
     const name = `${spec.region || "全国"} · ${spec.topic} · ${spec.schedule.expression}`;
     const subscription = await api("/api/v1/subscriptions", { method: "POST", body: JSON.stringify({ name, query, delivery_channel: currentChannel(), delivery_policy: $("#delivery-policy").value, run_immediately: true }) });
@@ -784,24 +1403,47 @@ async function activateTab(tab) {
   state.activeTab = tab;
   $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.tab === tab));
   $$(".tab-panel").forEach((node) => node.classList.remove("active")); $(`#tab-${tab}`).classList.add("active");
-  if (tab === "opportunities") await loadOpportunities(); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(); if (tab === "reports") await loadReports();
+  if (tab === "decision") await loadDecisionCenter(); if (tab === "opportunities") await setOpportunityWorkspaceView(state.opportunityView); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(); if (tab === "reports") await loadReports();
 }
 
 $$(".nav-link").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab).catch((error) => toast(error.message))));
-$$("[data-query]").forEach((button) => button.addEventListener("click", () => { $("#query-input").value = button.dataset.query; state.spec = null; }));
+$$("[data-workspace-view]").forEach((button) => button.addEventListener("click", () => setOpportunityWorkspaceView(button.dataset.workspaceView).catch((error) => toast(error.message, 5000))));
+$$("[data-query]").forEach((button) => button.addEventListener("click", () => { $("#query-input").value = button.dataset.query; state.spec = null; state.intentRequestSequence += 1; }));
 $("#parse-button").addEventListener("click", () => parseIntent().catch((error) => toast(error.message)));
 $("#run-button").addEventListener("click", runQuery);
 $("#create-subscription-button").addEventListener("click", () => createSubscriptionFromQuery().catch((error) => toast(error.message, 5000)));
 $("#delivery-channel").addEventListener("change", renderChannelHint);
 $("#refresh-opportunities").addEventListener("click", () => loadOpportunities().catch((error) => toast(error.message)));
+$("#refresh-buyer-radar").addEventListener("click", () => loadBuyerRadar().catch((error) => toast(error.message, 5000)));
+$("#buyer-radar-limit").addEventListener("change", () => loadBuyerRadar().catch((error) => toast(error.message, 5000)));
+$("#buyer-radar-search").addEventListener("input", () => {
+  clearTimeout(window.__buyerRadarSearchTimer);
+  window.__buyerRadarSearchTimer = setTimeout(() => loadBuyerRadar().catch((error) => toast(error.message, 5000)), 280);
+});
 $("#opportunity-stage-filter").addEventListener("change", () => loadOpportunities().catch((error) => toast(error.message)));
 $("#opportunity-search").addEventListener("input", () => {
   clearTimeout(window.__opportunitySearchTimer);
   window.__opportunitySearchTimer = setTimeout(() => loadOpportunities().catch((error) => toast(error.message)), 250);
 });
 $("#save-config").addEventListener("click", () => saveConfig().catch((error) => toast(error.message, 5000)));
+$("#save-profile").addEventListener("click", () => saveCompanyProfile().catch((error) => toast(error.message, 5000)));
+$("#reload-profile").addEventListener("click", () => loadCompanyProfile(true).catch(() => {}));
+$("#clear-feedback").addEventListener("click", () => clearAllFeedback().catch((error) => toast(error.message, 5000)));
+$("#refresh-assessments").addEventListener("click", async () => {
+  try { await refreshCurrentAssessments(); toast("本轮企业适配判断已刷新"); }
+  catch (error) { toast(`适配判断暂未刷新：${error.message}`, 8000); }
+});
+$("#ask-run").addEventListener("click", askRunEvidence);
+$("#run-question").addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); askRunEvidence(); } });
+$$('[data-run-question]').forEach((button) => button.addEventListener("click", () => { $("#run-question").value = button.dataset.runQuestion; $("#run-question").focus(); }));
 $("#test-model").addEventListener("click", testModelConnection);
 $$('.channel-test').forEach((button) => button.addEventListener("click", () => testDeliveryChannel(button)));
+$("#profile-fields").addEventListener("input", () => { if (state.profileLoaded) { state.profileDirty = true; $("#profile-save-result").textContent = "有未保存的修改"; } });
+$("#profile-fields").addEventListener("change", () => { if (state.profileLoaded) { state.profileDirty = true; $("#profile-save-result").textContent = "有未保存的修改"; } });
+$("#query-input").addEventListener("input", () => {
+  state.spec = null; state.intentRequestSequence += 1;
+  if (!state.runInFlight) { $("#parse-button").disabled = false; $("#parse-button").textContent = "解析意图"; }
+});
 $("#query-input").addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery(); });
 document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#query-input").focus(); } });
 window.createBidPilotSubscription = createSubscriptionFromQuery;
