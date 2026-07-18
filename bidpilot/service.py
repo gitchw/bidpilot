@@ -42,6 +42,7 @@ from bidpilot.sources import (
     CCGPSource,
     CEBPubServiceSource,
     CECBidSource,
+    GDGPOSource,
     GGZYSource,
     MofcomSource,
     PLAPSource,
@@ -81,6 +82,7 @@ class BidPilotService:
         self.intent_engine = HybridIntentEngine(settings, self.parser)
         self.sources = sources or [
             SZGGZYSource(settings),
+            GDGPOSource(settings),
             CEBPubServiceSource(settings),
             PLAPSource(settings),
             ZYCGSource(settings),

@@ -1,0 +1,21 @@
+{
+  "code": "200",
+  "msg": "操作成功",
+  "data": {
+    "id": "19249ba9-5d33-48e4-b9cb-def134be8824",
+    "title": "惠州市算力中心服务器采购项目结果公告",
+    "purchaser": "惠州市政务服务和数据管理局",
+    "noticeTime": "2026-07-17 16:19:02",
+    "noticeTypeName": "公开招标中标公告",
+    "openTenderCode": "HZBY-2026A002",
+    "purchaseMannerName": "公开招标",
+    "budget": "7000000.0000",
+    "content": "<div id='noticeArea'><h4>一、项目编号：HZBY-2026A002</h4><p>采购一批计算服务器、存储设备及配套实施服务。</p><p>中标供应商：广东示例科技有限公司</p></div>",
+    "attchList": [
+      {
+        "fileName": "报价明细附件.pdf",
+        "fileUrl": "https://gdgpo.czt.gd.gov.cn/freecms/download/server-result.pdf"
+      }
+    ]
+  }
+}

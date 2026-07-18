@@ -1,6 +1,7 @@
 from bidpilot.sources.ccgp import CCGPSource
 from bidpilot.sources.cebpubservice import CEBPubServiceSource
 from bidpilot.sources.cecbid import CECBidSource
+from bidpilot.sources.gdgpo import GDGPOSource
 from bidpilot.sources.ggzy import GGZYSource
 from bidpilot.sources.mofcom import MofcomSource
 from bidpilot.sources.plap import PLAPSource
@@ -13,6 +14,7 @@ __all__ = [
     "CEBPubServiceSource",
     "CECBidSource",
     "GGZYSource",
+    "GDGPOSource",
     "MofcomSource",
     "PLAPSource",
     "QianlimaSource",

@@ -18,6 +18,7 @@ from bidpilot.sources import (
     CCGPSource,
     CEBPubServiceSource,
     CECBidSource,
+    GDGPOSource,
     GGZYSource,
     MofcomSource,
     PLAPSource,
@@ -162,6 +163,7 @@ def build_legacy_pipeline(settings: Settings) -> TenderPipeline:
 def build_current_pipeline(settings: Settings) -> TenderPipeline:
     sources = [
         SZGGZYSource(settings),
+        GDGPOSource(settings),
         CEBPubServiceSource(settings),
         PLAPSource(settings),
         ZYCGSource(settings),

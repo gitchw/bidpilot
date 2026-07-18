@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "evaluated_at": "2026-07-18T17:58:38.925533+08:00",
+  "query": "最近1个月广东服务器采购信息",
+  "sources": [
+    {
+      "source_id": "cebpubservice",
+      "source": "中国招标投标公共服务平台",
+      "status": "partial",
+      "scanned_count": 0,
+      "candidate_count": 0,
+      "message": "中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。",
+      "items": []
+    },
+    {
+      "source_id": "plap",
+      "source": "军队采购网",
+      "status": "ok",
+      "scanned_count": 2,
+      "candidate_count": 2,
+      "message": "军队采购网公开采购大厅检索完成，官方接口报告 2 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。",
+      "items": [
+        {
+          "title": "某部机架式服务器采购项目意向公开(2026-JKCNWR-W1018)(第1包)",
+          "published_at": "2026-07-03T00:00:00",
+          "region": "广东",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d049c9f225d9d019f234bc8f00cdb.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "body_length": 1525
+        },
+        {
+          "title": "某单位服务器、计算机终端采购项目(第二次)采购结果公示(第二次)(2026-JJDBBK-W4020)(第1包)",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "广东",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04c69e921212019f030f034c73cc.html?noticeType=001024&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "body_length": 495
+        }
+      ]
+    },
+    {
+      "source_id": "zycg",
+      "source": "中央政府采购网",
+      "status": "partial",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "中央政府采购网公开公告搜索完成。其中 20 条电子卖场公告只提供公开标题和原文入口；未绕过详情网关访问限制。",
+      "items": [
+        {
+          "title": "某单位二所服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796429",
+          "body_length": 0
+        },
+        {
+          "title": "某单位交通研究所服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796428",
+          "body_length": 0
+        },
+        {
+          "title": "中国极地研究中心(中国极地研究所)服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796424",
+          "body_length": 0
+        },
+        {
+          "title": "中国水利水电科学研究院服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796423",
+          "body_length": 0
+        },
+        {
+          "title": "北京中医药大学东直门医院服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422",
+          "body_length": 0
+        }
+      ]
+    },
+    {
+      "source_id": "szggzy",
+      "source": "深圳公共资源交易中心",
+      "status": "ok",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "深圳官方平台检索完成，扫描 20 条，读取 20 条公开详情。仅使用公告公开接口，不登录投标工作台或代替用户完成 CA。",
+      "items": [
+        {
+          "title": "【初始合同】深圳技术大学高性能GPU服务器竞价采购合同公示",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20523647&channelId=2850",
+          "body_length": 420
+        },
+        {
+          "title": "南方科技大学服务器及配套设备采购意向公开",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20515562&channelId=2850",
+          "body_length": 228
+        },
+        {
+          "title": "深圳理工大学服务器等一批设备采购项目意向公开",
+          "published_at": "2026-07-13T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20513270&channelId=2850",
+          "body_length": 438
+        },
+        {
+          "title": "视频云存储服务器采购项目中标结果更正公告",
+          "published_at": "2026-07-10T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20508093&channelId=2850",
+          "body_length": 1143
+        },
+        {
+          "title": "【初始合同】深圳市妇幼保健院信创算力服务器购置合同公示",
+          "published_at": "2026-07-09T00:00:00",
+          "region": "深圳",
+          "url": "https://www.szggzy.com/jygg/details.html?contentId=20506421&channelId=2850",
+          "body_length": 462
+        }
+      ]
+    },
+    {
+      "source_id": "gdgpo",
+      "source": "广东省政府采购网",
+      "status": "partial",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "广东政府采购官方全文检索完成，扫描 20 条，保留 20 条，成功读取 14 条公开正文与附件。仅使用公告公开接口，不登录电子卖场、交易工作台或代办投标。 另有 6 条采购计划模板仅公开列表字段，已明确标记为部分覆盖。",
+      "items": [
+        {
+          "title": "龙门县第三中学配套设备采购及安装项目结果公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "广东 龙门县",
+          "url": "https://gdgpo.czt.gd.gov.cn/gpcms/rest/web/v2/info/getInfoById?id=19249ba9-5d33-48e4-b9cb-def134be8824",
+          "body_length": 30213
+        },
+        {
+          "title": "基础(38189)服务器",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "广东 广东省省本级",
+          "url": "https://gdgpo.czt.gd.gov.cn/gpcms/rest/web/v2/info/getInfoById?id=05240e53-1b31-47f8-8cbe-47c7f8312f92",
+          "body_length": 0
+        },
+        {
+          "title": "广东工贸职业技术学院-信息中心采购服务器一套",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "广东 广东省省本级",
+          "url": "https://gdgpo.czt.gd.gov.cn/gpcms/rest/web/v2/info/getInfoById?id=d001742c-573f-4a8f-947d-709d91d1758e",
+          "body_length": 0
+        },
+        {
+          "title": "斗门校区学生处服务器购买",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "广东 珠海市市本级",
+          "url": "https://gdgpo.czt.gd.gov.cn/gpcms/rest/web/v2/info/getInfoById?id=99c5a604-41db-4898-a376-4e4b53a3b435",
+          "body_length": 0
+        },
+        {
+          "title": "服务器",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "广东 常平镇",
+          "url": "https://gdgpo.czt.gd.gov.cn/gpcms/rest/web/v2/info/getInfoById?id=ab47178a-4a83-455d-8bf8-f0ecb31ae564",
+          "body_length": 0
+        }
+      ]
+    }
+  ]
+}

@@ -3,11 +3,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from bidpilot.config import Settings
 from bidpilot.intent import IntentParser
 from bidpilot.models import EventType
 from bidpilot.sources.ccgp import CCGPSource
 from bidpilot.sources.cebpubservice import CEBPubServiceSource
 from bidpilot.sources.cecbid import CECBidSource
+from bidpilot.sources.gdgpo import GDGPOSource
 from bidpilot.sources.ggzy import GGZYSource
 from bidpilot.sources.mofcom import MofcomSource
 from bidpilot.sources.plap import PLAPSource
@@ -199,3 +201,48 @@ def test_szggzy_replaces_retired_deep_link_with_current_public_detail_route():
     assert item.source_url == (
         "https://www.szggzy.com/jygg/details.html?contentId=20359755&channelId=2850"
     )
+
+
+def test_gdgpo_public_fulltext_parser_and_detail_preserve_official_evidence():
+    payload = json.loads(fixture("gdgpo_search.json"))
+    item = GDGPOSource.parse_search_response(payload)[0]
+
+    assert item.source == "广东省政府采购网"
+    assert item.title == "惠州市算力中心服务器采购项目结果公告"
+    assert item.buyer == "惠州市政务服务和数据管理局"
+    assert item.project_id == "HZBY-2026A002"
+    assert item.event_type == EventType.AWARD
+    assert item.source_url.startswith(
+        "https://gdgpo.czt.gd.gov.cn/gpcms/rest/web/v2/info/getInfoById?"
+    )
+    assert "id=19249ba9-5d33-48e4-b9cb-def134be8824" in item.source_url
+
+    detailed = GDGPOSource.apply_detail(item, json.loads(fixture("gdgpo_detail.json")))
+    assert "计算服务器、存储设备" in detailed.body
+    assert detailed.source_metadata["detail_loaded"] is True
+    assert detailed.attachments[0].name == "报价明细附件.pdf"
+    assert detailed.attachments[0].url.endswith("server-result.pdf")
+
+
+def test_gdgpo_region_router_only_runs_for_guangdong_scope(sample_spec):
+    sample_spec.region = "北京"
+    assert GDGPOSource._is_relevant_region(sample_spec) is False
+    sample_spec.region = "广东"
+    assert GDGPOSource._is_relevant_region(sample_spec) is True
+    sample_spec.region = "深圳"
+    assert GDGPOSource._is_relevant_region(sample_spec) is True
+    assert GDGPOSource._region_code(sample_spec) == "440300"
+
+
+async def test_gdgpo_skips_unrelated_region_without_network(sample_spec):
+    sample_spec.region = "北京"
+
+    class NoNetwork:
+        async def get(self, *_args, **_kwargs):
+            raise AssertionError("地域跳过不应发出网络请求")
+
+    result = await GDGPOSource(Settings()).search(sample_spec, NoNetwork())
+
+    assert result.status.value == "skipped"
+    assert result.scanned_count == 0
+    assert "地域路由跳过" in result.message
