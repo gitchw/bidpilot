@@ -28,9 +28,18 @@ from bidpilot.sources.base import SourceAdapter
 
 
 class CECBidSource(SourceAdapter):
+    source_id = "cecbid"
     name = "中国招标投标网"
     requires_auth = False
     base_url = "https://www.cecbid.org.cn"
+    homepage = base_url
+    access_mode = "public_with_member_detail"
+    query_mode = "keyword_search"
+    supports_query_variants = True
+    supports_detail = True
+    authorization_supported = True
+    authorization_url = f"{base_url}/login"
+    coverage_note = "公开搜索摘要可用；用户授权会员会话后可读取账号本来可见的详情。"
 
     def __init__(self, settings: Settings):
         self.settings = settings

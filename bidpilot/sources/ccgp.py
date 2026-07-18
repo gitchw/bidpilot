@@ -29,7 +29,17 @@ from bidpilot.sources.base import SourceAdapter
 
 
 class CCGPSource(SourceAdapter):
+    source_id = "ccgp"
     name = "中国政府采购网"
+    official = True
+    homepage = "https://www.ccgp.gov.cn"
+    access_mode = "public"
+    query_mode = "recent_lists"
+    supports_query_variants = False
+    supports_region_filter = True
+    supports_date_filter = True
+    supports_pagination = True
+    coverage_note = "当前按官方近期公告列表分页扫描并在本地按扩展词筛选。"
     requires_auth = False
     base_url = "https://www.ccgp.gov.cn"
     category_paths: tuple[tuple[str, EventType], ...] = (

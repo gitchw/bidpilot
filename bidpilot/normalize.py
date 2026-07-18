@@ -35,13 +35,35 @@ def keyword_hits(item: RawTender, spec: TenderQuerySpec) -> tuple[int, bool]:
     return hits, exact_title
 
 
+def hard_filter_reason(item: RawTender, spec: TenderQuerySpec) -> str | None:
+    """Apply non-negotiable constraints before any lexical or semantic topic decision."""
+    if item.published_at.date() < spec.start_date or item.published_at.date() > spec.end_date:
+        return "outside_time"
+    if not region_matches(item, spec):
+        return "region_mismatch"
+    if spec.event_types and item.event_type not in spec.event_types:
+        return "event_type_mismatch"
+    searchable = f"{item.title} {item.buyer or ''} {item.body}".casefold()
+    if any(keyword.casefold() in searchable for keyword in spec.exclude_keywords):
+        return "excluded_keyword"
+    return None
+
+
 def relevance_score(item: RawTender, spec: TenderQuerySpec) -> float:
     hits, exact_title = keyword_hits(item, spec)
+    title = item.title.lower()
+    body = item.body.lower()
+    synonym_in_title = any(keyword.lower() in title for keyword in spec.keywords)
+    synonym_in_body = any(keyword.lower() in body for keyword in spec.keywords)
     score = 0.0
     if exact_title:
         score += 48
-    elif spec.topic.lower() in item.body.lower():
+    elif spec.topic.lower() in body:
         score += 34
+    elif synonym_in_title:
+        score += 38
+    elif synonym_in_body:
+        score += 28
     score += min(hits * 7, 21)
     if spec.region:
         score += 18 if region_matches(item, spec) else 0
@@ -112,21 +134,19 @@ async def evaluate_item(
     item: RawTender,
     spec: TenderQuerySpec,
     summarizer: EvidenceSummarizer,
+    *,
+    semantic_confidence: float | None = None,
 ) -> tuple[TenderRecord | None, str | None]:
     """Return both the record and a stable reason when strict filtering rejects it."""
-    if item.published_at.date() < spec.start_date or item.published_at.date() > spec.end_date:
-        return None, "outside_time"
-    if not region_matches(item, spec):
-        return None, "region_mismatch"
-    if spec.event_types and item.event_type not in spec.event_types:
-        return None, "event_type_mismatch"
-    searchable = f"{item.title} {item.buyer or ''} {item.body}".casefold()
-    if any(keyword.casefold() in searchable for keyword in spec.exclude_keywords):
-        return None, "excluded_keyword"
+    hard_reason = hard_filter_reason(item, spec)
+    if hard_reason:
+        return None, hard_reason
     hits, exact_title = keyword_hits(item, spec)
-    if not exact_title and hits == 0:
+    if not exact_title and hits == 0 and semantic_confidence is None:
         return None, "keyword_mismatch"
     relevance = relevance_score(item, spec)
+    if semantic_confidence is not None:
+        relevance = max(relevance, 45 + (semantic_confidence * 35))
     if relevance < 45:
         return None, "low_relevance"
     summary = await summarizer.summarize(item)

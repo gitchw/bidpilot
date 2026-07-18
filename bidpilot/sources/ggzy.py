@@ -33,7 +33,14 @@ REGION_BY_CODE = {code: region for region, code in set(REGIONS.values())}
 
 
 class GGZYSource(SourceAdapter):
+    source_id = "ggzy"
     name = "全国公共资源交易平台"
+    official = True
+    homepage = "https://www.ggzy.gov.cn"
+    access_mode = "public"
+    query_mode = "latest_feed"
+    supports_query_variants = False
+    coverage_note = "当前入口只覆盖首页最新流；升级为公开交易查询后才可标记历史搜索。"
     requires_auth = False
     base_url = "https://www.ggzy.gov.cn"
 

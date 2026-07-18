@@ -30,9 +30,19 @@ from bidpilot.sources.base import SourceAdapter
 
 
 class MofcomSource(SourceAdapter):
+    source_id = "mofcom"
     name = "商务部中国国际招标网"
     requires_auth = False
     base_url = "https://chinabidding.mofcom.gov.cn"
+    official = True
+    homepage = base_url
+    access_mode = "public"
+    query_mode = "keyword_api"
+    supports_query_variants = True
+    supports_region_filter = True
+    supports_date_filter = True
+    supports_detail = True
+    coverage_note = "覆盖商务部机电产品国际招标公告，不代表全部国内采购。"
     search_url = f"{base_url}/zbwcms/front/bidding/bulletinInfoList"
     event_types = {
         1: EventType.TENDER,

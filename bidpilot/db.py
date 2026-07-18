@@ -53,6 +53,7 @@ class Database:
             result_count INTEGER NOT NULL DEFAULT 0,
             new_count INTEGER NOT NULL DEFAULT 0,
             diagnostics_json TEXT NOT NULL DEFAULT '[]',
+            retrieval_json TEXT NOT NULL DEFAULT '{}',
             error TEXT
         );
         CREATE TABLE IF NOT EXISTS source_runs (
@@ -185,6 +186,7 @@ class Database:
             self._ensure_column(conn, "source_runs", "scanned_count", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "source_runs", "rejected_count", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "source_runs", "rejection_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "runs", "retrieval_json", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_subscription "
                 "ON runs(subscription_id, started_at DESC)"
@@ -231,13 +233,14 @@ class Database:
         result_count: int,
         new_count: int,
         diagnostics: list[dict[str, Any]],
+        retrieval: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE runs SET status=?, completed_at=?, report_path=?, result_count=?,
-                  new_count=?, diagnostics_json=?, error=? WHERE id=?
+                  new_count=?, diagnostics_json=?, retrieval_json=?, error=? WHERE id=?
                 """,
                 (
                     status.value,
@@ -246,6 +249,7 @@ class Database:
                     result_count,
                     new_count,
                     json.dumps(diagnostics, ensure_ascii=False),
+                    json.dumps(retrieval or {}, ensure_ascii=False),
                     error,
                     run_id,
                 ),

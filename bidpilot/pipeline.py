@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 from bidpilot.config import Settings
 from bidpilot.fetch import HttpFetcher
 from bidpilot.models import (
+    RetrievalQuery,
+    RetrievalTrace,
     SearchExplanation,
+    SearchRoundDiagnostic,
     SearchSuggestion,
     SourceDiagnostic,
     SourceSearchResult,
@@ -15,7 +19,13 @@ from bidpilot.models import (
     TenderQuerySpec,
     TenderRecord,
 )
-from bidpilot.normalize import deduplicate_records, evaluate_item
+from bidpilot.normalize import (
+    deduplicate_records,
+    evaluate_item,
+    hard_filter_reason,
+    keyword_hits,
+)
+from bidpilot.retrieval import RetrievalPlanner
 from bidpilot.sources.base import SourceAdapter
 from bidpilot.summarize import EvidenceSummarizer
 
@@ -26,71 +36,358 @@ class PipelineResult:
     diagnostics: list[SourceDiagnostic]
     raw_count: int
     search_explanation: SearchExplanation
+    retrieval: RetrievalTrace
+
+
+@dataclass(slots=True)
+class _SourceCall:
+    source: SourceAdapter
+    query: RetrievalQuery
+    round: int
+    result: SourceSearchResult | None = None
+    error: str = ""
 
 
 class TenderPipeline:
-    def __init__(self, settings: Settings, sources: list[SourceAdapter]):
+    def __init__(
+        self,
+        settings: Settings,
+        sources: list[SourceAdapter],
+        planner: RetrievalPlanner | None = None,
+    ):
         self.settings = settings
         self.sources = sources
         self.summarizer = EvidenceSummarizer(settings)
+        self.planner = planner or RetrievalPlanner(settings, sources)
 
     async def run(self, spec: TenderQuerySpec) -> PipelineResult:
+        plan = await self.planner.plan(spec)
+        effective_spec = spec.model_copy(deep=True)
+        effective_spec.keywords = list(
+            dict.fromkeys([*spec.keywords, *(term.text for term in plan.terms)])
+        )
+        primary = next(query for query in plan.queries if query.round == 1)
+        all_calls: list[_SourceCall] = []
+        rounds: list[SearchRoundDiagnostic] = []
+
         async with HttpFetcher(self.settings) as fetcher:
-            source_results = await asyncio.gather(
-                *(source.search(spec, fetcher) for source in self.sources),
-                return_exceptions=True,
+            round_one_started = time.perf_counter()
+            round_one = await self._execute_calls(
+                [(source, primary) for source in self.sources],
+                effective_spec,
+                fetcher,
+                round_number=1,
+            )
+            all_calls.extend(round_one)
+            cumulative_items = self._unique_raw_items(all_calls)
+            gaps = self._gap_analysis(cumulative_items, effective_spec, all_calls)
+            rounds.append(
+                self._round_diagnostic(
+                    round_one,
+                    effective_spec,
+                    trigger="所有来源先执行用户核心主题，建立确定性召回基线。",
+                    gaps=gaps,
+                    elapsed_ms=round((time.perf_counter() - round_one_started) * 1000),
+                )
             )
 
-        successful: list[SourceSearchResult] = []
-        diagnostics: list[SourceDiagnostic] = []
-        for source, result in zip(self.sources, source_results, strict=True):
-            if isinstance(result, Exception):
-                diagnostics.append(
-                    SourceDiagnostic(
-                        source=source.name,
-                        status=SourceStatus.FAILED,
-                        message=str(result),
+            reserve_queries = [query for query in plan.queries if query.round == 2]
+            second_call_specs = self._second_round_calls(round_one, reserve_queries, plan)
+            if (
+                self._needs_second_round(cumulative_items, effective_spec, gaps)
+                and second_call_specs
+            ):
+                round_two_started = time.perf_counter()
+                round_two = await self._execute_calls(
+                    second_call_specs,
+                    effective_spec,
+                    fetcher,
+                    round_number=2,
+                )
+                all_calls.extend(round_two)
+                cumulative_items = self._unique_raw_items(all_calls)
+                gaps = self._gap_analysis(cumulative_items, effective_spec, all_calls)
+                rounds.append(
+                    self._round_diagnostic(
+                        round_two,
+                        effective_spec,
+                        trigger="首轮可信候选不足，按受控同义词和行业术语执行一次缺口补搜。",
+                        gaps=gaps,
+                        elapsed_ms=round((time.perf_counter() - round_two_started) * 1000),
                     )
                 )
-                continue
-            successful.append(result)
 
-        raw_items = [item for result in successful for item in result.items]
+        raw_items = self._unique_raw_items(all_calls)
+        lexical_items = []
+        boundary_items = []
+        rejected_by_source: dict[str, Counter[str]] = defaultdict(Counter)
+        for item in raw_items:
+            reason = hard_filter_reason(item, effective_spec)
+            if reason:
+                rejected_by_source[item.source][reason] += 1
+                continue
+            hits, exact_title = keyword_hits(item, effective_spec)
+            if hits or exact_title:
+                lexical_items.append(item)
+            else:
+                boundary_items.append(item)
+
+        (
+            review_status,
+            semantic_decisions,
+            semantic_acceptance,
+        ) = await self.planner.review_candidates(effective_spec, plan.terms, boundary_items)
+        evaluation_items = [*lexical_items]
+        semantic_scores: list[float | None] = [None] * len(lexical_items)
+        for item in boundary_items:
+            confidence = semantic_acceptance.get(item.source_url)
+            if confidence is None:
+                rejected_by_source[item.source]["keyword_mismatch"] += 1
+                continue
+            evaluation_items.append(item)
+            semantic_scores.append(confidence)
+
         evaluated = await asyncio.gather(
-            *(evaluate_item(item, spec, self.summarizer) for item in raw_items)
+            *(
+                evaluate_item(
+                    item,
+                    effective_spec,
+                    self.summarizer,
+                    semantic_confidence=semantic_confidence,
+                )
+                for item, semantic_confidence in zip(evaluation_items, semantic_scores, strict=True)
+            )
         )
         records = deduplicate_records(
             [record for record, _reason in evaluated if record is not None]
         )
-        rejected_by_source: dict[str, Counter[str]] = defaultdict(Counter)
-        for item, (_record, reason) in zip(raw_items, evaluated, strict=True):
+        for item, (_record, reason) in zip(evaluation_items, evaluated, strict=True):
             if reason:
                 rejected_by_source[item.source][reason] += 1
 
-        for result in successful:
-            kept_sources = sum(1 for record in records if result.source in record.sources)
-            rejection_reasons = Counter(result.prefilter_reasons)
-            rejection_reasons.update(rejected_by_source[result.source])
-            diagnostics.append(
-                SourceDiagnostic(
-                    source=result.source,
-                    status=result.status,
-                    scanned_count=result.scanned_count or len(result.items),
-                    fetched_count=len(result.items),
-                    kept_count=kept_sources,
-                    rejected_count=sum(rejection_reasons.values()),
-                    rejection_reasons=dict(rejection_reasons),
-                    latency_ms=result.latency_ms,
-                    message=result.message,
-                )
-            )
+        diagnostics = self._source_diagnostics(all_calls, records, rejected_by_source)
         explanation = self._build_search_explanation(spec, diagnostics, records)
+        accepted_semantic = sum(decision.outcome == "accepted" for decision in semantic_decisions)
+        trace = RetrievalTrace(
+            plan=plan,
+            rounds=rounds,
+            gap_analysis=gaps,
+            semantic_review_status=review_status,
+            semantic_decisions=semantic_decisions,
+            unique_raw_candidates=len(raw_items),
+            summary=(
+                f"使用 {len(plan.terms)} 个受控概念完成 {len(rounds)} 轮检索，"
+                f"去重后获得 {len(raw_items)} 个原始候选；语义复核接受 {accepted_semantic} 个，"
+                f"最终保留 {len(records)} 条可追溯标讯。"
+            ),
+        )
         return PipelineResult(
             records=records,
             diagnostics=diagnostics,
             raw_count=len(raw_items),
             search_explanation=explanation,
+            retrieval=trace,
         )
+
+    async def _execute_calls(
+        self,
+        call_specs: list[tuple[SourceAdapter, RetrievalQuery]],
+        effective_spec: TenderQuerySpec,
+        fetcher: HttpFetcher,
+        *,
+        round_number: int,
+    ) -> list[_SourceCall]:
+        async def execute(source: SourceAdapter, query: RetrievalQuery) -> _SourceCall:
+            query_spec = effective_spec.model_copy(deep=True)
+            query_spec.topic = query.text
+            try:
+                result = await source.search(query_spec, fetcher)
+                return _SourceCall(source=source, query=query, round=round_number, result=result)
+            except Exception as exc:
+                return _SourceCall(
+                    source=source,
+                    query=query,
+                    round=round_number,
+                    error=str(exc),
+                )
+
+        return list(await asyncio.gather(*(execute(source, query) for source, query in call_specs)))
+
+    def _second_round_calls(
+        self,
+        round_one: list[_SourceCall],
+        reserve_queries: list[RetrievalQuery],
+        plan,
+    ) -> list[tuple[SourceAdapter, RetrievalQuery]]:
+        if plan.max_rounds < 2 or not reserve_queries:
+            return []
+        first_status = {
+            call.source.source_id: call.result.status if call.result else SourceStatus.FAILED
+            for call in round_one
+        }
+        priorities = {source_id: index for index, source_id in enumerate(plan.source_priorities)}
+        sources = sorted(
+            self.sources,
+            key=lambda source: priorities.get(source.source_id, len(priorities)),
+        )
+        calls: list[tuple[SourceAdapter, RetrievalQuery]] = []
+        for source in sources:
+            if not source.supports_query_variants:
+                continue
+            if first_status.get(source.source_id) in {
+                SourceStatus.AUTH_REQUIRED,
+                SourceStatus.FAILED,
+            }:
+                continue
+            for query in reserve_queries[: plan.query_budget_per_source]:
+                calls.append((source, query))
+        return calls
+
+    @staticmethod
+    def _unique_raw_items(calls: list[_SourceCall]) -> list:
+        by_url = {}
+        order: list[str] = []
+        for call in calls:
+            if call.result is None:
+                continue
+            for item in call.result.items:
+                existing = by_url.get(item.source_url)
+                if existing is None:
+                    by_url[item.source_url] = item
+                    order.append(item.source_url)
+                elif len(item.body) > len(existing.body):
+                    by_url[item.source_url] = item
+        return [by_url[url] for url in order]
+
+    @staticmethod
+    def _matching_count(items: list, spec: TenderQuerySpec) -> int:
+        matched = 0
+        for item in items:
+            if hard_filter_reason(item, spec):
+                continue
+            hits, exact_title = keyword_hits(item, spec)
+            matched += int(bool(hits or exact_title))
+        return matched
+
+    def _gap_analysis(
+        self,
+        items: list,
+        spec: TenderQuerySpec,
+        calls: list[_SourceCall],
+    ) -> list[str]:
+        matched = self._matching_count(items, spec)
+        gaps: list[str] = []
+        if len(items) < 8:
+            gaps.append(f"去重候选仅 {len(items)} 条，低于 8 条召回观察线")
+        if matched < 5:
+            gaps.append(f"通过硬条件且命中受控主题词的候选仅 {matched} 条，低于 5 条补搜线")
+        limited = sorted(
+            {
+                call.source.name
+                for call in calls
+                if call.result is None
+                or call.result.status
+                in {SourceStatus.PARTIAL, SourceStatus.AUTH_REQUIRED, SourceStatus.FAILED}
+            }
+        )
+        if limited:
+            gaps.append(
+                f"{len(limited)} 个来源存在公开范围、授权或可用性缺口：{'、'.join(limited)}"
+            )
+        return gaps
+
+    def _needs_second_round(
+        self,
+        items: list,
+        spec: TenderQuerySpec,
+        gaps: list[str],
+    ) -> bool:
+        return bool(gaps) and self._matching_count(items, spec) < 5
+
+    def _round_diagnostic(
+        self,
+        calls: list[_SourceCall],
+        spec: TenderQuerySpec,
+        *,
+        trigger: str,
+        gaps: list[str],
+        elapsed_ms: int,
+    ) -> SearchRoundDiagnostic:
+        items = [item for call in calls if call.result for item in call.result.items]
+        unique = self._unique_raw_items(calls)
+        queries = list({call.query.id: call.query for call in calls}.values())
+        return SearchRoundDiagnostic(
+            round=calls[0].round if calls else 1,
+            trigger=trigger,
+            queries=queries,
+            source_calls=len(calls),
+            scanned_count=sum(
+                (call.result.scanned_count or len(call.result.items))
+                for call in calls
+                if call.result
+            ),
+            candidate_count=len(items),
+            unique_candidate_count=len(unique),
+            matched_candidate_count=self._matching_count(unique, spec),
+            latency_ms=elapsed_ms,
+            gaps_after_round=gaps,
+        )
+
+    def _source_diagnostics(
+        self,
+        calls: list[_SourceCall],
+        records: list[TenderRecord],
+        rejected_by_source: dict[str, Counter[str]],
+    ) -> list[SourceDiagnostic]:
+        diagnostics: list[SourceDiagnostic] = []
+        for source in self.sources:
+            source_calls = [call for call in calls if call.source is source]
+            results = [call.result for call in source_calls if call.result is not None]
+            source_items = self._unique_raw_items(source_calls)
+            prefilter: Counter[str] = Counter()
+            messages: list[str] = []
+            for call in source_calls:
+                if call.result:
+                    prefilter.update(call.result.prefilter_reasons)
+                    if call.result.message:
+                        messages.append(call.result.message)
+                elif call.error:
+                    messages.append(call.error)
+            prefilter.update(rejected_by_source[source.name])
+            statuses = [result.status for result in results]
+            if not statuses:
+                status = SourceStatus.FAILED
+            elif all(item == SourceStatus.AUTH_REQUIRED for item in statuses):
+                status = SourceStatus.AUTH_REQUIRED
+            elif all(item == SourceStatus.FAILED for item in statuses):
+                status = SourceStatus.FAILED
+            elif any(
+                item in {SourceStatus.PARTIAL, SourceStatus.AUTH_REQUIRED, SourceStatus.FAILED}
+                for item in statuses
+            ):
+                status = SourceStatus.PARTIAL
+            else:
+                status = SourceStatus.OK
+            query_count = len({call.query.text for call in source_calls})
+            message = "；".join(dict.fromkeys(messages))
+            if query_count > 1:
+                message = f"完成 {query_count} 个受控查询变体。" + message
+            diagnostics.append(
+                SourceDiagnostic(
+                    source=source.name,
+                    status=status,
+                    scanned_count=sum(
+                        (result.scanned_count or len(result.items)) for result in results
+                    ),
+                    fetched_count=len(source_items),
+                    kept_count=sum(1 for record in records if source.name in record.sources),
+                    rejected_count=sum(prefilter.values()),
+                    rejection_reasons=dict(prefilter),
+                    latency_ms=sum(result.latency_ms for result in results),
+                    message=message,
+                )
+            )
+        return diagnostics
 
     @staticmethod
     def _build_search_explanation(

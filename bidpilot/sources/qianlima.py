@@ -28,9 +28,17 @@ from bidpilot.sources.base import SourceAdapter
 
 
 class QianlimaSource(SourceAdapter):
+    source_id = "qianlima"
     name = "千里马招标网"
     requires_auth = True
     base_url = "https://wap.qianlima.com"
+    homepage = "https://www.qianlima.com"
+    access_mode = "user_authorized_member"
+    query_mode = "keyword_search"
+    supports_query_variants = True
+    authorization_supported = True
+    authorization_url = f"{base_url}/login.jsp"
+    coverage_note = "仅在用户主动授权后读取其免费会员账号本来可见的搜索结果。"
 
     def __init__(self, settings: Settings):
         self.settings = settings

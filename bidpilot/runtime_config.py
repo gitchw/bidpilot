@@ -52,6 +52,11 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "llm_timeout",
         "intent_llm_mode",
         "intent_llm_confidence_threshold",
+        "retrieval_llm_mode",
+        "retrieval_max_rounds",
+        "retrieval_query_budget_per_source",
+        "retrieval_semantic_review",
+        "retrieval_semantic_threshold",
         "feishu_webhook_url",
         "feishu_webhook_secret",
         "feishu_app_id",
@@ -97,6 +102,11 @@ class RuntimeConfigUpdate(BaseModel):
     llm_timeout: float | None = Field(default=None, ge=3, le=120)
     intent_llm_mode: Literal["off", "auto", "always"] | None = None
     intent_llm_confidence_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
+    retrieval_llm_mode: Literal["off", "auto"] | None = None
+    retrieval_max_rounds: int | None = Field(default=None, ge=1, le=2)
+    retrieval_query_budget_per_source: int | None = Field(default=None, ge=1, le=5)
+    retrieval_semantic_review: bool | None = None
+    retrieval_semantic_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
 
     feishu_webhook_url: SecretStr | None = None
     feishu_webhook_secret: SecretStr | None = None
@@ -170,6 +180,11 @@ class AIConfigView(BaseModel):
     llm_timeout: float
     intent_llm_mode: Literal["off", "auto", "always"]
     intent_llm_confidence_threshold: float
+    retrieval_llm_mode: Literal["off", "auto"]
+    retrieval_max_rounds: int
+    retrieval_query_budget_per_source: int
+    retrieval_semantic_review: bool
+    retrieval_semantic_threshold: float
     llm_api_key: SecretState
     ready: bool
 
@@ -334,6 +349,11 @@ class RuntimeConfiguration:
                 llm_timeout=self.settings.llm_timeout,
                 intent_llm_mode=self.settings.intent_llm_mode,
                 intent_llm_confidence_threshold=(self.settings.intent_llm_confidence_threshold),
+                retrieval_llm_mode=self.settings.retrieval_llm_mode,
+                retrieval_max_rounds=self.settings.retrieval_max_rounds,
+                retrieval_query_budget_per_source=(self.settings.retrieval_query_budget_per_source),
+                retrieval_semantic_review=self.settings.retrieval_semantic_review,
+                retrieval_semantic_threshold=self.settings.retrieval_semantic_threshold,
                 llm_api_key=secret("llm_api_key"),
                 ready=bool(self.settings.llm_base_url and self.settings.llm_model),
             ),

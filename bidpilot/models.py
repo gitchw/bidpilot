@@ -36,6 +36,99 @@ class SourceStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class RetrievalTerm(BaseModel):
+    """One locally validated concept that may be used to retrieve real notices."""
+
+    text: str = Field(min_length=2, max_length=40, description="经过本地校验的检索词")
+    kind: Literal["topic", "synonym", "industry", "llm"] = Field(
+        description="原主题、确定性同义词、行业术语或模型建议"
+    )
+    origin: Literal["query", "rules", "lexicon", "llm"] = Field(description="词条的可审计来源")
+    reason: str = Field(max_length=240, description="使用该词的中文理由")
+
+
+class RetrievalQuery(BaseModel):
+    """A bounded query variant; it never represents a generated tender notice."""
+
+    id: str = Field(min_length=1, max_length=40, description="稳定查询标识")
+    text: str = Field(min_length=2, max_length=60, description="发送给来源搜索框的查询词")
+    round: int = Field(ge=1, le=2, description="计划使用的召回轮次")
+    reason: str = Field(max_length=240, description="为什么执行该查询")
+    term_kind: Literal["topic", "synonym", "industry", "llm"] = "topic"
+
+
+class RetrievalPlan(BaseModel):
+    """Safe retrieval plan produced before any source is queried."""
+
+    planner_version: str = "retrieval-v1"
+    mode: Literal["deterministic", "hybrid", "fallback"] = "deterministic"
+    llm_status: Literal[
+        "disabled",
+        "not_configured",
+        "applied",
+        "rejected",
+        "invalid_response",
+        "unavailable",
+    ] = "disabled"
+    terms: list[RetrievalTerm] = Field(default_factory=list, max_length=16)
+    rejected_terms: list[str] = Field(
+        default_factory=list,
+        max_length=16,
+        description="未通过本地约束的模型词条及简短原因；不保存模型原文",
+    )
+    queries: list[RetrievalQuery] = Field(default_factory=list, max_length=12)
+    source_priorities: list[str] = Field(
+        default_factory=list,
+        description="模型建议且经本地来源 ID 白名单校验后的优先级",
+    )
+    max_rounds: int = Field(default=2, ge=1, le=2)
+    query_budget_per_source: int = Field(default=2, ge=1, le=5)
+    latency_ms: int = Field(default=0, ge=0)
+    summary: str = Field(description="面向普通用户的计划说明")
+
+
+class SearchRoundDiagnostic(BaseModel):
+    round: int = Field(ge=1, le=2)
+    trigger: str = Field(description="首轮或补搜的触发原因")
+    queries: list[RetrievalQuery] = Field(default_factory=list)
+    source_calls: int = Field(default=0, ge=0)
+    scanned_count: int = Field(default=0, ge=0)
+    candidate_count: int = Field(default=0, ge=0)
+    unique_candidate_count: int = Field(default=0, ge=0)
+    matched_candidate_count: int = Field(default=0, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
+    gaps_after_round: list[str] = Field(default_factory=list)
+
+
+class CandidateDecision(BaseModel):
+    """Evidence-bound semantic review decision for a hard-filter-safe candidate."""
+
+    candidate_id: str = Field(description="本轮本地候选 ID，不由模型生成 URL")
+    title: str = Field(description="候选标题，便于用户核对")
+    source: str = Field(description="真实来源名称")
+    outcome: Literal["accepted", "rejected", "not_reviewed"]
+    confidence: float = Field(default=0, ge=0, le=1)
+    reason: str = Field(max_length=300)
+    evidence_excerpt: str = Field(default="", max_length=500)
+
+
+class RetrievalTrace(BaseModel):
+    plan: RetrievalPlan
+    rounds: list[SearchRoundDiagnostic] = Field(default_factory=list, max_length=2)
+    gap_analysis: list[str] = Field(default_factory=list)
+    semantic_review_status: Literal[
+        "disabled",
+        "not_needed",
+        "not_configured",
+        "applied",
+        "invalid_response",
+        "unavailable",
+    ] = "not_needed"
+    semantic_decisions: list[CandidateDecision] = Field(default_factory=list)
+    unique_raw_candidates: int = Field(default=0, ge=0)
+    summary: str = Field(description="完整检索链路的中文摘要")
+
+
 class EventType(StrEnum):
     INTENTION = "采购意向"
     TENDER = "招标公告"
@@ -332,6 +425,10 @@ class RunResult(BaseModel):
     search_explanation: SearchExplanation | None = Field(
         default=None,
         description="候选扫描、淘汰原因、覆盖边界和不自动执行的放宽建议",
+    )
+    retrieval: RetrievalTrace | None = Field(
+        default=None,
+        description="AI 检索计划、多轮补搜、缺口判断和语义复核的完整审计轨迹",
     )
     report_path: str | None = None
     new_count: int = 0

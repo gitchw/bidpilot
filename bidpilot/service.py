@@ -236,6 +236,7 @@ class BidPilotService:
                 records=output_records,
                 diagnostics=pipeline_result.diagnostics,
                 search_explanation=pipeline_result.search_explanation,
+                retrieval=pipeline_result.retrieval,
                 report_path=str(report_path) if report_path else None,
                 new_count=len(output_records),
                 started_at=started_at,
@@ -252,6 +253,7 @@ class BidPilotService:
                 result_count=result_count,
                 new_count=len(output_records),
                 diagnostics=diagnostics_dump,
+                retrieval=pipeline_result.retrieval.model_dump(mode="json"),
             )
             self._live_results[run_id] = result
             return result
@@ -263,6 +265,7 @@ class BidPilotService:
                 result_count=result_count,
                 new_count=0,
                 diagnostics=diagnostics_dump,
+                retrieval=None,
                 error=str(exc),
             )
             raise RunExecutionError(run_id, str(exc)) from exc
@@ -593,6 +596,7 @@ class BidPilotService:
         for row in rows:
             row["spec"] = json.loads(row.pop("spec_json"))
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
+            row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
         return rows
 
     def list_delivery_attempts(self, subscription_id: str | None = None) -> list[dict]:
@@ -603,6 +607,7 @@ class BidPilotService:
         for row in rows:
             row["spec"] = json.loads(row.pop("spec_json"))
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
+            row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
         return rows
 
     def get_run(self, run_id: str) -> dict | RunResult | None:
@@ -612,6 +617,7 @@ class BidPilotService:
         if row:
             row["spec"] = json.loads(row.pop("spec_json"))
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
+            row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
         return row
 
     def list_reports(self) -> list[dict]:
@@ -791,40 +797,52 @@ class BidPilotService:
 
     def source_status(self) -> list[dict]:
         latest = self.db.latest_source_runs()
-        return [
-            {
-                "name": source.name,
-                "requires_auth": source.requires_auth,
-                "configured": (
-                    bool(self.settings.load_qianlima_cookie())
-                    if isinstance(source, QianlimaSource)
-                    else True
-                ),
-                "member_enhanced": (
-                    bool(self.settings.cecbid_cookie)
-                    if isinstance(source, CECBidSource)
-                    else bool(self.settings.load_qianlima_cookie())
-                    if isinstance(source, QianlimaSource)
-                    else False
-                ),
-                "mode": (
-                    "授权免费会员"
-                    if source.requires_auth
-                    else "公开 + 会员增强"
-                    if isinstance(source, CECBidSource)
-                    else "公开"
-                ),
-                "official": isinstance(source, CCGPSource | GGZYSource | MofcomSource),
-                "last_status": latest.get(source.name, {}).get("status"),
-                "last_checked_at": latest.get(source.name, {}).get("started_at"),
-                "last_message": latest.get(source.name, {}).get("message"),
-                "last_scanned_count": latest.get(source.name, {}).get("scanned_count", 0),
-                "last_fetched_count": latest.get(source.name, {}).get("fetched_count", 0),
-                "last_kept_count": latest.get(source.name, {}).get("kept_count", 0),
-                "last_rejected_count": latest.get(source.name, {}).get("rejected_count", 0),
-                "last_rejection_reasons": json.loads(
-                    latest.get(source.name, {}).get("rejection_json", "{}") or "{}"
-                ),
-            }
-            for source in self.sources
-        ]
+        rows = []
+        for source in self.sources:
+            capabilities = source.capabilities()
+            configured = (
+                bool(self.settings.load_qianlima_cookie())
+                if isinstance(source, QianlimaSource)
+                else True
+            )
+            rows.append(
+                {
+                    **capabilities,
+                    "name": source.name,
+                    "requires_auth": source.requires_auth,
+                    "configured": configured,
+                    "member_enhanced": (
+                        bool(self.settings.cecbid_cookie)
+                        if isinstance(source, CECBidSource)
+                        else bool(self.settings.load_qianlima_cookie())
+                        if isinstance(source, QianlimaSource)
+                        else False
+                    ),
+                    "mode": (
+                        "授权免费会员"
+                        if source.requires_auth
+                        else "公开 + 会员增强"
+                        if isinstance(source, CECBidSource)
+                        else "公开"
+                    ),
+                    "official": source.official,
+                    "authorization_state": (
+                        "authorized"
+                        if configured and source.requires_auth
+                        else "available"
+                        if source.authorization_supported
+                        else "not_applicable"
+                    ),
+                    "last_status": latest.get(source.name, {}).get("status"),
+                    "last_checked_at": latest.get(source.name, {}).get("started_at"),
+                    "last_message": latest.get(source.name, {}).get("message"),
+                    "last_scanned_count": latest.get(source.name, {}).get("scanned_count", 0),
+                    "last_fetched_count": latest.get(source.name, {}).get("fetched_count", 0),
+                    "last_kept_count": latest.get(source.name, {}).get("kept_count", 0),
+                    "last_rejected_count": latest.get(source.name, {}).get("rejected_count", 0),
+                    "last_rejection_reasons": json.loads(
+                        latest.get(source.name, {}).get("rejection_json", "{}") or "{}"
+                    ),
+                }
+            )
+        return rows
