@@ -38,18 +38,20 @@ class Settings(BaseSettings):
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
-        "BidPilot/0.3.0"
+        "BidPilot/0.4.0"
     )
 
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
+    llm_timeout: float = Field(default=30.0, ge=3, le=120)
 
     cecbid_cookie: str = ""
     qianlima_cookie: str = ""
     qianlima_cookie_path: Path = Path("data/secrets/qianlima_cookie.txt")
 
     feishu_webhook_url: str = ""
+    feishu_webhook_secret: str = ""
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     feishu_receive_id: str = ""
@@ -64,6 +66,13 @@ class Settings(BaseSettings):
     smtp_from: str = ""
     smtp_to: str = ""
     smtp_timeout: float = Field(default=30.0, ge=3, le=120)
+
+    dingtalk_webhook_url: str = ""
+    dingtalk_webhook_secret: str = ""
+    wecom_webhook_url: str = ""
+    generic_webhook_url: str = ""
+    generic_webhook_bearer_token: str = ""
+    delivery_webhook_timeout: float = Field(default=20.0, ge=3, le=120)
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

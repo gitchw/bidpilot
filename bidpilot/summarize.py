@@ -78,12 +78,7 @@ class EvidenceSummarizer:
 
     async def summarize(self, item: RawTender) -> SummaryResult:
         fallback = self.extractive(item)
-        if not (
-            self.settings.llm_base_url
-            and self.settings.llm_api_key
-            and self.settings.llm_model
-            and item.body
-        ):
+        if not (self.settings.llm_base_url and self.settings.llm_model and item.body):
             return fallback
 
         evidence = normalize_space(item.body)[:7000]
@@ -94,10 +89,13 @@ class EvidenceSummarizer:
             '{"summary":"..."}。\n【标题】' + item.title + "\n【证据】" + evidence
         )
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            headers = {"Content-Type": "application/json"}
+            if self.settings.llm_api_key:
+                headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
+            async with httpx.AsyncClient(timeout=self.settings.llm_timeout) as client:
                 response = await client.post(
                     endpoint,
-                    headers={"Authorization": f"Bearer {self.settings.llm_api_key}"},
+                    headers=headers,
                     json={
                         "model": self.settings.llm_model,
                         "temperature": 0,

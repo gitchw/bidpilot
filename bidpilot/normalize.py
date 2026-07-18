@@ -108,6 +108,11 @@ async def normalize_item(
         return None
     if not region_matches(item, spec):
         return None
+    if spec.event_types and item.event_type not in spec.event_types:
+        return None
+    searchable = f"{item.title} {item.buyer or ''} {item.body}".casefold()
+    if any(keyword.casefold() in searchable for keyword in spec.exclude_keywords):
+        return None
     hits, exact_title = keyword_hits(item, spec)
     if not exact_title and hits == 0:
         return None

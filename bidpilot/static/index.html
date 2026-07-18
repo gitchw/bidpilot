@@ -6,7 +6,7 @@
   <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
   <title>标擎 BidPilot</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=0.3.0">
+  <link rel="stylesheet" href="/static/app.css?v=0.4.0">
 </head>
 <body>
   <div class="noise"></div>
@@ -20,6 +20,7 @@
       <button class="nav-link" data-tab="opportunities">机会工作台</button>
       <button class="nav-link" data-tab="subscriptions">订阅中心</button>
       <button class="nav-link" data-tab="sources">来源中心</button>
+      <button class="nav-link" data-tab="config">配置中心</button>
       <button class="nav-link" data-tab="reports">报告历史</button>
     </nav>
     <div class="top-actions">
@@ -134,6 +135,90 @@
         <code>python -m bidpilot auth qianlima</code>
       </div>
     </section>
+
+    <section class="tab-panel" id="tab-config">
+      <div class="page-heading"><p class="eyebrow">RUNTIME CONTROL CENTER</p><h1>配置中心</h1><p>模型与推送通道都在网页内配置，保存后立即生效并随数据库持久化，无需修改配置文件。</p></div>
+      <div class="config-security-note"><i>●</i><div><b>敏感信息默认不回显</b><p id="config-security-notice">密钥、密码和 Webhook 地址只显示“已配置”；留空保持原值，只有显式勾选才会清除。</p></div></div>
+      <div class="config-toolbar">
+        <div><span class="state-badge muted" id="config-save-state">正在读取配置</span><small>通道测试会真实发送一条“配置中心连通性测试”消息。</small></div>
+        <button class="primary-button compact" id="save-config">保存全部配置</button>
+      </div>
+
+      <div class="config-grid">
+        <article class="config-card">
+          <div class="config-card-head"><div><p class="eyebrow">AI MODEL</p><h2>OpenAI-compatible 模型</h2></div><span class="state-badge muted" id="config-status-ai">未配置</span></div>
+          <p>支持 OpenAI、兼容网关和本机模型服务。模型不可用时自动降级到证据抽取摘要。</p>
+          <div class="config-fields">
+            <label class="wide"><span>API 基础地址</span><input data-config="llm_base_url" type="url" placeholder="http://127.0.0.1:8045/v1"></label>
+            <label><span>模型名称</span><input data-config="llm_model" placeholder="例如 gemini-3-flash-agent"></label>
+            <label><span>超时（秒）</span><input data-config="llm_timeout" type="number" min="3" max="120" step="1"></label>
+            <label class="wide secret-field"><span>API 密钥 <em data-secret-state="llm_api_key">未配置</em></span><input data-config="llm_api_key" type="password" autocomplete="new-password" placeholder="留空保持原密钥"><small><input data-clear="llm_api_key" type="checkbox"> 清除已保存密钥</small></label>
+          </div>
+          <div class="config-card-actions"><button class="secondary-button" id="test-model">测试模型连接</button><span id="test-result-ai"></span></div>
+        </article>
+
+        <article class="config-card">
+          <div class="config-card-head"><div><p class="eyebrow">FEISHU</p><h2>飞书机器人与应用</h2></div><span class="state-badge muted" id="config-status-feishu">未配置</span></div>
+          <p>群机器人适合轻量通知；飞书应用支持直接发送 Word 文件。可任选其一或同时配置。</p>
+          <div class="config-fields">
+            <label class="wide secret-field"><span>机器人 Webhook <em data-secret-state="feishu_webhook_url">未配置</em></span><input data-config="feishu_webhook_url" type="password" autocomplete="new-password" placeholder="粘贴完整 Webhook，留空保持原值"><small><input data-clear="feishu_webhook_url" type="checkbox"> 清除</small></label>
+            <label class="wide secret-field"><span>机器人签名密钥（可选） <em data-secret-state="feishu_webhook_secret">未配置</em></span><input data-config="feishu_webhook_secret" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="feishu_webhook_secret" type="checkbox"> 清除</small></label>
+            <label><span>应用 App ID</span><input data-config="feishu_app_id" placeholder="cli_xxx"></label>
+            <label class="secret-field"><span>应用 App Secret <em data-secret-state="feishu_app_secret">未配置</em></span><input data-config="feishu_app_secret" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="feishu_app_secret" type="checkbox"> 清除</small></label>
+            <label><span>接收 ID</span><input data-config="feishu_receive_id" placeholder="群 chat_id 或用户 open_id"></label>
+            <label><span>接收 ID 类型</span><select data-config="feishu_receive_id_type"><option value="chat_id">chat_id</option><option value="open_id">open_id</option><option value="user_id">user_id</option><option value="union_id">union_id</option><option value="email">email</option></select></label>
+            <label class="wide"><span>公网报告地址（可选）</span><input data-config="public_base_url" type="url" placeholder="https://bidpilot.example.com"></label>
+          </div>
+          <div class="config-card-actions"><button class="secondary-button channel-test" data-test-channel="feishu_webhook">测试群机器人</button><button class="secondary-button channel-test" data-test-channel="feishu_app">测试飞书应用</button><span id="test-result-feishu"></span></div>
+        </article>
+
+        <article class="config-card">
+          <div class="config-card-head"><div><p class="eyebrow">EMAIL</p><h2>SMTP 邮件</h2></div><span class="state-badge muted" id="config-status-email">未配置</span></div>
+          <p>使用标准 SSL、STARTTLS 或明文 SMTP；建议使用邮箱应用专用密码。</p>
+          <div class="config-fields">
+            <label><span>SMTP 主机</span><input data-config="smtp_host" placeholder="smtp.example.com"></label>
+            <label><span>端口</span><input data-config="smtp_port" type="number" min="1" max="65535"></label>
+            <label><span>加密方式</span><select data-config="smtp_security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="plain">明文（不推荐）</option></select></label>
+            <label><span>用户名</span><input data-config="smtp_username" autocomplete="username"></label>
+            <label class="secret-field"><span>密码 / 授权码 <em data-secret-state="smtp_password">未配置</em></span><input data-config="smtp_password" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="smtp_password" type="checkbox"> 清除</small></label>
+            <label><span>发件人</span><input data-config="smtp_from" type="email" placeholder="robot@example.com"></label>
+            <label class="wide"><span>收件人（逗号分隔）</span><input data-config="smtp_to" placeholder="owner@example.com, sales@example.com"></label>
+            <label><span>超时（秒）</span><input data-config="smtp_timeout" type="number" min="3" max="120"></label>
+          </div>
+          <div class="config-card-actions"><button class="secondary-button channel-test" data-test-channel="email">发送测试邮件</button><span id="test-result-email"></span></div>
+        </article>
+
+        <article class="config-card compact-card">
+          <div class="config-card-head"><div><p class="eyebrow">DINGTALK</p><h2>钉钉群机器人</h2></div><span class="state-badge muted" id="config-status-dingtalk">未配置</span></div>
+          <p>支持自定义机器人 Webhook 与加签密钥。</p>
+          <div class="config-fields one-column">
+            <label class="secret-field"><span>Webhook <em data-secret-state="dingtalk_webhook_url">未配置</em></span><input data-config="dingtalk_webhook_url" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="dingtalk_webhook_url" type="checkbox"> 清除</small></label>
+            <label class="secret-field"><span>加签密钥（可选） <em data-secret-state="dingtalk_webhook_secret">未配置</em></span><input data-config="dingtalk_webhook_secret" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="dingtalk_webhook_secret" type="checkbox"> 清除</small></label>
+          </div>
+          <div class="config-card-actions"><button class="secondary-button channel-test" data-test-channel="dingtalk_webhook">发送测试消息</button><span id="test-result-dingtalk"></span></div>
+        </article>
+
+        <article class="config-card compact-card">
+          <div class="config-card-head"><div><p class="eyebrow">WECOM</p><h2>企业微信群机器人</h2></div><span class="state-badge muted" id="config-status-wecom">未配置</span></div>
+          <p>使用企业微信群机器人标准 Webhook 发送 Markdown 回执。</p>
+          <div class="config-fields one-column">
+            <label class="secret-field"><span>Webhook <em data-secret-state="wecom_webhook_url">未配置</em></span><input data-config="wecom_webhook_url" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="wecom_webhook_url" type="checkbox"> 清除</small></label>
+          </div>
+          <div class="config-card-actions"><button class="secondary-button channel-test" data-test-channel="wecom_webhook">发送测试消息</button><span id="test-result-wecom"></span></div>
+        </article>
+
+        <article class="config-card compact-card">
+          <div class="config-card-head"><div><p class="eyebrow">AUTOMATION</p><h2>通用 Webhook</h2></div><span class="state-badge muted" id="config-status-generic">未配置</span></div>
+          <p>向你的自动化平台发送稳定 JSON 事件，可选 Bearer Token 鉴权。</p>
+          <div class="config-fields one-column">
+            <label class="secret-field"><span>Webhook <em data-secret-state="generic_webhook_url">未配置</em></span><input data-config="generic_webhook_url" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="generic_webhook_url" type="checkbox"> 清除</small></label>
+            <label class="secret-field"><span>Bearer Token（可选） <em data-secret-state="generic_webhook_bearer_token">未配置</em></span><input data-config="generic_webhook_bearer_token" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="generic_webhook_bearer_token" type="checkbox"> 清除</small></label>
+            <label><span>Webhook 超时（秒）</span><input data-config="delivery_webhook_timeout" type="number" min="3" max="120"></label>
+          </div>
+          <div class="config-card-actions"><button class="secondary-button channel-test" data-test-channel="generic_webhook">发送测试事件</button><span id="test-result-generic"></span></div>
+        </article>
+      </div>
+    </section>
   </main>
 
   <aside class="source-rail" aria-label="数据源状态">
@@ -141,6 +226,6 @@
   </aside>
 
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.3.0" defer></script>
+  <script src="/static/app.js?v=0.4.0" defer></script>
 </body>
 </html>

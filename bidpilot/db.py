@@ -145,6 +145,12 @@ class Database:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS runtime_config (
+            field TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            is_secret INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
@@ -781,6 +787,31 @@ class Database:
         with self.connection() as conn:
             rows = conn.execute("SELECT * FROM workers ORDER BY heartbeat_at DESC").fetchall()
         return [dict(row) for row in rows]
+
+    def get_runtime_config(self) -> dict[str, dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT field, value, is_secret, updated_at FROM runtime_config"
+            ).fetchall()
+        return {row["field"]: dict(row) for row in rows}
+
+    def set_runtime_config(self, values: dict[str, tuple[str, bool]]) -> None:
+        if not values:
+            return
+        updated_at = utcnow_iso()
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO runtime_config(field, value, is_secret, updated_at)
+                VALUES(?,?,?,?)
+                ON CONFLICT(field) DO UPDATE SET value=excluded.value,
+                  is_secret=excluded.is_secret, updated_at=excluded.updated_at
+                """,
+                [
+                    (field, value, int(is_secret), updated_at)
+                    for field, (value, is_secret) in values.items()
+                ],
+            )
 
     def latest_source_runs(self) -> dict[str, dict[str, Any]]:
         with self.connection() as conn:

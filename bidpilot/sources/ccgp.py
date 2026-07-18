@@ -101,7 +101,12 @@ class CCGPSource(SourceAdapter):
     def _matches_spec(item: RawTender, spec: TenderQuerySpec) -> bool:
         if item.published_at.date() < spec.start_date or item.published_at.date() > spec.end_date:
             return False
-        if spec.region and item.region and spec.region not in item.region:
+        if (
+            spec.region
+            and spec.region_level != "city"
+            and item.region
+            and spec.region not in item.region
+        ):
             return False
         haystack = f"{item.title} {item.buyer or ''}".lower()
         keywords = [keyword.lower() for keyword in spec.keywords if len(keyword) >= 2]

@@ -80,6 +80,34 @@ async def test_irrelevant_region_is_filtered(sample_spec):
     assert result is None
 
 
+async def test_exclude_keywords_and_event_types_are_enforced(sample_spec):
+    sample_spec.exclude_keywords = ["运维服务"]
+    sample_spec.event_types = [EventType.TENDER]
+    excluded = raw_tender(
+        "测试源",
+        "https://example.com/excluded",
+        "安徽大学 GPU 服务器运维服务采购公告",
+        "本项目采购 GPU 服务器运维服务。",
+    )
+    award = raw_tender(
+        "测试源",
+        "https://example.com/award",
+        "安徽大学 GPU 服务器采购中标公告",
+        "GPU 服务器采购结果。",
+        EventType.AWARD,
+    )
+    accepted = raw_tender(
+        "测试源",
+        "https://example.com/accepted",
+        "安徽大学 GPU 服务器采购公告",
+        "本项目采购 20 台 GPU 服务器。",
+    )
+    summarizer = EvidenceSummarizer(Settings())
+    assert await normalize_item(excluded, sample_spec, summarizer) is None
+    assert await normalize_item(award, sample_spec, summarizer) is None
+    assert await normalize_item(accepted, sample_spec, summarizer) is not None
+
+
 async def test_report_contains_required_fields_and_filename(sample_spec, tmp_path: Path):
     body = "项目编号：AH-2026-001。预算金额：1200 万元。投标截止时间：2026-07-30。"
     record = await normalize_item(

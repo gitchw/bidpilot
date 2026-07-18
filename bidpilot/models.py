@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScheduleKind(StrEnum):
@@ -12,6 +12,7 @@ class ScheduleKind(StrEnum):
     ONCE = "once"
     DAILY = "daily"
     WEEKLY = "weekly"
+    MONTHLY = "monthly"
 
 
 class RunStatus(StrEnum):
@@ -54,31 +55,54 @@ class OpportunityStage(StrEnum):
 
 
 class IntentSchedule(BaseModel):
-    kind: ScheduleKind = ScheduleKind.IMMEDIATE
-    send_time: time | None = None
-    weekday: int | None = Field(default=None, ge=0, le=6)
-    run_at: datetime | None = None
-    timezone: str = "Asia/Shanghai"
-    expression: str = "立即执行"
+    kind: ScheduleKind = Field(default=ScheduleKind.IMMEDIATE, description="计划类型")
+    send_time: time | None = Field(default=None, description="每日/每周/每月发送时刻")
+    weekday: int | None = Field(default=None, description="周一为 0，周日为 6", ge=0, le=6)
+    day_of_month: int | None = Field(
+        default=None,
+        description="每月日期；31 在短月自动落到月末",
+        ge=1,
+        le=31,
+    )
+    run_at: datetime | None = Field(default=None, description="一次性计划的绝对执行时间")
+    timezone: str = Field(default="Asia/Shanghai", description="IANA 时区")
+    expression: str = Field(default="立即执行", description="面向用户的中文计划说明")
 
 
 class TenderQuerySpec(BaseModel):
-    raw_query: str
-    topic: str
-    keywords: list[str]
-    region: str | None = None
-    region_code: str | None = None
-    start_date: date
-    end_date: date
-    schedule: IntentSchedule = Field(default_factory=IntentSchedule)
-    delivery_channel: str = "local"
-    slot_confidence: dict[str, float] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)
-    parser_version: str = "rules-v1"
+    raw_query: str = Field(description="规范化后的用户原始问题")
+    topic: str = Field(description="用于严格匹配的核心产品、服务或行业主题")
+    keywords: list[str] = Field(description="主题和受控同义词扩展")
+    exclude_keywords: list[str] = Field(default_factory=list, description="任一命中即排除")
+    event_types: list[EventType] = Field(
+        default_factory=list,
+        description="显式公告类型过滤；空数组表示保留完整生命周期",
+    )
+    region: str | None = Field(default=None, description="省或城市名称；空值表示全国")
+    region_code: str | None = Field(default=None, description="来源接口使用的省级行政代码")
+    region_level: Literal["nationwide", "province", "city"] = Field(
+        default="nationwide",
+        description="全国、省级或城市粒度",
+    )
+    start_date: date = Field(description="检索开始日期，含当天")
+    end_date: date = Field(description="检索结束日期，含当天")
+    schedule: IntentSchedule = Field(default_factory=IntentSchedule, description="执行计划")
+    delivery_channel: str = Field(default="local", description="解析出的投递通道 ID")
+    slot_confidence: dict[str, float] = Field(
+        default_factory=dict,
+        description="主题、地域、时间和计划字段置信度",
+    )
+    warnings: list[str] = Field(default_factory=list, description="需要用户确认的解析警告")
+    parser_version: str = Field(default="rules-v2", description="解析器规则版本")
 
     @field_validator("keywords")
     @classmethod
     def deduplicate_keywords(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+    @field_validator("exclude_keywords")
+    @classmethod
+    def deduplicate_exclude_keywords(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(item.strip() for item in value if item.strip()))
 
 
@@ -134,17 +158,31 @@ class TenderRecord(BaseModel):
 
 
 class OpportunityCreate(BaseModel):
-    canonical_id: str = Field(min_length=1, max_length=128)
-    version_hash: str = Field(min_length=1, max_length=128)
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [{"canonical_id": "notice-id", "version_hash": "version-hash"}]
+        }
+    )
+
+    canonical_id: str = Field(
+        description="已写入 tender_items 的公告规范 ID",
+        min_length=1,
+        max_length=128,
+    )
+    version_hash: str = Field(
+        description="该公告内容版本哈希",
+        min_length=1,
+        max_length=128,
+    )
 
 
 class OpportunityUpdate(BaseModel):
-    stage: OpportunityStage | None = None
-    owner: str | None = Field(default=None, max_length=100)
-    next_action_at: datetime | None = None
-    notes: str | None = Field(default=None, max_length=4000)
-    tags: list[str] | None = Field(default=None, max_length=20)
-    is_read: bool | None = None
+    stage: OpportunityStage | None = Field(default=None, description="机会阶段")
+    owner: str | None = Field(default=None, description="负责人或团队", max_length=100)
+    next_action_at: datetime | None = Field(default=None, description="下一步动作时间")
+    notes: str | None = Field(default=None, description="跟进备注", max_length=4000)
+    tags: list[str] | None = Field(default=None, description="最多 20 个标签", max_length=20)
+    is_read: bool | None = Field(default=None, description="是否已读")
 
     @field_validator("tags")
     @classmethod
@@ -202,18 +240,40 @@ class RunResult(BaseModel):
 
 
 class SubscriptionCreate(BaseModel):
-    name: str
-    query: str
-    delivery_channel: str = "local"
-    delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS
-    run_immediately: bool = True
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "深圳充电桩日报",
+                    "query": "每天9点汇总最近1个月深圳充电桩信息",
+                    "delivery_channel": "local",
+                    "delivery_policy": "always",
+                    "run_immediately": True,
+                }
+            ]
+        }
+    )
+
+    name: str = Field(description="用户可读的订阅名称", min_length=1, max_length=100)
+    query: str = Field(description="必须包含可识别计划的中文规则", min_length=2, max_length=500)
+    delivery_channel: str = Field(default="local", description="已配置的投递通道 ID")
+    delivery_policy: DeliveryPolicy = Field(
+        default=DeliveryPolicy.ALWAYS,
+        description="always 每轮回执；on_change 仅变化外发",
+    )
+    run_immediately: bool = Field(default=True, description="创建后是否立即进入待领取队列")
 
 
 class SubscriptionUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=100)
-    query: str | None = Field(default=None, min_length=2, max_length=500)
-    delivery_channel: str | None = None
-    delivery_policy: DeliveryPolicy | None = None
+    name: str | None = Field(default=None, description="新名称", min_length=1, max_length=100)
+    query: str | None = Field(
+        default=None,
+        description="新自然语言规则；修改后重算下次时间",
+        min_length=2,
+        max_length=500,
+    )
+    delivery_channel: str | None = Field(default=None, description="新投递通道 ID")
+    delivery_policy: DeliveryPolicy | None = Field(default=None, description="新无新增策略")
 
 
 class Subscription(BaseModel):

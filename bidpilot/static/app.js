@@ -4,6 +4,8 @@ const state = {
   spec: null,
   run: null,
   system: null,
+  config: null,
+  configEditToken: null,
   activeTab: "search",
   opportunityProjectKeys: new Set(),
 };
@@ -42,9 +44,13 @@ function toast(message, duration = 3200) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.detail || `请求失败 (${response.status})`);
+  if (!response.ok) {
+    const validation = Array.isArray(data.detail) ? data.detail.map((item) => `${(item.loc || []).slice(1).join(".") || "请求"}：${item.msg}`).join("；") : null;
+    const error = new Error(typeof data.detail === "string" ? data.detail : validation || `请求失败 (${response.status})`);
+    error.status = response.status; throw error;
+  }
   return data;
 }
 
@@ -295,6 +301,135 @@ async function loadSystemStatus() {
   renderDeliveryOptions(); renderSchedulerHealth(); return state.system;
 }
 
+async function ensureConfigEditToken(force = false) {
+  if (state.configEditToken && !force) return state.configEditToken;
+  const response = await api("/api/v1/config/edit-token", { method: "POST" });
+  state.configEditToken = response.edit_token;
+  return state.configEditToken;
+}
+
+async function configApi(path, options = {}, retry = true) {
+  const token = await ensureConfigEditToken();
+  try {
+    return await api(path, { ...options, headers: { ...(options.headers || {}), "X-BidPilot-Config-Token": token } });
+  } catch (error) {
+    if (retry && error.status === 403) { await ensureConfigEditToken(true); return configApi(path, options, false); }
+    throw error;
+  }
+}
+
+function setConfigStatus(id, ready, readyLabel = "已就绪") {
+  const node = $(`#config-status-${id}`); if (!node) return;
+  node.textContent = ready ? readyLabel : "未配置";
+  node.className = `state-badge ${ready ? "success" : "muted"}`;
+}
+
+function renderSecretState(field, configured) {
+  const label = $(`[data-secret-state="${field}"]`);
+  const input = $(`[data-config="${field}"]`);
+  if (label) { label.textContent = configured ? "已配置" : "未配置"; label.classList.toggle("configured", configured); }
+  if (input) { input.value = ""; input.placeholder = configured ? "已配置，留空保持原值" : "尚未配置"; }
+}
+
+function renderConfig(config) {
+  state.config = config;
+  const values = {
+    llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout,
+    feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
+    smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
+    delivery_webhook_timeout: config.generic_webhook.timeout,
+  };
+  Object.entries(values).forEach(([field, value]) => { const input = $(`[data-config="${field}"]`); if (input) input.value = value ?? ""; });
+  const secrets = {
+    llm_api_key: config.ai.llm_api_key.configured,
+    feishu_webhook_url: config.feishu.webhook_url.configured,
+    feishu_webhook_secret: config.feishu.webhook_secret.configured,
+    feishu_app_secret: config.feishu.app_secret.configured,
+    smtp_password: config.email.password.configured,
+    dingtalk_webhook_url: config.dingtalk.webhook_url.configured,
+    dingtalk_webhook_secret: config.dingtalk.secret?.configured || false,
+    wecom_webhook_url: config.wecom.webhook_url.configured,
+    generic_webhook_url: config.generic_webhook.webhook_url.configured,
+    generic_webhook_bearer_token: config.generic_webhook.bearer_token.configured,
+  };
+  Object.entries(secrets).forEach(([field, configured]) => renderSecretState(field, configured));
+  $$('[data-clear]').forEach((input) => { input.checked = false; });
+  setConfigStatus("ai", config.ai.ready, "模型已就绪");
+  setConfigStatus("feishu", config.feishu.webhook_ready || config.feishu.app_ready, config.feishu.app_ready ? "应用已就绪" : "机器人已就绪");
+  setConfigStatus("email", config.email.ready, "邮件已就绪");
+  setConfigStatus("dingtalk", config.dingtalk.ready, "机器人已就绪");
+  setConfigStatus("wecom", config.wecom.ready, "机器人已就绪");
+  setConfigStatus("generic", config.generic_webhook.ready, "接口已就绪");
+  $("#config-security-notice").textContent = config.security_notice;
+  const saveState = $("#config-save-state"); saveState.textContent = "配置已同步"; saveState.className = "state-badge success";
+}
+
+async function loadConfig() {
+  const config = await api("/api/v1/config");
+  renderConfig(config); await ensureConfigEditToken(); return config;
+}
+
+function collectConfigPayload() {
+  const payload = {};
+  $$('[data-config]').forEach((input) => {
+    const field = input.dataset.config;
+    if (input.type === "password") { if (input.value.trim()) payload[field] = input.value.trim(); return; }
+    if (input.type === "number") { if (input.value !== "") payload[field] = Number(input.value); return; }
+    payload[field] = input.value.trim();
+  });
+  payload.clear_secrets = $$('[data-clear]:checked').map((input) => input.dataset.clear);
+  return payload;
+}
+
+async function saveConfig(showMessage = true) {
+  const button = $("#save-config"), saveState = $("#config-save-state");
+  button.disabled = true; saveState.textContent = "正在保存"; saveState.className = "state-badge warning";
+  try {
+    const config = await configApi("/api/v1/config", { method: "PUT", body: JSON.stringify(collectConfigPayload()) });
+    renderConfig(config); await loadSystemStatus();
+    if (showMessage) toast("配置已保存并立即生效");
+    return config;
+  } catch (error) {
+    saveState.textContent = "保存失败"; saveState.className = "state-badge danger"; throw error;
+  } finally { button.disabled = false; }
+}
+
+function showConfigTestResult(group, result, failed = false) {
+  const node = $(`#test-result-${group}`); if (!node) return;
+  node.textContent = failed ? result : `✓ ${result.message} · ${result.latency_ms} ms${result.preview ? ` · ${result.preview}` : ""}`;
+  node.className = failed ? "test-result failed" : "test-result success";
+}
+
+async function testModelConnection() {
+  const button = $("#test-model"); button.disabled = true; button.textContent = "连接中…";
+  try {
+    await saveConfig(false);
+    const result = await configApi("/api/v1/config/model/test", { method: "POST" });
+    showConfigTestResult("ai", result); toast("模型连接测试成功");
+  } catch (error) { showConfigTestResult("ai", error.message, true); toast(error.message, 5000); }
+  finally { button.disabled = false; button.textContent = "测试模型连接"; }
+}
+
+function channelTestGroup(channel) {
+  if (channel.startsWith("feishu")) return "feishu";
+  if (channel === "email") return "email";
+  if (channel === "dingtalk_webhook") return "dingtalk";
+  if (channel === "wecom_webhook") return "wecom";
+  return "generic";
+}
+
+async function testDeliveryChannel(button) {
+  const channel = button.dataset.testChannel, group = channelTestGroup(channel);
+  if (!window.confirm("此操作会通过所选通道真实发送一条“配置中心连通性测试”消息。确定继续吗？")) return;
+  button.disabled = true; const original = button.textContent; button.textContent = "发送中…";
+  try {
+    await saveConfig(false);
+    const result = await configApi(`/api/v1/config/channels/${encodeURIComponent(channel)}/test`, { method: "POST" });
+    showConfigTestResult(group, result); toast("测试消息已发送");
+  } catch (error) { showConfigTestResult(group, error.message, true); toast(error.message, 5000); }
+  finally { button.disabled = false; button.textContent = original; }
+}
+
 function channelOptions(selected) {
   return (state.system?.delivery_channels || []).map((channel) => `<option value="${escapeHtml(channel.id)}" ${channel.id === selected ? "selected" : ""} ${!channel.configured && channel.id !== selected ? "disabled" : ""}>${escapeHtml(channel.name)}${channel.configured ? "" : "（待配置）"}</option>`).join("");
 }
@@ -431,7 +566,7 @@ async function activateTab(tab) {
   state.activeTab = tab;
   $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.tab === tab));
   $$(".tab-panel").forEach((node) => node.classList.remove("active")); $(`#tab-${tab}`).classList.add("active");
-  if (tab === "opportunities") await loadOpportunities(); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "reports") await loadReports();
+  if (tab === "opportunities") await loadOpportunities(); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(); if (tab === "reports") await loadReports();
 }
 
 $$(".nav-link").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab).catch((error) => toast(error.message))));
@@ -446,6 +581,9 @@ $("#opportunity-search").addEventListener("input", () => {
   clearTimeout(window.__opportunitySearchTimer);
   window.__opportunitySearchTimer = setTimeout(() => loadOpportunities().catch((error) => toast(error.message)), 250);
 });
+$("#save-config").addEventListener("click", () => saveConfig().catch((error) => toast(error.message, 5000)));
+$("#test-model").addEventListener("click", testModelConnection);
+$$('.channel-test').forEach((button) => button.addEventListener("click", () => testDeliveryChannel(button)));
 $("#query-input").addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery(); });
 document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#query-input").focus(); } });
 window.createBidPilotSubscription = createSubscriptionFromQuery;

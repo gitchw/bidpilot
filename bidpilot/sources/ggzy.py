@@ -104,7 +104,12 @@ class GGZYSource(SourceAdapter):
     def _matches(item: RawTender, spec: TenderQuerySpec) -> bool:
         if not (spec.start_date <= item.published_at.date() <= spec.end_date):
             return False
-        if spec.region and item.region and spec.region not in item.region:
+        if (
+            spec.region
+            and spec.region_level != "city"
+            and item.region
+            and spec.region not in item.region
+        ):
             return False
         haystack = item.title.lower()
         return any(keyword.lower() in haystack for keyword in spec.keywords if len(keyword) >= 2)

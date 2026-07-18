@@ -18,6 +18,7 @@ from bidpilot.models import (
     SourceStatus,
     TenderQuerySpec,
 )
+from bidpilot.runtime_config import RuntimeConfigUpdate
 from bidpilot.scheduler import SubscriptionWorker, next_schedule_time
 from bidpilot.service import BidPilotService, RunExecutionError, SubscriptionBusyError
 from bidpilot.sources.base import SourceAdapter
@@ -190,6 +191,17 @@ def test_schedule_calculation_is_strictly_future():
     )
     next_week = next_schedule_time(weekly.schedule, datetime(2026, 7, 20, 8, 30, tzinfo=timezone))
     assert next_week == datetime(2026, 7, 27, 8, 30, tzinfo=timezone)
+
+    monthly = IntentParser().parse(
+        "最近1个月安徽服务器招标信息，每月31日8:30发送",
+        now=datetime(2026, 2, 15, 10, 0, tzinfo=timezone),
+    )
+    assert next_schedule_time(
+        monthly.schedule, datetime(2026, 2, 15, 10, 0, tzinfo=timezone)
+    ) == datetime(2026, 2, 28, 8, 30, tzinfo=timezone)
+    assert next_schedule_time(
+        monthly.schedule, datetime(2026, 2, 28, 8, 30, tzinfo=timezone)
+    ) == datetime(2026, 3, 31, 8, 30, tzinfo=timezone)
 
 
 def test_subscription_management_api(tmp_path: Path):
@@ -554,3 +566,116 @@ async def test_new_lifecycle_event_refreshes_opportunity_without_losing_follow_u
         "招标公告",
         "更正公告",
     ]
+
+
+def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    secret_value = "test-key-that-must-never-be-returned"
+    app = create_app(settings, sources=[FakeSource()])
+    with TestClient(app) as client:
+        initial = client.get("/api/v1/config")
+        assert initial.status_code == 200
+        assert initial.json()["ai"]["llm_api_key"] == {"configured": False}
+
+        denied = client.put(
+            "/api/v1/config",
+            json={"llm_base_url": "http://127.0.0.1:8045/v1"},
+        )
+        assert denied.status_code == 403
+
+        token_response = client.post("/api/v1/config/edit-token")
+        assert token_response.status_code == 200
+        token = token_response.json()["edit_token"]
+        headers = {"X-BidPilot-Config-Token": token}
+        saved = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "llm_base_url": "http://127.0.0.1:8045/v1",
+                "llm_model": "compatible-test-model",
+                "llm_api_key": secret_value,
+                "smtp_port": 587,
+                "smtp_security": "starttls",
+            },
+        )
+        assert saved.status_code == 200
+        assert saved.json()["ai"]["ready"] is True
+        assert saved.json()["ai"]["llm_api_key"] == {"configured": True}
+        assert secret_value not in saved.text
+
+        preserved = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={"llm_api_key": ""},
+        )
+        assert preserved.json()["ai"]["llm_api_key"] == {"configured": True}
+
+        rejected = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={"unknown_setting": "unsafe"},
+        )
+        assert rejected.status_code == 422
+
+    restarted = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    persisted = restarted.runtime_config.snapshot()
+    assert persisted.ai.llm_base_url == "http://127.0.0.1:8045/v1"
+    assert persisted.ai.llm_model == "compatible-test-model"
+    assert persisted.ai.llm_api_key.configured is True
+    assert restarted.settings.smtp_port == 587
+    with restarted.db.connection() as conn:
+        stored_secret = conn.execute(
+            "SELECT value FROM runtime_config WHERE field='llm_api_key'"
+        ).fetchone()["value"]
+    assert secret_value not in stored_secret
+    assert stored_secret.startswith("fernet:v1:")
+    assert (settings.data_dir / "secrets" / "runtime_config.key").exists()
+
+    app = create_app(make_settings(tmp_path), sources=[FakeSource()])
+    with TestClient(app) as client:
+        token = client.post("/api/v1/config/edit-token").json()["edit_token"]
+        cleared = client.put(
+            "/api/v1/config",
+            headers={"X-BidPilot-Config-Token": token},
+            json={"clear_secrets": ["llm_api_key"]},
+        )
+        assert cleared.json()["ai"]["llm_api_key"] == {"configured": False}
+
+
+def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: Path):
+    schema = create_app(make_settings(tmp_path), sources=[FakeSource()]).openapi()
+    api_reference = Path("docs/API_REFERENCE.md").read_text(encoding="utf-8")
+    required_sections = (
+        "### 用途",
+        "### 参数与请求体",
+        "### 返回值",
+        "### 副作用",
+        "### 常见错误",
+        "### 示例",
+    )
+    operations = []
+    for path, methods in schema["paths"].items():
+        for method, operation in methods.items():
+            if method.lower() not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            operations.append((method.upper(), path, operation))
+
+    assert len(operations) == 29
+    for method, path, operation in operations:
+        description = operation.get("description", "")
+        assert path in api_reference, f"{method} {path} 未写入独立 API 参考"
+        assert operation.get("summary"), f"{method} {path} 缺少中文摘要"
+        assert operation.get("tags"), f"{method} {path} 缺少中文分组"
+        for section in required_sections:
+            assert section in description, f"{method} {path} 缺少 {section}"
+
+
+async def test_standalone_worker_reloads_web_runtime_config_before_run(tmp_path: Path):
+    web_service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    worker_service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    assert worker_service.settings.delivery_webhook_timeout == 20
+
+    web_service.runtime_config.update(RuntimeConfigUpdate(delivery_webhook_timeout=47))
+    await worker_service.run_query("最近1个月安徽服务器招标信息")
+
+    assert worker_service.settings.delivery_webhook_timeout == 47

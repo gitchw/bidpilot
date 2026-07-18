@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import os
 import socket
 from contextlib import suppress
@@ -34,6 +35,25 @@ def next_schedule_time(schedule: IntentSchedule, after: datetime) -> datetime | 
         if candidate <= local_after:
             candidate += timedelta(days=7)
         return candidate
+    if (
+        schedule.kind == ScheduleKind.MONTHLY
+        and schedule.send_time
+        and schedule.day_of_month is not None
+    ):
+        year, month = local_after.year, local_after.month
+        for _ in range(2):
+            day = min(schedule.day_of_month, calendar.monthrange(year, month)[1])
+            candidate = datetime.combine(
+                local_after.date().replace(year=year, month=month, day=day),
+                schedule.send_time,
+                tzinfo=timezone,
+            )
+            if candidate > local_after:
+                return candidate
+            if month == 12:
+                year, month = year + 1, 1
+            else:
+                month += 1
     return None
 
 

@@ -137,7 +137,12 @@ class MofcomSource(SourceAdapter):
                     item
                     for item in parsed
                     if spec.start_date <= item.published_at.date() <= spec.end_date
-                    and (not spec.region or not item.region or spec.region in item.region)
+                    and (
+                        not spec.region
+                        or spec.region_level == "city"
+                        or not item.region
+                        or spec.region in item.region
+                    )
                 )
             except (FetchError, json.JSONDecodeError, TypeError, ValueError) as exc:
                 errors.append(f"类型 {type_code}: {exc}")

@@ -3,8 +3,11 @@ from __future__ import annotations
 from email.message import EmailMessage
 from pathlib import Path
 
+import httpx
+import pytest
+
 from bidpilot.config import Settings
-from bidpilot.delivery import DeliveryManager
+from bidpilot.delivery import DeliveryError, DeliveryManager
 
 
 class FakeSMTP:
@@ -39,6 +42,39 @@ class FakeSMTP:
     def send_message(self, message: EmailMessage, *, from_addr: str, to_addrs: list[str]):
         self.messages.append((message, from_addr, to_addrs))
         return {}
+
+
+class FakeWebhookResponse:
+    def __init__(self, payload: dict | None = None, status_code: int = 200):
+        self.payload = payload or {"errcode": 0}
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://secret.example.com/hook?token=do-not-leak")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("failed", request=request, response=response)
+
+    def json(self):
+        return self.payload
+
+
+class FakeWebhookClient:
+    calls: list[tuple[str, dict]] = []
+    response = FakeWebhookResponse()
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def post(self, url: str, **kwargs):
+        self.__class__.calls.append((url, kwargs))
+        return self.__class__.response
 
 
 def email_settings(tmp_path: Path, **overrides) -> Settings:
@@ -128,3 +164,87 @@ def test_email_channel_is_only_available_when_required_fields_are_configured(tmp
 
     missing_password = DeliveryManager(email_settings(tmp_path, smtp_password="")).channel_status()
     assert next(item for item in missing_password if item["id"] == "email")["configured"] is False
+
+
+def test_robot_and_generic_channels_are_reported_from_runtime_settings():
+    manager = DeliveryManager(
+        Settings(
+            dingtalk_webhook_url="https://oapi.dingtalk.com/robot/send?access_token=test",
+            wecom_webhook_url="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
+            generic_webhook_url="https://automation.example.com/bidpilot",
+        )
+    )
+    status = {item["id"]: item for item in manager.channel_status()}
+
+    assert status["dingtalk_webhook"]["configured"] is True
+    assert status["wecom_webhook"]["configured"] is True
+    assert status["generic_webhook"]["configured"] is True
+    assert all(status[channel]["push_capable"] for channel in status if channel != "local")
+
+
+@pytest.mark.parametrize(
+    ("channel", "settings_values", "expected_payload_type"),
+    [
+        (
+            "dingtalk_webhook",
+            {
+                "dingtalk_webhook_url": "https://oapi.dingtalk.com/robot/send?access_token=test",
+                "dingtalk_webhook_secret": "signing-secret",
+            },
+            "markdown",
+        ),
+        (
+            "wecom_webhook",
+            {"wecom_webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"},
+            "markdown",
+        ),
+        (
+            "generic_webhook",
+            {
+                "generic_webhook_url": "https://automation.example.com/bidpilot",
+                "generic_webhook_bearer_token": "bearer-secret",
+            },
+            "bidpilot.run.no_change",
+        ),
+    ],
+)
+async def test_webhook_channels_send_standard_payloads(
+    monkeypatch, channel, settings_values, expected_payload_type
+):
+    FakeWebhookClient.calls.clear()
+    FakeWebhookClient.response = FakeWebhookResponse()
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(Settings(**settings_values))
+
+    receipt = await manager.deliver(
+        None,
+        channel,
+        new_count=0,
+        subscription_name="连接测试",
+    )
+
+    assert receipt.success is True
+    url, request = FakeWebhookClient.calls[0]
+    payload = request["json"]
+    if channel == "generic_webhook":
+        assert payload["event"] == expected_payload_type
+        assert request["headers"]["Authorization"] == "Bearer bearer-secret"
+    else:
+        assert payload["msgtype"] == expected_payload_type
+    if channel == "dingtalk_webhook":
+        assert "timestamp=" in url and "sign=" in url
+
+
+async def test_webhook_http_errors_never_echo_secret_url(monkeypatch):
+    FakeWebhookClient.calls.clear()
+    FakeWebhookClient.response = FakeWebhookResponse(status_code=403)
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(
+        Settings(generic_webhook_url="https://secret.example.com/hook?token=do-not-leak")
+    )
+
+    with pytest.raises(DeliveryError) as error:
+        await manager.deliver(None, "generic_webhook")
+
+    assert "do-not-leak" not in str(error.value)
+    assert "HTTP 403" in str(error.value)

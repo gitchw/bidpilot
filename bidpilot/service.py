@@ -30,6 +30,7 @@ from bidpilot.models import (
 )
 from bidpilot.pipeline import TenderPipeline
 from bidpilot.report import generate_report
+from bidpilot.runtime_config import RuntimeConfiguration
 from bidpilot.scheduler import maintain_subscription_lease, next_schedule_time, retry_time
 from bidpilot.sources import CCGPSource, CECBidSource, GGZYSource, MofcomSource, QianlimaSource
 from bidpilot.sources.base import SourceAdapter
@@ -59,6 +60,7 @@ class BidPilotService:
         self.settings = settings
         self.settings.ensure_directories()
         self.db = Database(settings.database_path)
+        self.runtime_config = RuntimeConfiguration(self.db, settings)
         self.parser = IntentParser(settings.timezone)
         self.sources = sources or [
             CECBidSource(settings),
@@ -80,6 +82,10 @@ class BidPilotService:
         delivery_channel: str | None = None,
         trigger_reason: str = "manual",
     ) -> RunResult:
+        # A standalone worker is a separate process. Reload the allowlisted
+        # SQLite-backed settings before every real run so Web changes apply
+        # without restarting that worker.
+        self.runtime_config.load_persisted()
         started_at = datetime.now(ZoneInfo(self.settings.timezone))
         spec = self.parser.parse(query, now=started_at)
         if delivery_channel:

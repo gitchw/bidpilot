@@ -6,7 +6,7 @@
 
 ## 已实现能力
 
-- 中文查询编译：主题、同义词、地域、时间范围、每日/每周/一次性计划、投递渠道。
+- 中文查询编译 v2：主题、同义词、省/常见城市、中文数字时间、公告类型、排除词、每日/每周/每月/一次性计划和投递渠道。
 - 5 个来源适配器：公开源、官方源和用户主动授权的免费会员源。
 - 证据优先流水线：正文清洗、附件提取、严格筛选、跨站去重、项目生命周期聚类、机会评分。
 - 安全摘要：默认离线抽取；可选 OpenAI-compatible 模型，事实无法回指证据时自动降级。
@@ -16,7 +16,8 @@
 - 用户管理：编辑自然语言规则、暂停/恢复、立即执行、通知策略、投递渠道、日志和二次确认删除。
 - 机会工作台：把真实标讯按项目归并为线索，持久保存阶段、负责人、下一步、标签、备注和已读状态。
 - 生命周期跟进：同日招标/更正按业务阶段择新；后续更正、中标或合同事件自动刷新卡片并重新标为未读。
-- 投递渠道：本地报告中心、飞书群机器人、飞书应用文件、SMTP 邮件附件。
+- 网页配置中心：OpenAI-compatible 模型、飞书、SMTP、钉钉、企业微信和通用 Webhook 保存后立即生效并持久化，敏感值加密且不回显。
+- 投递渠道：本地报告中心、飞书群机器人、飞书应用文件、SMTP 邮件附件、钉钉、企业微信和通用 Webhook。
 - 来源中心：展示接入模式、授权边界、最近状态、实际抓取数和保留数。
 
 > “不重复”指应用在收到渠道成功确认后登记版本账本，后续不再发送同一公告版本。任何外部网络系统都存在“对方已收到但本端未收到确认”的极小不确定窗口，项目不虚假宣称分布式绝对恰好一次。
@@ -32,7 +33,9 @@ flowchart LR
     P --> A["5 个来源适配器"]
     P --> N["筛选 / 去重 / 生命周期 / 摘要"]
     N --> R["DOCX 报告"]
-    S --> D["本地 / 飞书 / SMTP"]
+    S --> D["本地 / 飞书 / SMTP / 钉钉 / 企微 / Webhook"]
+    C["网页配置中心"] -->|"加密持久化"| DB
+    C --> S
     S <--> DB[("SQLite 状态与投递账本")]
 ```
 
@@ -80,7 +83,7 @@ docker compose ps
 docker compose logs -f worker
 ```
 
-Compose 使用命名卷持久化 `/app/data` 与 `/app/outputs/reports`，并对 Web 和 worker 配置 `restart: unless-stopped`。端口默认只绑定 `127.0.0.1`；项目当前不内置多用户登录，不应直接暴露到公网。需要公网飞书下载时，请通过带 TLS 和访问控制的反向代理发布，并设置 `BIDPILOT_PUBLIC_BASE_URL`。
+Compose 使用命名卷持久化 `/app/data` 与 `/app/outputs/reports`，并对 Web 和 worker 配置 `restart: unless-stopped`。端口默认只绑定 `127.0.0.1`；项目当前不内置多用户登录，不应直接暴露到公网。需要公网报告下载时，请通过带 TLS 和访问控制的反向代理发布，并在网页配置中心填写公网报告地址。
 
 本机当前环境没有 Docker，因此仓库不会声称镜像已在本机完成构建验证；CI 和有 Docker 的交付环境仍需实际执行上述命令。
 
@@ -138,16 +141,20 @@ python -m bidpilot auth qianlima
 
 登录会话仅保存到 `data/secrets/`，该目录已被 Git 忽略。
 
-## 配置投递
+## 网页配置中心
 
-复制 `.env.example` 为 `.env`，只填写需要的渠道。未配置渠道会在界面禁用，系统不会创建虚假推送承诺。
+打开 Web 后进入“配置中心”，可直接配置：
 
-- 飞书 Webhook：`BIDPILOT_FEISHU_WEBHOOK_URL`
-- 飞书应用：`BIDPILOT_FEISHU_APP_ID`、`BIDPILOT_FEISHU_APP_SECRET`、`BIDPILOT_FEISHU_RECEIVE_ID`
-- SMTP：`BIDPILOT_SMTP_HOST`、`BIDPILOT_SMTP_FROM`、`BIDPILOT_SMTP_TO`，按服务商选择 `ssl` 或 `starttls`
-- 可选模型：`BIDPILOT_LLM_BASE_URL`、`BIDPILOT_LLM_API_KEY`、`BIDPILOT_LLM_MODEL`
+- OpenAI-compatible API 地址、模型名、API Key 和超时；
+- 飞书群机器人与签名、飞书应用与接收 ID；
+- SMTP SSL/STARTTLS、发件人与多收件人；
+- 钉钉群机器人与加签；
+- 企业微信群机器人；
+- 通用 Webhook 与可选 Bearer Token。
 
-请使用邮箱服务商提供的应用专用密码，不要把 `.env`、Cookie 或密钥提交到 Git。
+保存后立即生效，重启后仍保留。密钥、密码和 Webhook 使用本机密钥加密后写入 SQLite，读取接口只返回“已配置”；敏感输入留空表示保持原值，清除必须显式勾选。模型和每个通道都有真实连通性测试，其中通道测试会在二次确认后真实外发。
+
+环境变量和 `.env` 仍可用于容器/自动部署，但不再是日常配置的必经步骤。详见 [配置中心指南](docs/CONFIGURATION_GUIDE.md) 和 [投递渠道指南](docs/DELIVERY_CHANNELS.md)。
 
 ## 开发与验证
 
@@ -167,4 +174,11 @@ node --check bidpilot/static/app.js
 - 每条摘要保留原始链接与证据片段；覆盖不完整时明确披露。
 - 登录态、Cookie、API 密钥和邮箱密码只保存在本机或部署密钥系统。
 
-产品与验收范围见 [SPEC.md](SPEC.md)，当前工程进度见 [progress.md](progress.md)。
+## 完整文档
+
+- [用户操作手册](docs/USER_GUIDE.md)
+- [API 参考：29 个操作逐条说明](docs/API_REFERENCE.md)
+- [配置中心指南](docs/CONFIGURATION_GUIDE.md)
+- [投递渠道与成功语义](docs/DELIVERY_CHANNELS.md)
+- [产品与验收范围](SPEC.md)
+- [当前工程进度](progress.md)

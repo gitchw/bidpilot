@@ -1,5 +1,8 @@
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from bidpilot.intent import IntentParser
 from bidpilot.models import EventType
 from bidpilot.sources.ccgp import CCGPSource
 from bidpilot.sources.cecbid import CECBidSource
@@ -52,6 +55,25 @@ def test_ccgp_prefilter_respects_region_topic_and_date(sample_spec):
     items = CCGPSource.parse_list_page(fixture("ccgp_list.html"), page_url, EventType.TENDER)
     assert CCGPSource._matches_spec(items[0], sample_spec)
     assert not CCGPSource._matches_spec(items[1], sample_spec)
+
+
+def test_city_query_keeps_province_labeled_candidate_for_detail_filtering():
+    page_url = "https://www.ccgp.gov.cn/cggg/dfgg/gkzb/index.htm"
+    item = CCGPSource.parse_list_page(fixture("ccgp_list.html"), page_url, EventType.TENDER)[
+        0
+    ].model_copy(
+        update={
+            "region": "广东",
+            "title": "深圳市公共充电桩建设项目招标公告",
+        }
+    )
+    spec = IntentParser().parse(
+        "最近1个月深圳充电桩招标信息",
+        now=datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    assert spec.region_level == "city"
+    assert CCGPSource._matches_spec(item, spec)
 
 
 def test_mofcom_json_and_detail_parsers_preserve_official_evidence():
