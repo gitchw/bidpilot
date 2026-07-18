@@ -349,8 +349,14 @@ function bindOpportunityActions() {
 }
 
 async function loadSources() {
-  const rows = await api("/api/v1/sources/status");
+  const [statusRows, health] = await Promise.all([
+    api("/api/v1/sources/status"),
+    api("/api/v1/sources/health?window=20"),
+  ]);
+  const healthById = new Map((health.sources || []).map((row) => [row.id, row]));
+  const rows = statusRows.map((row) => ({ ...row, health: healthById.get(row.id) || null }));
   state.sources = rows;
+  state.sourceHealth = health;
   $("#source-list").innerHTML = rows.map((row) => {
     const warning = !row.configured || ["partial", "failed", "auth_required"].includes(row.last_status);
     const detail = row.last_message || (row.configured ? "等待首次运行" : "待授权或配置");
@@ -362,11 +368,26 @@ async function loadSources() {
 
 function sourceState(row) {
   if (!row.configured) return ["待授权", "muted"];
+  if (row.health?.health_level === "unhealthy") return ["持续异常", "danger"];
+  if (row.health?.health_level === "auth_required") return ["等待授权", "warning"];
+  if (row.health?.health_level === "degraded") return ["运行降级", "warning"];
+  if (row.health?.health_level === "healthy") return ["运行健康", "success"];
+  if (row.health?.health_level === "no_data") return ["等待首轮", "muted"];
   if (row.last_status === "failed") return ["最近失败", "danger"];
   if (["partial", "auth_required"].includes(row.last_status)) return ["部分可用", "warning"];
   if (row.last_status === "skipped") return ["按地域跳过", "muted"];
   if (row.last_status === "ok") return ["运行正常", "success"];
   return ["等待首轮", "muted"];
+}
+
+function renderSourceHealth(row) {
+  const health = row.health;
+  if (!health || !health.sample_count) return `<div class="source-health empty"><b>健康历史</b><p>尚无真实运行样本；完成一次检索后自动生成趋势。</p></div>`;
+  const trendLabels = { improving: "改善", stable: "稳定", worsening: "变差", insufficient_data: "样本不足" };
+  const history = health.history || [];
+  const bars = history.map((item) => `<i class="${escapeHtml(item.status)}" title="${escapeHtml(formatTime(item.started_at))} · ${escapeHtml(SOURCE_STATUS_LABELS[item.status] || item.status)} · 扫描 ${item.scanned_count} / 保留 ${item.kept_count}"></i>`).join("");
+  const rows = history.slice(-6).reverse().map((item) => `<div class="source-history-row"><time>${escapeHtml(formatTime(item.started_at))}</time><b class="${escapeHtml(item.status)}">${escapeHtml(SOURCE_STATUS_LABELS[item.status] || item.status)}</b><span>${item.scanned_count} / ${item.fetched_count} / ${item.kept_count}</span><em>${item.latency_ms ? `${item.latency_ms} ms` : "—"}</em></div>`).join("");
+  return `<div class="source-health"><div class="source-health-head"><div><b>最近 ${health.sample_count} 次健康趋势</b><p>${escapeHtml(health.explanation)}</p></div><small>延迟 ${escapeHtml(trendLabels[health.latency_trend] || health.latency_trend)} · 产出 ${escapeHtml(trendLabels[health.yield_trend] || health.yield_trend)}</small></div><div class="source-health-bars" aria-label="最近运行状态序列">${bars}</div><div class="source-health-metrics"><span><small>完全健康</small><b>${health.healthy_rate ?? "—"}${health.healthy_rate == null ? "" : "%"}</b></span><span><small>完成率</small><b>${health.completion_rate ?? "—"}${health.completion_rate == null ? "" : "%"}</b></span><span><small>平均 / P95</small><b>${health.average_latency_ms || 0} / ${health.p95_latency_ms || 0} ms</b></span><span><small>候选保留率</small><b>${health.yield_rate || 0}%</b></span></div><details class="source-history"><summary>查看最近运行明细</summary><div class="source-history-head"><span>时间</span><span>状态</span><span>扫描/候选/保留</span><span>耗时</span></div>${rows}</details></div>`;
 }
 
 function authStateLabel(auth) {
@@ -407,8 +428,9 @@ function renderSourceCenter(rows) {
   if (!summary || !root) return;
   const configured = rows.filter((row) => row.configured).length;
   const official = rows.filter((row) => row.official).length;
-  const scanned = rows.reduce((sum, row) => sum + (row.last_scanned_count || row.last_fetched_count || 0), 0);
-  summary.innerHTML = [["已接入来源", rows.length], ["官方平台", official], ["当前可运行", configured], ["最近扫描公告", scanned]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
+  const healthy = rows.filter((row) => row.health?.health_level === "healthy").length;
+  const samples = rows.reduce((sum, row) => sum + (row.health?.sample_count || 0), 0);
+  summary.innerHTML = [["已接入来源", rows.length], ["官方平台", official], ["当前可运行", configured], ["健康 / 样本", `${healthy} / ${samples}`]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
   root.innerHTML = rows.map((row) => {
     const [label, tone] = sourceState(row);
     const access = row.member_enhanced ? `${row.mode} · 已授权增强` : row.mode;
@@ -416,7 +438,7 @@ function renderSourceCenter(rows) {
     const message = row.last_message || (row.configured ? "等待首轮真实查询验证" : "需要用户在本机完成授权或配置");
     const auth = row.authorization || { state: "not_supported", authorization_scope: "该公开来源无需授权。", message: "" };
     const rejection = Object.entries(row.last_rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)} ${count}</span>`).join("");
-    return `<article class="source-card" data-source-id="${escapeHtml(row.id)}"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span><span>${escapeHtml(row.query_mode || "列表检索")}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-capabilities">${sourceCapabilityTags(row)}</div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span><span><small>最近耗时</small><b>${row.last_latency_ms ? `${row.last_latency_ms} ms` : "暂无"}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p><details class="source-boundary"><summary>覆盖范围与限制</summary><p>${escapeHtml(row.coverage_note || "来源暂未提供覆盖说明。")}</p></details><div class="source-auth-panel ${escapeHtml(auth.state)}"><div><b>${escapeHtml(authStateLabel(auth))}</b><p>${escapeHtml(auth.authorization_scope || "")}</p><small>${escapeHtml(auth.message || "")}${auth.last_test_status === "passed" ? " · 最近测试通过" : auth.last_test_status === "failed" ? " · 最近测试失败" : ""}</small></div><div class="source-auth-actions">${sourceAuthActions(row)}</div></div></article>`;
+    return `<article class="source-card" data-source-id="${escapeHtml(row.id)}"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span><span>${escapeHtml(row.query_mode || "列表检索")}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-capabilities">${sourceCapabilityTags(row)}</div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span><span><small>最近耗时</small><b>${row.last_latency_ms ? `${row.last_latency_ms} ms` : "暂无"}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p>${renderSourceHealth(row)}<details class="source-boundary"><summary>覆盖范围与限制</summary><p>${escapeHtml(row.coverage_note || "来源暂未提供覆盖说明。")}</p></details><div class="source-auth-panel ${escapeHtml(auth.state)}"><div><b>${escapeHtml(authStateLabel(auth))}</b><p>${escapeHtml(auth.authorization_scope || "")}</p><small>${escapeHtml(auth.message || "")}${auth.last_test_status === "passed" ? " · 最近测试通过" : auth.last_test_status === "failed" ? " · 最近测试失败" : ""}</small></div><div class="source-auth-actions">${sourceAuthActions(row)}</div></div></article>`;
   }).join("");
   bindSourceAuthActions();
 }

@@ -757,6 +757,22 @@ def create_app(
         return service.source_status()
 
     @app.get(
+        "/api/v1/sources/health",
+        **_api_docs(
+            tag="来源运维",
+            summary="读取来源健康历史与趋势",
+            purpose="按来源聚合最近真实运行样本，区分正常、降级、持续失败、等待授权、按地域跳过和无数据，并计算耗时与产出趋势。",
+            parameters="查询参数 window 表示每个来源最多统计多少次运行，允许 5–100，默认 20；超出范围会安全收敛到边界。",
+            returns="HTTP 200；返回总体健康摘要和逐来源状态计数、健康率、完成率、平均/P95 耗时、候选保留率、趋势及逐次脱敏诊断。",
+            side_effects="无。只读取 SQLite 已有 source_runs，不会访问外站、刷新授权、执行检索或修改配置。",
+            errors="数据库不可读时返回 500；没有历史不是错误，对应来源返回 no_data 和零样本说明。",
+            example="GET /api/v1/sources/health?window=20",
+        ),
+    )
+    async def source_health(window: int = 20):
+        return service.source_health(window)
+
+    @app.get(
         "/api/v1/sources/authorizations",
         response_model=list[SourceAuthView],
         **_api_docs(

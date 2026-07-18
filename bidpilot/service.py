@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -906,3 +907,166 @@ class BidPilotService:
                 }
             )
         return rows
+
+    def source_health(self, window: int = 20) -> dict:
+        window = max(5, min(window, 100))
+        history = self.db.list_source_run_history(
+            limit=max(100, window * max(len(self.sources), 1) * 3)
+        )
+        by_source: dict[str, list[dict]] = {}
+        for row in history:
+            by_source.setdefault(row["source"], []).append(row)
+
+        source_rows = []
+        for source in self.sources:
+            samples = by_source.get(source.name, [])[:window]
+            statuses = Counter(row["status"] for row in samples)
+            latency_values = sorted(
+                row["latency_ms"] for row in samples if row.get("latency_ms", 0) > 0
+            )
+            scanned = sum(row.get("scanned_count", 0) for row in samples)
+            fetched = sum(row.get("fetched_count", 0) for row in samples)
+            kept = sum(row.get("kept_count", 0) for row in samples)
+            latest_status = samples[0]["status"] if samples else None
+            authorization = self.source_auth.status(source.source_id)
+            health_level, explanation = self._source_health_level(
+                samples,
+                statuses,
+                latest_status,
+                authorization.state,
+            )
+            source_rows.append(
+                {
+                    "id": source.source_id,
+                    "name": source.name,
+                    "health_level": health_level,
+                    "explanation": explanation,
+                    "sample_count": len(samples),
+                    "status_counts": {
+                        status.value: statuses.get(status.value, 0) for status in SourceStatus
+                    },
+                    "healthy_rate": round(
+                        statuses.get(SourceStatus.OK.value, 0) / len(samples) * 100,
+                        1,
+                    )
+                    if samples
+                    else None,
+                    "completion_rate": round(
+                        sum(
+                            statuses.get(status.value, 0)
+                            for status in (
+                                SourceStatus.OK,
+                                SourceStatus.PARTIAL,
+                                SourceStatus.SKIPPED,
+                            )
+                        )
+                        / len(samples)
+                        * 100,
+                        1,
+                    )
+                    if samples
+                    else None,
+                    "average_latency_ms": round(sum(latency_values) / len(latency_values))
+                    if latency_values
+                    else 0,
+                    "p95_latency_ms": latency_values[round((len(latency_values) - 1) * 0.95)]
+                    if latency_values
+                    else 0,
+                    "scanned_count": scanned,
+                    "fetched_count": fetched,
+                    "kept_count": kept,
+                    "yield_rate": round(kept / fetched * 100, 1) if fetched else 0,
+                    "latency_trend": self._metric_trend(
+                        [row.get("latency_ms", 0) for row in samples if row.get("latency_ms", 0)],
+                        lower_is_better=True,
+                    ),
+                    "yield_trend": self._metric_trend(
+                        [
+                            row.get("kept_count", 0) / row.get("fetched_count", 1) * 100
+                            for row in samples
+                            if row.get("fetched_count", 0) > 0
+                        ],
+                        lower_is_better=False,
+                    ),
+                    "history": [
+                        {
+                            "run_id": row["run_id"],
+                            "started_at": row["started_at"],
+                            "status": row["status"],
+                            "scanned_count": row.get("scanned_count", 0),
+                            "fetched_count": row.get("fetched_count", 0),
+                            "kept_count": row.get("kept_count", 0),
+                            "rejected_count": row.get("rejected_count", 0),
+                            "rejection_reasons": json.loads(
+                                row.get("rejection_json", "{}") or "{}"
+                            ),
+                            "latency_ms": row.get("latency_ms", 0),
+                            "message": row.get("message", ""),
+                        }
+                        for row in reversed(samples)
+                    ],
+                }
+            )
+
+        levels = Counter(row["health_level"] for row in source_rows)
+        return {
+            "window": window,
+            "generated_at": datetime.now(ZoneInfo(self.settings.timezone)).isoformat(),
+            "summary": {
+                "source_count": len(source_rows),
+                "sample_count": sum(row["sample_count"] for row in source_rows),
+                "healthy": levels.get("healthy", 0),
+                "degraded": levels.get("degraded", 0),
+                "unhealthy": levels.get("unhealthy", 0),
+                "auth_required": levels.get("auth_required", 0),
+                "no_data": levels.get("no_data", 0),
+            },
+            "sources": source_rows,
+        }
+
+    @staticmethod
+    def _source_health_level(
+        samples: list[dict],
+        statuses: Counter,
+        latest_status: str | None,
+        authorization_state: str,
+    ) -> tuple[str, str]:
+        if not samples:
+            return "no_data", "尚无真实运行样本；完成一次检索后才会计算趋势。"
+        if (
+            latest_status == SourceStatus.AUTH_REQUIRED.value
+            and authorization_state != "authorized"
+        ):
+            return "auth_required", "最近运行需要用户授权；来源本身未被判定为故障。"
+        failed = statuses.get(SourceStatus.FAILED.value, 0)
+        latest_two_failed = len(samples) >= 2 and all(
+            row["status"] == SourceStatus.FAILED.value for row in samples[:2]
+        )
+        if latest_two_failed or failed / len(samples) >= 0.5:
+            return "unhealthy", "最近样本持续失败或失败比例过高，请查看运行历史和原站状态。"
+        if (
+            latest_status
+            in {
+                SourceStatus.PARTIAL.value,
+                SourceStatus.FAILED.value,
+                SourceStatus.AUTH_REQUIRED.value,
+            }
+            or statuses.get(SourceStatus.OK.value, 0) / len(samples) < 0.7
+        ):
+            return "degraded", "来源仍可贡献数据，但近期存在覆盖不完整、授权或偶发故障。"
+        return "healthy", "近期运行稳定；地域跳过不会被误计为来源故障。"
+
+    @staticmethod
+    def _metric_trend(values: list[float], *, lower_is_better: bool) -> str:
+        if len(values) < 4:
+            return "insufficient_data"
+        midpoint = len(values) // 2
+        recent = values[:midpoint]
+        older = values[midpoint:]
+        recent_average = sum(recent) / len(recent)
+        older_average = sum(older) / len(older)
+        change = (recent_average - older_average) / max(abs(older_average), 1)
+        if abs(change) < 0.15:
+            return "stable"
+        improving = change < 0 if lower_is_better else change > 0
+        return "improving" if improving else "worsening"

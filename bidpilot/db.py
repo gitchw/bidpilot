@@ -980,3 +980,17 @@ class Database:
                 """
             ).fetchall()
         return {row["source"]: dict(row) for row in rows}
+
+    def list_source_run_history(self, limit: int = 500) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT source_runs.*, runs.started_at, runs.raw_query, runs.status AS run_status
+                FROM source_runs
+                JOIN runs ON runs.id = source_runs.run_id
+                ORDER BY source_runs.id DESC
+                LIMIT ?
+                """,
+                (max(1, min(limit, 5000)),),
+            ).fetchall()
+        return [dict(row) for row in rows]

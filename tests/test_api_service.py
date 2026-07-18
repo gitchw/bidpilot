@@ -16,6 +16,7 @@ from bidpilot.models import (
     OpportunityStage,
     OpportunityUpdate,
     RawTender,
+    RunStatus,
     SourceSearchResult,
     SourceStatus,
     TenderQuerySpec,
@@ -137,6 +138,57 @@ def test_api_query_to_docx_flow(tmp_path: Path):
         report = Document(BytesIO(download.content))
         assert "情报副驾驶" in "\n".join(item.text for item in report.paragraphs)
         assert client.get("/api/v1/reports").json()[0]["item_count"] == 1
+        health = client.get("/api/v1/sources/health?window=20")
+        assert health.status_code == 200
+        assert health.json()["summary"]["source_count"] == 1
+        assert health.json()["sources"][0]["sample_count"] == 1
+        assert health.json()["sources"][0]["health_level"] == "healthy"
+
+
+def test_source_health_tracks_partial_skipped_and_failed_runs(tmp_path: Path, sample_spec):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    statuses = [SourceStatus.OK, SourceStatus.SKIPPED, SourceStatus.PARTIAL, SourceStatus.FAILED]
+    for index, status in enumerate(statuses):
+        run_id = f"health-{index}"
+        service.db.create_run(run_id, sample_spec)
+        service.db.add_source_run(
+            run_id,
+            {
+                "source": FakeSource.name,
+                "status": status.value,
+                "scanned_count": 10 + index,
+                "fetched_count": 5,
+                "kept_count": 2,
+                "rejected_count": 5 + index,
+                "rejection_reasons": {"keyword_mismatch": 5 + index},
+                "latency_ms": 100 * (index + 1),
+                "message": status.value,
+            },
+        )
+        service.db.complete_run(
+            run_id,
+            RunStatus.COMPLETED,
+            report_path=None,
+            result_count=2,
+            new_count=2,
+            diagnostics=[],
+        )
+
+    health = service.source_health(window=20)["sources"][0]
+
+    assert health["sample_count"] == 4
+    assert health["status_counts"] == {
+        "ok": 1,
+        "partial": 1,
+        "auth_required": 0,
+        "failed": 1,
+        "skipped": 1,
+    }
+    assert health["health_level"] == "degraded"
+    assert health["completion_rate"] == 75.0
+    assert health["healthy_rate"] == 25.0
+    assert health["average_latency_ms"] == 250
+    assert health["history"][-1]["status"] == "failed"
 
 
 async def test_subscription_second_run_is_zero_increment(tmp_path: Path):
@@ -681,7 +733,7 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
                 continue
             operations.append((method.upper(), path, operation))
 
-    assert len(operations) == 37
+    assert len(operations) == 38
     for method, path, operation in operations:
         description = operation.get("description", "")
         assert path in api_reference, f"{method} {path} 未写入独立 API 参考"
