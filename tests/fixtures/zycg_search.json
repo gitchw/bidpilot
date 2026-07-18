@@ -1,0 +1,16 @@
+{
+  "msg": "操作成功",
+  "code": "200",
+  "total": 1,
+  "data": [
+    {
+      "id": "zycg-001",
+      "title": "中央国家机关高性能服务器采购项目中标公告",
+      "pageurl": "/freecms/site/zygjjgzfcgzx/cggg/info/2026/zycg-001.html",
+      "addtimeStr": "2026-07-17 10:30:00",
+      "content": "<div><p>项目编号：GC-HGX260001</p><p>采购人：中国科学院某研究所</p><p>采购高性能服务器10台，预算金额：800万元。</p><a href='/files/zycg-001.pdf'>附件</a></div>",
+      "noticeType": "2",
+      "implementWay": "1"
+    }
+  ]
+}

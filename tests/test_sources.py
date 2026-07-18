@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -5,10 +6,13 @@ from zoneinfo import ZoneInfo
 from bidpilot.intent import IntentParser
 from bidpilot.models import EventType
 from bidpilot.sources.ccgp import CCGPSource
+from bidpilot.sources.cebpubservice import CEBPubServiceSource
 from bidpilot.sources.cecbid import CECBidSource
 from bidpilot.sources.ggzy import GGZYSource
 from bidpilot.sources.mofcom import MofcomSource
+from bidpilot.sources.plap import PLAPSource
 from bidpilot.sources.qianlima import QianlimaSource
+from bidpilot.sources.zycg import ZYCGSource
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -127,3 +131,40 @@ def test_ggzy_home_feed_and_detail_parsers_are_honest_about_region():
     parsed = GGZYSource.parse_detail_page(detail, items[0])
     assert parsed.project_id == "AH-2026-001"
     assert "预算金额" in parsed.body
+
+
+def test_zycg_public_json_parser_preserves_central_procurement_evidence():
+    payload = json.loads(fixture("zycg_search.json"))
+    item = ZYCGSource.parse_response(payload)[0]
+    assert item.source == "中央政府采购网"
+    assert item.project_id == "GC-HGX260001"
+    assert item.buyer == "中国科学院某研究所"
+    assert item.event_type == EventType.AWARD
+    assert item.attachments[0].url == "https://www.zycg.gov.cn/files/zycg-001.pdf"
+    assert item.source_url.endswith("zycg-001.html?id=zycg-001")
+
+
+def test_plap_public_api_parser_extracts_full_content_without_login():
+    payload = json.loads(fixture("plap_search.json"))
+    item = PLAPSource.parse_response(payload)[0]
+    assert item.source == "军队采购网"
+    assert item.region == "北京"
+    assert item.project_id == "2026-JQ06-W3077"
+    assert item.event_type == EventType.INTENTION
+    assert item.buyer == "某单位"
+    assert "45万元" in item.body
+    assert item.attachments[0].url == "https://www.plap.mil.cn/files/plap-001.docx"
+
+
+def test_ceb_public_list_parser_keeps_bulletin_id_region_and_publisher():
+    items = CEBPubServiceSource.parse_list_page(
+        fixture("cebpubservice_search.html"), EventType.TENDER
+    )
+    assert len(items) == 2
+    first = items[0]
+    assert first.region == "北京"
+    assert first.event_type == EventType.TENDER
+    assert "uuid=ceb-uuid-001" in first.source_url
+    assert first.source_metadata["industry"] == "信息电子"
+    assert "中国电信阳光采购网" in first.body
+    assert items[1].event_type == EventType.AWARD

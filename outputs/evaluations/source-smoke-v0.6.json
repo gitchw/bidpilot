@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "evaluated_at": "2026-07-18T15:44:35.836215+08:00",
+  "query": "最近1个月全国服务器采购信息",
+  "sources": [
+    {
+      "source_id": "cebpubservice",
+      "source": "中国招标投标公共服务平台",
+      "status": "partial",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "中国招标投标公共服务平台公开关键词列表检索完成；当前不自动穿透详情 WAF、验证码或会员限制，原文链接供用户在浏览器核验。",
+      "items": [
+        {
+          "title": "2026年系统服务器及云服务器集成项目",
+          "published_at": "2026-06-23T00:00:00",
+          "region": "新疆",
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=0f68e97c63814d40b79be921cd09f314&inpvalue=&dataSource=0&tenderAgency=",
+          "body_length": 65
+        },
+        {
+          "title": "服务器运维",
+          "published_at": "2026-06-18T00:00:00",
+          "region": "上海",
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=91f11dc2f84a40a28590f6a4fd614b03&inpvalue=&dataSource=0&tenderAgency=",
+          "body_length": 43
+        },
+        {
+          "title": "国产化服务器",
+          "published_at": "2026-06-26T00:00:00",
+          "region": "河北",
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f024cda019f0309517f6f30&inpvalue=&dataSource=0&tenderAgency=",
+          "body_length": 38
+        },
+        {
+          "title": "服务器招标公告",
+          "published_at": "2026-07-14T00:00:00",
+          "region": "陕西",
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=8a9c96a69f39e024019f3a5f36ea20e9&inpvalue=&dataSource=0&tenderAgency=",
+          "body_length": 41
+        },
+        {
+          "title": "2026年第二批信创服务器集中采购项目(标包二:海光服务器) 招标公告",
+          "published_at": "2026-06-29T00:00:00",
+          "region": "重庆",
+          "url": "https://ctbpsp.com/#/bulletinDetail?uuid=f63a730b359f4bf28ae869801d4ec07e&inpvalue=&dataSource=0&tenderAgency=",
+          "body_length": 74
+        }
+      ]
+    },
+    {
+      "source_id": "plap",
+      "source": "军队采购网",
+      "status": "ok",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "军队采购网公开采购大厅检索完成，官方接口报告 184 条匹配；本轮仅读取受限页数，不涉及工作台或 CA 权限。",
+      "items": [
+        {
+          "title": "操作台、电脑及服务器采购项目招标公告(2026-JJDEBC-W4081)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "山东",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6348c9bd0196.html?noticeType=001014&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "body_length": 4980
+        },
+        {
+          "title": "GPU服务器综合采购项目招标公告(2026-JKFZCG-W1002)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "陕西",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6af1842c5f5f.html?noticeType=001011&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "body_length": 2163
+        },
+        {
+          "title": "服务器及云平台软件采购项目流废标公示",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "北京",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d00c59f2c5d07019f6a3510524280.html?noticeType=001006&channel=a2399540-ac44-4c68-a612-9bdbdb3634e5",
+          "body_length": 444
+        },
+        {
+          "title": "高性能服务器流标公示(2026-JQ06-W3077)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "北京",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d04d79f49c771019f6dbe864035b9.html?noticeType=001006&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "body_length": 445
+        },
+        {
+          "title": "某单位服务器采购意向公开(2026-JLJZGG-W4013)(第1包)",
+          "published_at": "2026-07-17T00:00:00",
+          "region": "新疆",
+          "url": "https://www.plap.mil.cn/freecms-glht/site/juncai/ggxx/info/2026/8a1d03a89f4ecc50019f6b24abf5611b.html?noticeType=59&channel=e0172398-23dd-47be-a092-14c67a92bd4f",
+          "body_length": 1626
+        }
+      ]
+    },
+    {
+      "source_id": "zycg",
+      "source": "中央政府采购网",
+      "status": "partial",
+      "scanned_count": 20,
+      "candidate_count": 20,
+      "message": "中央政府采购网公开公告搜索完成。其中 20 条电子卖场公告只提供公开标题和原文入口；未绕过详情网关访问限制。",
+      "items": [
+        {
+          "title": "某单位二所服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796429",
+          "body_length": 0
+        },
+        {
+          "title": "某单位交通研究所服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796428",
+          "body_length": 0
+        },
+        {
+          "title": "中国极地研究中心(中国极地研究所)服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796424",
+          "body_length": 0
+        },
+        {
+          "title": "中国水利水电科学研究院服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796423",
+          "body_length": 0
+        },
+        {
+          "title": "北京中医药大学东直门医院服务器(询价)采购项目成交公告",
+          "published_at": "2026-07-17T00:00:00",
+          "region": null,
+          "url": "http://mkt.zycg.gov.cn//mall-view/information/detail?noticeId=796422",
+          "body_length": 0
+        }
+      ]
+    }
+  ]
+}

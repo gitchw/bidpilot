@@ -34,7 +34,16 @@ from bidpilot.pipeline import TenderPipeline
 from bidpilot.report import generate_report
 from bidpilot.runtime_config import RuntimeConfiguration
 from bidpilot.scheduler import maintain_subscription_lease, next_schedule_time, retry_time
-from bidpilot.sources import CCGPSource, CECBidSource, GGZYSource, MofcomSource, QianlimaSource
+from bidpilot.sources import (
+    CCGPSource,
+    CEBPubServiceSource,
+    CECBidSource,
+    GGZYSource,
+    MofcomSource,
+    PLAPSource,
+    QianlimaSource,
+    ZYCGSource,
+)
 from bidpilot.sources.base import SourceAdapter
 
 _EVENT_RECENCY_RANK = {
@@ -66,6 +75,9 @@ class BidPilotService:
         self.parser = IntentParser(settings.timezone)
         self.intent_engine = HybridIntentEngine(settings, self.parser)
         self.sources = sources or [
+            CEBPubServiceSource(settings),
+            PLAPSource(settings),
+            ZYCGSource(settings),
             CECBidSource(settings),
             CCGPSource(settings),
             GGZYSource(settings),
