@@ -575,7 +575,7 @@ def configure_page(doc: Document) -> None:
     left = paragraph.add_run("标擎 BidPilot · 零基础操作说明书")
     set_run_font(left, size=9, color=MUTED, bold=True)
     paragraph.add_run("\t")
-    right = paragraph.add_run("v0.5.0")
+    right = paragraph.add_run("v0.7.0")
     set_run_font(right, size=9, color=MUTED)
     set_paragraph_border(paragraph, side="bottom", color=BORDER, size=4, space=2)
 
@@ -634,7 +634,7 @@ def add_cover(doc: Document) -> None:
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
     rows = [
-        ("文档版本", "v0.5.0"),
+        ("文档版本", "v0.7.0"),
         ("适用系统", "Windows / macOS / Linux"),
         ("默认地址", "http://127.0.0.1:8000"),
         ("更新日期", date.today().isoformat()),
@@ -877,7 +877,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("outputs/manuals/标擎BidPilot零基础操作说明书_v0.5.0.docx"),
+        default=Path("outputs/manuals/标擎BidPilot零基础操作说明书_v0.7.0.docx"),
     )
     parser.add_argument("--assets-dir", type=Path, default=Path("outputs/manuals/assets"))
     args = parser.parse_args()
