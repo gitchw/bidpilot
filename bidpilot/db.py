@@ -202,6 +202,13 @@ class Database:
             created_at TEXT NOT NULL,
             last_used_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS run_evidence_answers (
+            cache_key TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            selection_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
@@ -218,6 +225,8 @@ class Database:
           ON opportunity_feedback(updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_decision_assessments_used
           ON decision_assessments(last_used_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_run_evidence_answers_run
+          ON run_evidence_answers(run_id, last_used_at DESC);
         """
         with self.connection() as conn:
             conn.executescript(schema)
@@ -389,6 +398,51 @@ class Database:
                   last_used_at=excluded.last_used_at
                 """,
                 (cache_key, json.dumps(assessment, ensure_ascii=False), now, now),
+            )
+
+    def get_cached_evidence_answer(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT selection_json FROM run_evidence_answers WHERE cache_key=?",
+                (cache_key,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE run_evidence_answers SET last_used_at=? WHERE cache_key=?",
+                    (utcnow_iso(), cache_key),
+                )
+        if row is None:
+            return None
+        try:
+            return json.loads(row["selection_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def set_cached_evidence_answer(
+        self,
+        cache_key: str,
+        run_id: str,
+        selection: dict[str, Any],
+    ) -> None:
+        now = utcnow_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO run_evidence_answers(
+                  cache_key, run_id, selection_json, created_at, last_used_at
+                ) VALUES(?,?,?,?,?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                  run_id=excluded.run_id,
+                  selection_json=excluded.selection_json,
+                  last_used_at=excluded.last_used_at
+                """,
+                (
+                    cache_key,
+                    run_id,
+                    json.dumps(selection, ensure_ascii=False),
+                    now,
+                    now,
+                ),
             )
 
     def add_source_run(self, run_id: str, diagnostic: dict[str, Any]) -> None:

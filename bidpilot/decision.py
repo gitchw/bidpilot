@@ -687,18 +687,16 @@ class OpportunityFitAssessor:
                 for item in request_input["evidence_catalog"]
                 if item["evidence_id"] == proposed.evidence_id
             )
-            grounded = normalize_space(
-                " ".join(
-                    str(evidence_input.get(field) or "")
-                    for field in ("title", "buyer", "region", "excerpt")
-                )
-            )
+            grounded_fields = [
+                normalize_space(str(evidence_input.get(field) or ""))
+                for field in ("title", "buyer", "region", "excerpt")
+            ]
             quotes = list(dict.fromkeys(normalize_space(item) for item in proposed.evidence_quotes))
             if any(
                 len(quote) < 2
                 or len(quote) > 80
                 or re.fullmatch(r"E\d{2,6}", quote)
-                or quote not in grounded
+                or not any(quote in field for field in grounded_fields)
                 for quote in quotes
             ):
                 raise InvalidDecisionResponse("模型证据摘录不是该公告中 2 至 80 字的逐字原文")

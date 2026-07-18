@@ -14,6 +14,7 @@ from bidpilot.config import Settings
 from bidpilot.db import Database
 from bidpilot.decision import OpportunityFitAssessor
 from bidpilot.delivery import DeliveryManager, DeliveryReceipt
+from bidpilot.evidence_qa import RunEvidenceQACopilot
 from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
 from bidpilot.intent import IntentParser
@@ -22,6 +23,7 @@ from bidpilot.models import (
     CompanyProfileUpdate,
     DeliveryPolicy,
     EventType,
+    EvidenceAnswer,
     FeedbackUpdate,
     IntelligenceBrief,
     IntentComparison,
@@ -79,6 +81,10 @@ class SubscriptionBusyError(RuntimeError):
     pass
 
 
+class RunEvidenceNotReadyError(RuntimeError):
+    pass
+
+
 class BidPilotService:
     def __init__(self, settings: Settings, sources: list[SourceAdapter] | None = None):
         self.settings = settings
@@ -103,6 +109,7 @@ class BidPilotService:
         self.pipeline = TenderPipeline(settings, self.sources)
         self.intelligence = IntelligenceBriefGenerator(settings)
         self.fit_assessor = OpportunityFitAssessor(settings)
+        self.evidence_qa = RunEvidenceQACopilot(settings, self.db)
         self.delivery = DeliveryManager(settings)
         self._live_results: dict[str, RunResult] = {}
         self.worker = None
@@ -403,6 +410,28 @@ class BidPilotService:
                 update={"opportunity_assessments": assessment}
             )
         return assessment
+
+    async def ask_run(self, run_id: str, question: str) -> EvidenceAnswer:
+        self.runtime_config.load_persisted()
+        run = self.db.get_run(run_id)
+        if run is None:
+            raise KeyError("运行记录不存在")
+        if run["status"] in {RunStatus.QUEUED.value, RunStatus.RUNNING.value}:
+            raise RunEvidenceNotReadyError("运行尚未结束，固定证据快照还没有准备完成")
+
+        rows = self.db.list_run_items(run_id)
+        records = []
+        for row in rows:
+            try:
+                records.append(TenderRecord.model_validate_json(row["snapshot_json"]))
+            except (KeyError, ValueError):
+                return self.evidence_qa.evidence_incomplete(run_id, total_rows=len(rows))
+        return await self.evidence_qa.answer(
+            run_id,
+            question,
+            records,
+            run_status=run["status"],
+        )
 
     def _channel_is_configured(self, channel: str) -> bool:
         if channel == "feishu":

@@ -325,6 +325,67 @@ class OpportunityAssessmentSet(BaseModel):
     summary: str = Field(max_length=600)
 
 
+class EvidenceQuestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(
+        min_length=2,
+        max_length=1000,
+        description="针对某次运行固定证据集提出的问题；会在用户主动提交后发送给已配置模型",
+    )
+
+    @field_validator("question")
+    @classmethod
+    def normalize_question(cls, value: str) -> str:
+        return " ".join(value.split())
+
+
+class EvidenceAnswerCitation(BaseModel):
+    evidence_id: str = Field(pattern=r"^E\d{2,6}$")
+    quote: str = Field(min_length=2, max_length=220)
+    title: str = Field(max_length=500)
+    buyer: str | None = Field(default=None, max_length=300)
+    published_at: datetime
+    region: str | None = Field(default=None, max_length=120)
+    event_type: str = Field(max_length=40)
+    source_url: str = Field(max_length=3000)
+
+
+class EvidenceAnswerClaim(BaseModel):
+    text: str = Field(min_length=2, max_length=360)
+    citations: list[EvidenceAnswerCitation] = Field(min_length=1, max_length=5)
+
+
+class EvidenceAnswer(BaseModel):
+    answer_version: str = "run-qa-v1"
+    run_id: str
+    mode: Literal["llm_grounded", "deterministic"] = "deterministic"
+    status: Literal[
+        "applied",
+        "cached",
+        "not_configured",
+        "unavailable",
+        "invalid_response",
+        "insufficient_evidence",
+        "refused",
+        "empty",
+        "evidence_incomplete",
+    ]
+    answerable: bool = False
+    answer: str = Field(max_length=4000)
+    claims: list[EvidenceAnswerClaim] = Field(default_factory=list, max_length=8)
+    evidence_catalog: list[BriefEvidence] = Field(default_factory=list)
+    total_evidence_count: int = Field(default=0, ge=0)
+    context_evidence_count: int = Field(default=0, ge=0)
+    context_truncated: bool = False
+    generated_at: datetime
+    latency_ms: int = Field(default=0, ge=0)
+    repair_count: int = Field(default=0, ge=0, le=1)
+    cache_hit: bool = False
+    limitations: list[str] = Field(default_factory=list, max_length=8)
+    summary: str = Field(max_length=800)
+
+
 class EventType(StrEnum):
     INTENTION = "采购意向"
     TENDER = "招标公告"

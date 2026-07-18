@@ -18,6 +18,8 @@ from bidpilot.control import ControlPlane
 from bidpilot.models import (
     CompanyProfile,
     CompanyProfileUpdate,
+    EvidenceAnswer,
+    EvidenceQuestionRequest,
     FeedbackUpdate,
     HealthResponse,
     IntentComparison,
@@ -41,7 +43,7 @@ from bidpilot.runtime_config import (
     RuntimeConfigView,
 )
 from bidpilot.scheduler import SubscriptionWorker
-from bidpilot.service import BidPilotService, SubscriptionBusyError
+from bidpilot.service import BidPilotService, RunEvidenceNotReadyError, SubscriptionBusyError
 from bidpilot.source_auth import (
     SourceAuthError,
     SourceAuthSessionView,
@@ -359,6 +361,33 @@ def create_app(
             return await service.assess_run(run_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.post(
+        "/api/v1/runs/{run_id}/ask",
+        response_model=EvidenceAnswer,
+        **_api_docs(
+            tag="决策智能",
+            summary="只根据本轮固定证据追问",
+            purpose="让用户针对某次已经结束的运行继续提问；模型只能选择本轮 E 编号和逐字原文，最终答案、标题、日期、阶段与链接均由本地组装。",
+            parameters="路径 `run_id` 为已结束运行；JSON 仅含 question（2～1000 字，额外字段拒绝）。问题会在用户主动提交后发送给网页已配置模型，但不会保存明文聊天历史。",
+            returns="HTTP 200；返回是否可回答、模型/回退/缓存状态、本地组装答案、逐条可点击引用、本轮总证据数、实际上下文数、是否截断和限制说明。",
+            side_effects="可能调用 OpenAI-compatible 模型并消耗额度；只缓存通过 E 编号与逐字摘录校验的选择结果，不保存问题明文或模型原始响应，不重新访问标讯来源。",
+            errors="404：运行不存在；409：运行仍在排队或执行；422：问题长度或额外字段非法。提示注入、未知 E 编号、证据损坏、模型超时或非法输出均返回结构化拒绝/回退，不返回 502。",
+            example='POST /api/v1/runs/2c4d8f0a1b2c3d4e5f60718293a4b5c6/ask\n{"question":"E01 的采购人和公告阶段是什么？"}',
+            responses={
+                404: "运行记录不存在。",
+                409: "运行尚未结束，固定证据未准备好。",
+                422: "问题字段不合法。",
+            },
+        ),
+    )
+    async def ask_run(run_id: str, request: EvidenceQuestionRequest):
+        try:
+            return await service.ask_run(run_id, request.question)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+        except RunEvidenceNotReadyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get(
         "/api/v1/company-profile",
