@@ -227,3 +227,11 @@
 - API 参考同步为 50 个 OpenAPI 操作；README、用户指南和零基础手册补齐机会归档/删除、买方雷达、数据边界和逐步操作。功能清单 F38、F40～F44 按实际验证结果标记通过。
 - 真实浏览器桌面与 390×844 手机视口验收通过：七个底部导航和机会操作最小 44px，无页面横向溢出，买方雷达单列响应，控制台无产品 JavaScript 错误。独立终审发现并修复本地回退只覆盖前 5 条、模型可选择错误结构化字段和 DELETE 响应 Schema 缺失；最终 163 项 Pytest、Ruff lint/format、JavaScript 语法、`compileall`、JSON 与 `git diff --check` 通过。
 - 运行时、HTTP User-Agent、手册生成器和 Python 包版本统一升级为 `0.7.0`；生成 `dist/bidpilot-0.7.0-py3-none-any.whl`（241,171 bytes，SHA-256 `f7b8e46508ed1884ba09702b03e42d974d99290bce03d85dd9d1601770e15e6d`），复验包含买方雷达与静态网页资源，不包含数据库或 secrets。
+
+## 2026-07-18 — v0.7.0 发布并发加固（逻辑单元 10）
+
+- 修复机会卡片 PATCH 与 DELETE 的两个并发窗口：删除先完成，或更新完成后、响应读取前发生删除，均稳定返回 404，不再由运行时断言泄漏为 500。
+- 长期订阅的编辑、暂停、恢复和删除改为数据库单语句租约条件写入；worker 在用户操作期间新取得租约时，网页收到明确的 409 忙碌提示，任务、租约和原配置均保持不变。
+- 手动立即运行在竞争中发现订阅已删除时返回 404，发现其他 worker 已领取时返回 409；订阅创建和重复创建路径不再以断言处理可恢复的跨进程状态变化。
+- 新增 4 个确定性竞争回归场景，最终 167 项 Pytest、Ruff lint/format、JavaScript 语法、`compileall`、JSON/YAML、敏感密钥扫描、wheel 安装导入与 `git diff --check` 全部通过。
+- 重新构建 `dist/bidpilot-0.7.0-py3-none-any.whl`（241,473 bytes，SHA-256 `29b12a3e7bb81ba474bf30887ae10d5011ae32bd53825cb4f87eb11b039b070e`）；包内共 48 个文件，确认包含最新租约保护、买方雷达与网页资源，不包含数据库、运行目录或 secrets。

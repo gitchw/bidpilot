@@ -746,17 +746,26 @@ class Database:
             )
 
     def set_subscription_due(
-        self, subscription_id: str, next_run_at: datetime | None, *, enabled: bool | None = None
+        self,
+        subscription_id: str,
+        next_run_at: datetime | None,
+        *,
+        enabled: bool | None = None,
+        only_if_idle_at: datetime | None = None,
     ) -> bool:
         assignments = ["next_run_at=?", "updated_at=?", "lease_owner=NULL", "lease_until=NULL"]
         values: list[Any] = [next_run_at.isoformat() if next_run_at else None, utcnow_iso()]
         if enabled is not None:
             assignments.append("enabled=?")
             values.append(int(enabled))
+        where = "id=?"
         values.append(subscription_id)
+        if only_if_idle_at is not None:
+            where += " AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until<=?)"
+            values.append(only_if_idle_at.isoformat())
         with self.connection() as conn:
             cursor = conn.execute(
-                f"UPDATE subscriptions SET {', '.join(assignments)} WHERE id=?", values
+                f"UPDATE subscriptions SET {', '.join(assignments)} WHERE {where}", values
             )
         return cursor.rowcount > 0
 
@@ -770,6 +779,7 @@ class Database:
         update_next_run: bool = False,
         delivery_channel: str | None = None,
         delivery_policy: DeliveryPolicy | None = None,
+        only_if_idle_at: datetime | None = None,
     ) -> bool:
         assignments = ["updated_at=?"]
         values: list[Any] = [utcnow_iso()]
@@ -787,16 +797,30 @@ class Database:
         if update_next_run:
             assignments.append("next_run_at=?")
             values.append(next_run_at.isoformat() if next_run_at else None)
+        where = "id=?"
         values.append(subscription_id)
+        if only_if_idle_at is not None:
+            where += " AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until<=?)"
+            values.append(only_if_idle_at.isoformat())
         with self.connection() as conn:
             cursor = conn.execute(
-                f"UPDATE subscriptions SET {', '.join(assignments)} WHERE id=?", values
+                f"UPDATE subscriptions SET {', '.join(assignments)} WHERE {where}", values
             )
         return cursor.rowcount > 0
 
-    def delete_subscription(self, subscription_id: str) -> bool:
+    def delete_subscription(
+        self,
+        subscription_id: str,
+        *,
+        only_if_idle_at: datetime | None = None,
+    ) -> bool:
+        where = "id=?"
+        values: list[Any] = [subscription_id]
+        if only_if_idle_at is not None:
+            where += " AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until<=?)"
+            values.append(only_if_idle_at.isoformat())
         with self.connection() as conn:
-            cursor = conn.execute("DELETE FROM subscriptions WHERE id=?", (subscription_id,))
+            cursor = conn.execute(f"DELETE FROM subscriptions WHERE {where}", values)
         return cursor.rowcount > 0
 
     def claim_due_subscription(

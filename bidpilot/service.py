@@ -582,9 +582,15 @@ class BidPilotService:
                 continue
             existing = self._subscription_from_row(row)
             if run_immediately and not existing.in_progress:
-                self.db.set_subscription_due(row["id"], now, enabled=True)
-                row = self.db.get_subscription(row["id"])
-                assert row is not None
+                self.db.set_subscription_due(
+                    row["id"],
+                    now,
+                    enabled=True,
+                    only_if_idle_at=now,
+                )
+            row = self.db.get_subscription(row["id"])
+            if row is None:
+                continue
             return self._subscription_from_row(row)
 
         subscription_id = uuid4().hex
@@ -598,7 +604,8 @@ class BidPilotService:
             delivery_policy,
         )
         row = self.db.get_subscription(subscription_id)
-        assert row is not None
+        if row is None:
+            raise RuntimeError("订阅创建成功后无法读取，请检查数据库完整性")
         return self._subscription_from_row(row)
 
     async def run_subscription(
@@ -615,15 +622,19 @@ class BidPilotService:
         manually_claimed = lease_owner is None
         if lease_owner is None:
             lease_owner = f"manual:{uuid4().hex}"
-            if not self.db.claim_subscription(
+            claimed = self.db.claim_subscription(
                 subscription_id,
                 worker_id=lease_owner,
                 now=now,
                 lease_until=now + timedelta(seconds=self.settings.worker_lease_seconds),
-            ):
+            )
+            if not claimed:
+                if self.db.get_subscription(subscription_id) is None:
+                    raise KeyError(f"订阅不存在：{subscription_id}")
                 raise SubscriptionBusyError("该订阅正在执行，请等待本轮完成后再试")
             row = self.db.get_subscription(subscription_id)
-            assert row is not None
+            if row is None:
+                raise KeyError(f"订阅不存在：{subscription_id}")
         elif row.get("lease_owner") != lease_owner:
             raise SubscriptionBusyError("订阅租约已被其他 worker 接管，本轮不再重复执行")
         spec = TenderQuerySpec.model_validate_json(row["spec_json"])
@@ -729,6 +740,20 @@ class BidPilotService:
         row = self.db.get_subscription(subscription_id)
         return self._subscription_from_row(row) if row else None
 
+    def _complete_subscription_mutation(
+        self,
+        subscription_id: str,
+        changed: bool,
+    ) -> Subscription:
+        if not changed:
+            if self.db.get_subscription(subscription_id) is None:
+                raise KeyError(f"订阅不存在：{subscription_id}")
+            raise SubscriptionBusyError("订阅正在执行或状态刚刚变化，请刷新后重试")
+        subscription = self.get_subscription(subscription_id)
+        if subscription is None:
+            raise KeyError(f"订阅不存在：{subscription_id}")
+        return subscription
+
     def list_subscriptions(self) -> list[dict]:
         return [
             self._subscription_from_row(row).model_dump(mode="json")
@@ -741,13 +766,13 @@ class BidPilotService:
             raise KeyError(f"订阅不存在：{subscription_id}")
         if update.delivery_channel and not self._channel_is_configured(update.delivery_channel):
             raise ValueError(f"投递通道 {update.delivery_channel} 尚未配置")
+        current = self._subscription_from_row(row)
+        if current.in_progress:
+            raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改")
+        now = datetime.now(ZoneInfo(self.settings.timezone))
         spec = None
         next_run_at = None
         if update.query is not None:
-            current = self._subscription_from_row(row)
-            if current.in_progress:
-                raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改规则")
-            now = datetime.now(ZoneInfo(self.settings.timezone))
             spec = self.parser.parse(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
@@ -755,7 +780,7 @@ class BidPilotService:
                 spec = self._lock_buyer_filter(spec, current.spec.buyer_keywords)
             spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
             next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
-        self.db.update_subscription(
+        changed = self.db.update_subscription(
             subscription_id,
             name=update.name,
             spec=spec,
@@ -763,10 +788,9 @@ class BidPilotService:
             update_next_run=spec is not None,
             delivery_channel=update.delivery_channel,
             delivery_policy=update.delivery_policy,
+            only_if_idle_at=now,
         )
-        subscription = self.get_subscription(subscription_id)
-        assert subscription is not None
-        return subscription
+        return self._complete_subscription_mutation(subscription_id, changed)
 
     async def update_subscription_hybrid(
         self,
@@ -778,13 +802,13 @@ class BidPilotService:
             raise KeyError(f"订阅不存在：{subscription_id}")
         if update.delivery_channel and not self._channel_is_configured(update.delivery_channel):
             raise ValueError(f"投递通道 {update.delivery_channel} 尚未配置")
+        current = self._subscription_from_row(row)
+        if current.in_progress:
+            raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改")
+        now = datetime.now(ZoneInfo(self.settings.timezone))
         spec = None
         next_run_at = None
         if update.query is not None:
-            current = self._subscription_from_row(row)
-            if current.in_progress:
-                raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改规则")
-            now = datetime.now(ZoneInfo(self.settings.timezone))
             spec = await self.parse_intent(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
@@ -792,7 +816,7 @@ class BidPilotService:
                 spec = self._lock_buyer_filter(spec, current.spec.buyer_keywords)
             spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
             next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
-        self.db.update_subscription(
+        changed = self.db.update_subscription(
             subscription_id,
             name=update.name,
             spec=spec,
@@ -800,10 +824,9 @@ class BidPilotService:
             update_next_run=spec is not None,
             delivery_channel=update.delivery_channel,
             delivery_policy=update.delivery_policy,
+            only_if_idle_at=now,
         )
-        subscription = self.get_subscription(subscription_id)
-        assert subscription is not None
-        return subscription
+        return self._complete_subscription_mutation(subscription_id, changed)
 
     def pause_subscription(self, subscription_id: str) -> Subscription:
         row = self.db.get_subscription(subscription_id)
@@ -811,10 +834,14 @@ class BidPilotService:
             raise KeyError(f"订阅不存在：{subscription_id}")
         if self._subscription_from_row(row).in_progress:
             raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再暂停")
-        self.db.set_subscription_due(subscription_id, None, enabled=False)
-        subscription = self.get_subscription(subscription_id)
-        assert subscription is not None
-        return subscription
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        changed = self.db.set_subscription_due(
+            subscription_id,
+            None,
+            enabled=False,
+            only_if_idle_at=now,
+        )
+        return self._complete_subscription_mutation(subscription_id, changed)
 
     def resume_subscription(
         self, subscription_id: str, *, run_immediately: bool = False
@@ -827,18 +854,21 @@ class BidPilotService:
         next_run_at = now if run_immediately else next_schedule_time(spec.schedule, now)
         if next_run_at is None:
             raise ValueError("一次性订阅已经过期，请创建新的发送计划")
-        self.db.set_subscription_due(subscription_id, next_run_at, enabled=True)
-        subscription = self.get_subscription(subscription_id)
-        assert subscription is not None
-        return subscription
+        changed = self.db.set_subscription_due(
+            subscription_id,
+            next_run_at,
+            enabled=True,
+            only_if_idle_at=now,
+        )
+        return self._complete_subscription_mutation(subscription_id, changed)
 
     def delete_subscription(self, subscription_id: str) -> None:
-        row = self.db.get_subscription(subscription_id)
-        if row is None:
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        if self.db.delete_subscription(subscription_id, only_if_idle_at=now):
+            return
+        if self.db.get_subscription(subscription_id) is None:
             raise KeyError(f"订阅不存在：{subscription_id}")
-        if self._subscription_from_row(row).in_progress:
-            raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再删除")
-        self.db.delete_subscription(subscription_id)
+        raise SubscriptionBusyError("该订阅正在执行或状态刚刚变化，请刷新后重试")
 
     def list_subscription_runs(self, subscription_id: str, limit: int = 20) -> list[dict]:
         rows = self.db.list_subscription_runs(subscription_id, limit)
@@ -1085,8 +1115,6 @@ class BidPilotService:
         return [item.model_dump(mode="json") for item in opportunities]
 
     def update_opportunity(self, opportunity_id: str, update: OpportunityUpdate) -> Opportunity:
-        if self.db.get_opportunity(opportunity_id) is None:
-            raise KeyError(f"机会不存在：{opportunity_id}")
         changes: dict[str, object] = {}
         fields = update.model_fields_set
         if "stage" in fields and update.stage is not None:
@@ -1104,9 +1132,11 @@ class BidPilotService:
             changes["tags_json"] = json.dumps(update.tags or [], ensure_ascii=False)
         if "is_read" in fields:
             changes["is_read"] = int(bool(update.is_read))
-        self.db.update_opportunity(opportunity_id, changes)
+        if not self.db.update_opportunity(opportunity_id, changes):
+            raise KeyError(f"机会不存在：{opportunity_id}")
         result = self.get_opportunity(opportunity_id)
-        assert result is not None
+        if result is None:
+            raise KeyError(f"机会不存在：{opportunity_id}")
         return result
 
     def delete_opportunity(self, opportunity_id: str) -> None:

@@ -21,6 +21,7 @@ from bidpilot.models import (
     RunStatus,
     SourceSearchResult,
     SourceStatus,
+    SubscriptionUpdate,
     TenderQuerySpec,
 )
 from bidpilot.runtime_config import RuntimeConfigUpdate
@@ -343,6 +344,74 @@ def test_subscription_management_api(tmp_path: Path):
         deleted = client.delete(f"/api/v1/subscriptions/{subscription_id}")
         assert deleted.json() == {"deleted": True}
         assert client.get(f"/api/v1/subscriptions/{subscription_id}").status_code == 404
+
+
+def test_subscription_update_cannot_overwrite_a_new_worker_lease(tmp_path: Path, monkeypatch):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=False,
+    )
+    original_update = service.db.update_subscription
+
+    def claim_then_update(subscription_id, **changes):
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        assert service.db.claim_subscription(
+            subscription_id,
+            worker_id="worker-race",
+            now=now,
+            lease_until=now + timedelta(minutes=5),
+        )
+        return original_update(subscription_id, **changes)
+
+    monkeypatch.setattr(service.db, "update_subscription", claim_then_update)
+    try:
+        service.update_subscription(
+            subscription.id,
+            SubscriptionUpdate(name="不应覆盖运行中的任务"),
+        )
+    except SubscriptionBusyError as exc:
+        assert "正在执行" in str(exc)
+    else:
+        raise AssertionError("Expected the new worker lease to block the concurrent update")
+
+    row = service.db.get_subscription(subscription.id)
+    assert row is not None
+    assert row["name"] == "服务器日报"
+    assert row["lease_owner"] == "worker-race"
+
+
+def test_subscription_delete_cannot_remove_a_new_worker_lease(tmp_path: Path, monkeypatch):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=False,
+    )
+    original_delete = service.db.delete_subscription
+
+    def claim_then_delete(subscription_id, **conditions):
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        assert service.db.claim_subscription(
+            subscription_id,
+            worker_id="worker-race",
+            now=now,
+            lease_until=now + timedelta(minutes=5),
+        )
+        return original_delete(subscription_id, **conditions)
+
+    monkeypatch.setattr(service.db, "delete_subscription", claim_then_delete)
+    try:
+        service.delete_subscription(subscription.id)
+    except SubscriptionBusyError as exc:
+        assert "正在执行" in str(exc)
+    else:
+        raise AssertionError("Expected the new worker lease to block the concurrent delete")
+
+    row = service.db.get_subscription(subscription.id)
+    assert row is not None
+    assert row["lease_owner"] == "worker-race"
 
 
 async def test_durable_worker_continues_after_service_restart(tmp_path: Path):
@@ -687,6 +756,80 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
         ):
             assert section in delete_contract["description"]
         assert "不会删除 tender_items" in delete_contract["description"]
+
+
+async def test_opportunity_patch_returns_404_if_card_is_deleted_during_update(
+    tmp_path: Path, monkeypatch
+):
+    settings = make_settings(tmp_path)
+    seed_service = BidPilotService(settings, sources=[FakeSource()])
+    run = await seed_service.run_query("最近1个月安徽服务器招标信息")
+    tender = run.records[0]
+    opportunity = seed_service.create_opportunity(
+        OpportunityCreate(
+            canonical_id=tender.canonical_id,
+            version_hash=tender.version_hash,
+        )
+    )
+
+    app = create_app(settings, sources=[FakeSource()])
+    with TestClient(app) as client:
+        real_update = app.state.service.db.update_opportunity
+
+        def delete_before_update(opportunity_id, changes):
+            app.state.service.db.delete_opportunity(opportunity_id)
+            return real_update(opportunity_id, changes)
+
+        monkeypatch.setattr(
+            app.state.service.db,
+            "update_opportunity",
+            delete_before_update,
+        )
+        response = client.patch(
+            f"/api/v1/opportunities/{opportunity.id}",
+            json={"owner": "并发测试"},
+        )
+
+    assert response.status_code == 404
+    assert opportunity.id in response.json()["detail"]
+
+
+async def test_opportunity_patch_returns_404_if_card_is_deleted_after_update(
+    tmp_path: Path, monkeypatch
+):
+    settings = make_settings(tmp_path)
+    seed_service = BidPilotService(settings, sources=[FakeSource()])
+    run = await seed_service.run_query("最近1个月安徽服务器招标信息")
+    tender = run.records[0]
+    opportunity = seed_service.create_opportunity(
+        OpportunityCreate(
+            canonical_id=tender.canonical_id,
+            version_hash=tender.version_hash,
+        )
+    )
+
+    app = create_app(settings, sources=[FakeSource()])
+    with TestClient(app) as client:
+        real_update = app.state.service.db.update_opportunity
+
+        def update_before_delete(opportunity_id, changes):
+            updated = real_update(opportunity_id, changes)
+            assert updated
+            assert app.state.service.db.delete_opportunity(opportunity_id)
+            return updated
+
+        monkeypatch.setattr(
+            app.state.service.db,
+            "update_opportunity",
+            update_before_delete,
+        )
+        response = client.patch(
+            f"/api/v1/opportunities/{opportunity.id}",
+            json={"owner": "并发测试"},
+        )
+
+    assert response.status_code == 404
+    assert opportunity.id in response.json()["detail"]
 
 
 async def test_new_lifecycle_event_refreshes_opportunity_without_losing_follow_up(tmp_path: Path):
