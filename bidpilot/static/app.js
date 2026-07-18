@@ -143,6 +143,7 @@ function renderResults(run) {
     const statusLabel = SOURCE_STATUS_LABELS[item.status] || item.status;
     return `<span class="source-chip ${escapeHtml(item.status)}" title="${escapeHtml(rejection || item.message || "无额外诊断")}">${escapeHtml(item.source)} · 扫描 ${item.scanned_count ?? item.fetched_count} / 候选 ${item.fetched_count} / 保留 ${item.kept_count} · ${escapeHtml(statusLabel)}</span>`;
   }).join("");
+  renderRetrievalTrace(run);
   const list = $("#result-list"), empty = $("#empty-state");
   if (!run.records.length) {
     list.innerHTML = ""; empty.classList.remove("hidden"); renderEmptyDiagnosis(explanation, empty);
@@ -157,6 +158,39 @@ function renderResults(run) {
     bindResultOpportunityActions();
   }
   $("#results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderRetrievalTrace(run) {
+  const root = $("#retrieval-trace"), trace = run.retrieval;
+  if (!root) return;
+  if (!trace?.plan) { root.innerHTML = ""; root.classList.add("hidden"); return; }
+  root.classList.remove("hidden");
+  const plan = trace.plan;
+  const statusLabels = {
+    disabled: "AI 已关闭", not_configured: "模型未配置", applied: "AI 计划已采用",
+    rejected: "AI 提议被拒绝", invalid_response: "JSON 无效，已回退",
+    unavailable: "模型不可用，已回退",
+  };
+  const reviewStatusLabels = {
+    disabled: "AI 边界复核已关闭", not_needed: "无需语义复核",
+    not_configured: "模型未配置，边界候选已保守拒绝", applied: "AI 边界复核已完成",
+    invalid_response: "复核 JSON 无效，边界候选已保守拒绝", unavailable: "模型不可用，边界候选已保守拒绝",
+  };
+  const termOriginLabels = { query: "原始问题", rules: "规则同义词", lexicon: "行业词典", llm: "AI 建议" };
+  const terms = (plan.terms || []).map((term) => `<span class="retrieval-term ${escapeHtml(term.kind)}" title="${escapeHtml(term.reason)}"><b>${escapeHtml(term.text)}</b><small>${escapeHtml(termOriginLabels[term.origin] || term.origin)}</small></span>`).join("");
+  const rounds = new Map((trace.rounds || []).map((round) => [round.round, round]));
+  const roundCard = (roundNumber) => {
+    const round = rounds.get(roundNumber);
+    const step = roundNumber === 1 ? "02" : "04";
+    if (!round) return `<div class="retrieval-stage muted"><span>${step}</span><div><b>${roundNumber === 1 ? "第 1 轮召回" : "第 2 轮补搜"}</b><p>${roundNumber === 1 ? "没有轮次数据" : "未触发补搜"}</p></div></div>`;
+    const queryNames = (round.queries || []).map((query) => query.text).join("、") || "核心主题";
+    return `<div class="retrieval-stage"><span>${step}</span><div><b>${roundNumber === 1 ? "第 1 轮召回" : "第 2 轮补搜"}</b><p>${escapeHtml(round.trigger)}</p><small>${escapeHtml(queryNames)} · ${round.source_calls} 次来源调用 · 扫描 ${round.scanned_count} · 候选 ${round.candidate_count} · 去重 ${round.unique_candidate_count}</small></div></div>`;
+  };
+  const gaps = (trace.gap_analysis || []).map((gap) => `<li>${escapeHtml(gap)}</li>`).join("");
+  const rejectionReasons = Object.entries(run.search_explanation?.rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)} <b>${count}</b></span>`).join("");
+  const semanticDecisions = (trace.semantic_decisions || []).slice(0, 8).map((item) => `<li class="${escapeHtml(item.outcome)}"><b>${item.outcome === "accepted" ? "✓" : item.outcome === "rejected" ? "×" : "·"} ${escapeHtml(item.title)}</b><span>${Math.round(item.confidence * 100)}% · ${escapeHtml(item.reason)}</span></li>`).join("");
+  const merged = run.records.reduce((sum, item) => sum + Math.max(0, item.duplicate_count - 1), 0);
+  root.innerHTML = `<div class="retrieval-trace-head"><div><p class="eyebrow">AUDITABLE AI RETRIEVAL</p><h3>这批结果是怎么找出来的</h3></div><span class="state-badge ${plan.mode === "hybrid" ? "success" : "muted"}">${escapeHtml(statusLabels[plan.llm_status] || plan.mode)}</span></div><p class="retrieval-summary">${escapeHtml(trace.summary || plan.summary)}</p><div class="retrieval-terms"><b>受控检索词</b><div>${terms || "只使用核心主题"}</div></div><div class="retrieval-flow"><div class="retrieval-stage"><span>01</span><div><b>AI 查询计划</b><p>${escapeHtml(plan.summary)}</p><small>最多 ${plan.max_rounds} 轮 · 每来源 ${plan.query_budget_per_source} 个查询预算${plan.source_priorities?.length ? ` · 优先 ${escapeHtml(plan.source_priorities.join("、"))}` : ""}</small></div></div>${roundCard(1)}<div class="retrieval-stage ${gaps ? "warning" : "muted"}"><span>03</span><div><b>缺口判断</b>${gaps ? `<ul>${gaps}</ul>` : "<p>首轮覆盖没有触发额外缺口说明</p>"}</div></div>${roundCard(2)}<div class="retrieval-stage"><span>05</span><div><b>硬过滤</b><p>日期、地域、公告类型和排除词不允许模型越权。</p><div class="hard-filter-tags">${rejectionReasons || "本轮无硬过滤淘汰"}</div></div></div><div class="retrieval-stage"><span>06</span><div><b>AI 边界复核</b><p>${escapeHtml(reviewStatusLabels[trace.semantic_review_status] || trace.semantic_review_status)}</p>${semanticDecisions ? `<ul class="semantic-decision-list">${semanticDecisions}</ul>` : "<small>没有需要模型裁决的边界候选。</small>"}</div></div><div class="retrieval-stage"><span>07</span><div><b>去重保留</b><p>${trace.unique_raw_candidates} 个唯一原始候选 → ${run.records.length} 条可信记录</p><small>合并 ${merged} 条跨站转载/重复版本；更正和中标生命周期仍单独保留。</small></div></div></div>`;
 }
 
 function renderEmptyDiagnosis(explanation, root) {
@@ -469,11 +503,12 @@ function renderConfig(config) {
   state.config = config;
   const values = {
     llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout, intent_llm_mode: config.ai.intent_llm_mode, intent_llm_confidence_threshold: config.ai.intent_llm_confidence_threshold,
+    retrieval_llm_mode: config.ai.retrieval_llm_mode, retrieval_max_rounds: config.ai.retrieval_max_rounds, retrieval_query_budget_per_source: config.ai.retrieval_query_budget_per_source, retrieval_semantic_review: config.ai.retrieval_semantic_review, retrieval_semantic_threshold: config.ai.retrieval_semantic_threshold,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
     delivery_webhook_timeout: config.generic_webhook.timeout,
   };
-  Object.entries(values).forEach(([field, value]) => { const input = $(`[data-config="${field}"]`); if (input) input.value = value ?? ""; });
+  Object.entries(values).forEach(([field, value]) => { const input = $(`[data-config="${field}"]`); if (input?.type === "checkbox") input.checked = Boolean(value); else if (input) input.value = value ?? ""; });
   const secrets = {
     llm_api_key: config.ai.llm_api_key.configured,
     feishu_webhook_url: config.feishu.webhook_url.configured,
@@ -508,6 +543,7 @@ function collectConfigPayload() {
   $$('[data-config]').forEach((input) => {
     const field = input.dataset.config;
     if (input.type === "password") { if (input.value.trim()) payload[field] = input.value.trim(); return; }
+    if (input.type === "checkbox") { payload[field] = input.checked; return; }
     if (input.type === "number") { if (input.value !== "") payload[field] = Number(input.value); return; }
     payload[field] = input.value.trim();
   });
