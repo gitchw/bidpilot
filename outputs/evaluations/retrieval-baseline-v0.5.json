@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "mode": "legacy-v0.5-single-query",
+  "evaluated_at": "2026-07-18T15:03:39.407743+08:00",
+  "queries": [
+    {
+      "query": "最近1个月深圳充电桩招标信息",
+      "spec": {
+        "topic": "充电桩",
+        "keywords": [
+          "充电桩",
+          "充电站",
+          "充电设施",
+          "充换电",
+          "新能源汽车充电"
+        ],
+        "region": "深圳",
+        "region_level": "city",
+        "start_date": "2026-06-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 13294,
+      "scanned": 314,
+      "candidates": 10,
+      "kept": 0,
+      "unique_evidence_urls": 0,
+      "evidence_urls": [],
+      "sources": [
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 466,
+          "message": "已获取公开搜索摘要；配置免费会员登录态后可补充完整正文。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 280,
+          "rejection_reasons": {
+            "keyword_mismatch": 280
+          },
+          "latency_ms": 12170,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "keyword_mismatch": 24
+          },
+          "latency_ms": 365,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 9170,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；运行 bidpilot auth qianlima 完成登录。"
+        }
+      ],
+      "rejection_reasons": {
+        "outside_time": 10,
+        "keyword_mismatch": 304
+      },
+      "coverage_complete": false
+    },
+    {
+      "query": "最近1个月北京医疗设备采购信息",
+      "spec": {
+        "topic": "医疗设备",
+        "keywords": [
+          "医疗设备"
+        ],
+        "region": "北京",
+        "region_level": "province",
+        "start_date": "2026-06-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 14711,
+      "scanned": 314,
+      "candidates": 13,
+      "kept": 1,
+      "unique_evidence_urls": 3,
+      "evidence_urls": [
+        "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959419.htm",
+        "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959422.htm",
+        "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202607/t20260717_26959424.htm"
+      ],
+      "sources": [
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 586,
+          "message": "已获取公开搜索摘要；配置免费会员登录态后可补充完整正文。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 3,
+          "kept_count": 1,
+          "rejected_count": 277,
+          "rejection_reasons": {
+            "region_mismatch": 249,
+            "keyword_mismatch": 28
+          },
+          "latency_ms": 13697,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "region_mismatch": 15,
+            "keyword_mismatch": 9
+          },
+          "latency_ms": 358,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 8721,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；运行 bidpilot auth qianlima 完成登录。"
+        }
+      ],
+      "rejection_reasons": {
+        "outside_time": 10,
+        "region_mismatch": 264,
+        "keyword_mismatch": 37
+      },
+      "coverage_complete": false
+    },
+    {
+      "query": "最近3个月江苏数据中心招标信息",
+      "spec": {
+        "topic": "数据中心",
+        "keywords": [
+          "数据中心",
+          "机房",
+          "算力中心",
+          "智算中心"
+        ],
+        "region": "江苏",
+        "region_level": "province",
+        "start_date": "2026-04-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 12198,
+      "scanned": 314,
+      "candidates": 10,
+      "kept": 0,
+      "unique_evidence_urls": 0,
+      "evidence_urls": [],
+      "sources": [
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 517,
+          "message": "已获取公开搜索摘要；配置免费会员登录态后可补充完整正文。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 280,
+          "rejection_reasons": {
+            "region_mismatch": 274,
+            "keyword_mismatch": 6
+          },
+          "latency_ms": 11169,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "region_mismatch": 15,
+            "keyword_mismatch": 9
+          },
+          "latency_ms": 376,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 9451,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；运行 bidpilot auth qianlima 完成登录。"
+        }
+      ],
+      "rejection_reasons": {
+        "outside_time": 10,
+        "region_mismatch": 289,
+        "keyword_mismatch": 15
+      },
+      "coverage_complete": false
+    },
+    {
+      "query": "最近1个月全国服务器采购信息",
+      "spec": {
+        "topic": "服务器",
+        "keywords": [
+          "服务器",
+          "计算节点",
+          "算力设备",
+          "机架式服务器",
+          "GPU服务器"
+        ],
+        "region": null,
+        "region_level": "nationwide",
+        "start_date": "2026-06-18",
+        "end_date": "2026-07-18"
+      },
+      "elapsed_ms": 44126,
+      "scanned": 316,
+      "candidates": 11,
+      "kept": 1,
+      "unique_evidence_urls": 1,
+      "evidence_urls": [
+        "https://www.ccgp.gov.cn/cggg/zygg/gkzb/202607/t20260717_26960603.htm"
+      ],
+      "sources": [
+        {
+          "source": "中国招标投标网",
+          "status": "partial",
+          "scanned_count": 10,
+          "fetched_count": 10,
+          "kept_count": 0,
+          "rejected_count": 10,
+          "rejection_reasons": {
+            "outside_time": 10
+          },
+          "latency_ms": 43127,
+          "message": "已获取公开搜索摘要；配置免费会员登录态后可补充完整正文。"
+        },
+        {
+          "source": "中国政府采购网",
+          "status": "ok",
+          "scanned_count": 280,
+          "fetched_count": 1,
+          "kept_count": 1,
+          "rejected_count": 279,
+          "rejection_reasons": {
+            "keyword_mismatch": 279
+          },
+          "latency_ms": 11975,
+          "message": "官方公告列表与详情抓取完成。"
+        },
+        {
+          "source": "全国公共资源交易平台",
+          "status": "partial",
+          "scanned_count": 24,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 24,
+          "rejection_reasons": {
+            "keyword_mismatch": 24
+          },
+          "latency_ms": 345,
+          "message": "全国平台首页实时流已读取；该公开入口仅覆盖最新公告，不等同于全量历史检索。"
+        },
+        {
+          "source": "商务部中国国际招标网",
+          "status": "ok",
+          "scanned_count": 2,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 2,
+          "rejection_reasons": {
+            "outside_time": 2
+          },
+          "latency_ms": 8236,
+          "message": "商务部机电产品招标公告与详情检索完成。"
+        },
+        {
+          "source": "千里马招标网",
+          "status": "auth_required",
+          "scanned_count": 0,
+          "fetched_count": 0,
+          "kept_count": 0,
+          "rejected_count": 0,
+          "rejection_reasons": {},
+          "latency_ms": 0,
+          "message": "需要用户授权的免费会员登录态；运行 bidpilot auth qianlima 完成登录。"
+        }
+      ],
+      "rejection_reasons": {
+        "outside_time": 12,
+        "keyword_mismatch": 303
+      },
+      "coverage_complete": false
+    }
+  ],
+  "totals": {
+    "scanned": 1258,
+    "candidates": 44,
+    "kept": 2,
+    "unique_evidence_urls": 4
+  }
+}
