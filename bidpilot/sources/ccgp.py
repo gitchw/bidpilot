@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -98,24 +99,32 @@ class CCGPSource(SourceAdapter):
         return item
 
     @staticmethod
-    def _matches_spec(item: RawTender, spec: TenderQuerySpec) -> bool:
+    def _filter_reason(item: RawTender, spec: TenderQuerySpec) -> str | None:
         if item.published_at.date() < spec.start_date or item.published_at.date() > spec.end_date:
-            return False
+            return "outside_time"
         if (
             spec.region
             and spec.region_level != "city"
             and item.region
             and spec.region not in item.region
         ):
-            return False
+            return "region_mismatch"
         haystack = f"{item.title} {item.buyer or ''}".lower()
         keywords = [keyword.lower() for keyword in spec.keywords if len(keyword) >= 2]
-        return any(keyword in haystack for keyword in keywords)
+        if not any(keyword in haystack for keyword in keywords):
+            return "keyword_mismatch"
+        return None
+
+    @staticmethod
+    def _matches_spec(item: RawTender, spec: TenderQuerySpec) -> bool:
+        return CCGPSource._filter_reason(item, spec) is None
 
     async def search(self, spec: TenderQuerySpec, fetcher: HttpFetcher) -> SourceSearchResult:
         started = time.perf_counter()
         candidates: list[RawTender] = []
         errors: list[str] = []
+        scanned_count = 0
+        prefilter_reasons: Counter[str] = Counter()
         stop_all = False
         for path, event_type in self.category_paths:
             if stop_all or len(candidates) >= self.settings.max_results_per_source:
@@ -131,8 +140,12 @@ class CCGPSource(SourceAdapter):
                 page_items = self.parse_list_page(page.text, page_url, event_type)
                 if not page_items:
                     break
+                scanned_count += len(page_items)
                 for item in page_items:
-                    if self._matches_spec(item, spec):
+                    reason = self._filter_reason(item, spec)
+                    if reason:
+                        prefilter_reasons[reason] += 1
+                    else:
                         candidates.append(item)
                         if len(candidates) >= self.settings.max_results_per_source:
                             break
@@ -162,6 +175,8 @@ class CCGPSource(SourceAdapter):
             source=self.name,
             status=status,
             items=detailed,
+            scanned_count=scanned_count,
+            prefilter_reasons=dict(prefilter_reasons),
             message="；".join(errors[:3]) if errors else "官方公告列表与详情抓取完成。",
             latency_ms=latency,
         )

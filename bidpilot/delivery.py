@@ -315,7 +315,7 @@ class DeliveryManager:
                 "report_url": report_url,
             },
         }
-        headers = {"Content-Type": "application/json", "User-Agent": "BidPilot/0.4.0"}
+        headers = {"Content-Type": "application/json", "User-Agent": "BidPilot/0.5.0"}
         if self.settings.generic_webhook_bearer_token:
             headers["Authorization"] = f"Bearer {self.settings.generic_webhook_bearer_token}"
         async with httpx.AsyncClient(timeout=self.settings.delivery_webhook_timeout) as client:

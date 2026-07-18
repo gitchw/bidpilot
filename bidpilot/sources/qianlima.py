@@ -140,6 +140,7 @@ class QianlimaSource(SourceAdapter):
                 source=self.name,
                 status=SourceStatus.OK,
                 items=detailed,
+                scanned_count=len(items),
                 message="免费会员授权源抓取完成。",
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )

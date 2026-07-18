@@ -50,6 +50,8 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "llm_api_key",
         "llm_model",
         "llm_timeout",
+        "intent_llm_mode",
+        "intent_llm_confidence_threshold",
         "feishu_webhook_url",
         "feishu_webhook_secret",
         "feishu_app_id",
@@ -93,6 +95,8 @@ class RuntimeConfigUpdate(BaseModel):
     llm_api_key: SecretStr | None = None
     llm_model: str | None = Field(default=None, max_length=200)
     llm_timeout: float | None = Field(default=None, ge=3, le=120)
+    intent_llm_mode: Literal["off", "auto", "always"] | None = None
+    intent_llm_confidence_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
 
     feishu_webhook_url: SecretStr | None = None
     feishu_webhook_secret: SecretStr | None = None
@@ -164,6 +168,8 @@ class AIConfigView(BaseModel):
     llm_base_url: str
     llm_model: str
     llm_timeout: float
+    intent_llm_mode: Literal["off", "auto", "always"]
+    intent_llm_confidence_threshold: float
     llm_api_key: SecretState
     ready: bool
 
@@ -326,6 +332,8 @@ class RuntimeConfiguration:
                 llm_base_url=self.settings.llm_base_url,
                 llm_model=self.settings.llm_model,
                 llm_timeout=self.settings.llm_timeout,
+                intent_llm_mode=self.settings.intent_llm_mode,
+                intent_llm_confidence_threshold=(self.settings.intent_llm_confidence_threshold),
                 llm_api_key=secret("llm_api_key"),
                 ready=bool(self.settings.llm_base_url and self.settings.llm_model),
             ),

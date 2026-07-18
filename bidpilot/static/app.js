@@ -13,6 +13,15 @@ const OPPORTUNITY_STAGES = {
   new: "待评估", following: "跟进中", bidding: "投标准备",
   won: "已中标", lost: "未中标", archived: "已归档"
 };
+const FILTER_REASON_LABELS = {
+  outside_time: "超出时间范围", region_mismatch: "地域不匹配",
+  event_type_mismatch: "公告类型不匹配", excluded_keyword: "命中排除词",
+  keyword_mismatch: "主题/同义词未命中", low_relevance: "相关度不足",
+};
+const SOURCE_STATUS_LABELS = {
+  ok: "正常完成", partial: "覆盖不完整",
+  auth_required: "需要登录", failed: "抓取失败",
+};
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -72,6 +81,21 @@ function renderIntent(spec) {
     ["时间 / WINDOW", `${spec.start_date} → ${spec.end_date}`], ["计划 / SCHEDULE", spec.schedule.expression]
   ];
   $("#intent-grid").innerHTML = cells.map(([label, value]) => `<div class="intent-cell"><small>${label}</small><b>${escapeHtml(value)}</b></div>`).join("");
+  const resolution = spec.resolution || { mode: "rules", llm_status: "not_needed", trigger_reasons: [], decisions: [], summary: "规则解析结果可直接使用。" };
+  const resolutionLabels = {
+    not_needed: ["规则直接通过", "rules"], disabled: ["只使用规则", "rules"],
+    not_configured: ["模型未配置，安全回退", "fallback"], applied: ["LLM 辅助修正", "hybrid"],
+    confirmed: ["LLM 复核通过", "hybrid"], rejected: ["提议被拒绝，保留规则", "fallback"],
+    invalid_response: ["JSON 无效，安全回退", "fallback"], unavailable: ["模型不可用，安全回退", "fallback"],
+  };
+  const [resolutionLabel, resolutionTone] = resolutionLabels[resolution.llm_status] || ["规则解析", "rules"];
+  const reasons = (resolution.trigger_reasons || []).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+  const decisions = (resolution.decisions || []).filter((item) => item.field !== "all" || item.reason).map((item) => {
+    const marks = { accepted: "✓", unchanged: "＝", locked: "▣", rejected: "×" };
+    const names = { topic: "主题", region: "地域", time_range: "时间", schedule: "计划", delivery_channel: "通道", exclude_keywords: "排除词", event_types: "公告类型", all: "全部提议" };
+    return `<li class="${escapeHtml(item.outcome)}"><b>${marks[item.outcome] || "·"} ${escapeHtml(names[item.field] || item.field)}</b><span>${escapeHtml(item.reason)}</span></li>`;
+  }).join("");
+  $("#intent-resolution").innerHTML = `<div class="resolution-head"><span class="resolution-badge ${resolutionTone}">${escapeHtml(resolutionLabel)}</span><p>${escapeHtml(resolution.summary)}${resolution.latency_ms ? ` · ${resolution.latency_ms} ms` : ""}</p></div>${reasons ? `<details><summary>为什么触发智能复核</summary><ul>${reasons}</ul></details>` : ""}${decisions ? `<details ${resolution.llm_status === "applied" || resolution.llm_status === "rejected" ? "open" : ""}><summary>字段级校验记录</summary><ul class="decision-list">${decisions}</ul></details>` : ""}`;
   $("#intent-warnings").innerHTML = (spec.warnings || []).map((warning) => `⚠ ${escapeHtml(warning)}`).join("<br>");
   $("#create-subscription-button").classList.toggle("hidden", spec.schedule.kind === "immediate");
   $("#intent-panel").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -103,16 +127,25 @@ async function runQuery() {
 
 function renderResults(run) {
   $("#results-panel").classList.remove("hidden");
-  $("#result-summary").textContent = `${run.new_count} 条可信结果 · ${run.status === "partial" ? "部分来源受限" : "来源完整"}`;
+  const limitedSources = run.diagnostics.filter((item) => ["partial", "auth_required", "failed"].includes(item.status)).length;
+  $("#result-summary").textContent = `${run.new_count} 条可信结果 · ${limitedSources ? `${limitedSources} 个来源覆盖受限` : "已配置来源均正常"}`;
   const download = $("#download-report");
   if (run.report_path) { const name = run.report_path.replaceAll("\\", "/").split("/").pop(); download.href = `/api/v1/reports/${encodeURIComponent(name)}`; download.classList.remove("hidden"); } else download.classList.add("hidden");
   const high = run.records.filter((item) => item.opportunity_score >= 80).length;
   const projects = new Set(run.records.map((item) => item.lifecycle_id)).size;
   const merged = run.records.reduce((sum, item) => sum + Math.max(0, item.duplicate_count - 1), 0);
-  $("#metric-strip").innerHTML = [["可信结果", run.records.length], ["高优机会", high], ["项目生命线", projects], ["重复合并", merged]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
-  $("#source-coverage").innerHTML = run.diagnostics.map((item) => `<span class="source-chip ${escapeHtml(item.status)}">${escapeHtml(item.source)} · ${item.kept_count}/${item.fetched_count} · ${escapeHtml(item.status)}</span>`).join("");
+  const explanation = run.search_explanation;
+  const metrics = !run.records.length && explanation ? [["扫描公告", explanation.total_scanned], ["进入候选", explanation.total_candidates], ["筛选排除", Object.values(explanation.rejection_reasons || {}).reduce((sum, value) => sum + value, 0)], ["可信结果", 0]] : [["可信结果", run.records.length], ["高优机会", high], ["项目生命线", projects], ["重复合并", merged]];
+  $("#metric-strip").innerHTML = metrics.map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
+  $("#source-coverage").innerHTML = run.diagnostics.map((item) => {
+    const rejection = Object.entries(item.rejection_reasons || {}).map(([reason, count]) => `${FILTER_REASON_LABELS[reason] || reason} ${count}`).join("；");
+    const statusLabel = SOURCE_STATUS_LABELS[item.status] || item.status;
+    return `<span class="source-chip ${escapeHtml(item.status)}" title="${escapeHtml(rejection || item.message || "无额外诊断")}">${escapeHtml(item.source)} · 扫描 ${item.scanned_count ?? item.fetched_count} / 候选 ${item.fetched_count} / 保留 ${item.kept_count} · ${escapeHtml(statusLabel)}</span>`;
+  }).join("");
   const list = $("#result-list"), empty = $("#empty-state");
-  if (!run.records.length) { list.innerHTML = ""; empty.classList.remove("hidden"); }
+  if (!run.records.length) {
+    list.innerHTML = ""; empty.classList.remove("hidden"); renderEmptyDiagnosis(explanation, empty);
+  }
   else {
     empty.classList.add("hidden");
     list.innerHTML = run.records.map((item) => {
@@ -123,6 +156,21 @@ function renderResults(run) {
     bindResultOpportunityActions();
   }
   $("#results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderEmptyDiagnosis(explanation, root) {
+  if (!explanation) return;
+  const reasonRows = Object.entries(explanation.rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<div><span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)}</span><b>${count} 条</b></div>`).join("");
+  const coverage = (explanation.coverage_notes || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const suggestions = (explanation.suggestions || []).map((item, index) => `<button class="diagnosis-suggestion" data-suggestion-index="${index}"><b>${escapeHtml(item.title)}</b><span>${escapeHtml(item.query)}</span><small>${escapeHtml(item.explanation)}</small></button>`).join("");
+  const title = explanation.outcome === "all_filtered" ? "找到了候选，但都不符合你的条件" : "公开入口暂时没有返回候选";
+  root.innerHTML = `<span>◎</span><h3>${title}</h3><p>${escapeHtml(explanation.summary)}</p><p class="funnel-explanation"><b>怎么看数字：</b>扫描 = 从来源页面读到；候选 = 送入统一核验；保留 = 最终可信结果。</p>${reasonRows ? `<div class="rejection-breakdown"><h4>为什么一条也没留下</h4>${reasonRows}</div>` : ""}${coverage ? `<details class="coverage-notes" open><summary>为什么不能简单理解成“全网没有”</summary><ul>${coverage}</ul></details>` : ""}${suggestions ? `<div class="diagnosis-suggestions"><h4>可以怎么改（点击只填入，不会自动查询）</h4>${suggestions}</div>` : ""}`;
+  $$(".diagnosis-suggestion").forEach((button) => button.addEventListener("click", async () => {
+    const suggestion = explanation.suggestions[Number(button.dataset.suggestionIndex)];
+    $("#query-input").value = suggestion.query; state.spec = null;
+    await activateTab("search"); $("#query-input").focus();
+    window.scrollTo({ top: 0, behavior: "smooth" }); toast("建议已填入，请先解析意图，确认后再执行");
+  }));
 }
 
 function bindResultOpportunityActions() {
@@ -264,14 +312,15 @@ function renderSourceCenter(rows) {
   if (!summary || !root) return;
   const configured = rows.filter((row) => row.configured).length;
   const official = rows.filter((row) => row.official).length;
-  const fetched = rows.reduce((sum, row) => sum + (row.last_fetched_count || 0), 0);
-  summary.innerHTML = [["已接入来源", rows.length], ["官方平台", official], ["当前可运行", configured], ["最近抓取候选", fetched]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
+  const scanned = rows.reduce((sum, row) => sum + (row.last_scanned_count || row.last_fetched_count || 0), 0);
+  summary.innerHTML = [["已接入来源", rows.length], ["官方平台", official], ["当前可运行", configured], ["最近扫描公告", scanned]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
   root.innerHTML = rows.map((row) => {
     const [label, tone] = sourceState(row);
     const access = row.member_enhanced ? `${row.mode} · 已授权增强` : row.mode;
     const checked = row.last_checked_at ? formatTime(row.last_checked_at) : "尚未运行";
     const message = row.last_message || (row.configured ? "等待首轮真实查询验证" : "需要用户在本机完成授权或配置");
-    return `<article class="source-card"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>抓取 / 保留</small><b>${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span></div><p>${escapeHtml(message)}</p>${!row.configured ? `<div class="source-action-note">需授权源不会被静默伪装成成功；完成本机登录后，下次任务自动启用。</div>` : ""}</article>`;
+    const rejection = Object.entries(row.last_rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)} ${count}</span>`).join("");
+    return `<article class="source-card"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p>${!row.configured ? `<div class="source-action-note">需授权源不会被静默伪装成成功；完成本机登录后，下次任务自动启用。</div>` : ""}</article>`;
   }).join("");
 }
 
@@ -334,7 +383,7 @@ function renderSecretState(field, configured) {
 function renderConfig(config) {
   state.config = config;
   const values = {
-    llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout,
+    llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout, intent_llm_mode: config.ai.intent_llm_mode, intent_llm_confidence_threshold: config.ai.intent_llm_confidence_threshold,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
     delivery_webhook_timeout: config.generic_webhook.timeout,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -103,6 +104,8 @@ class MofcomSource(SourceAdapter):
         started = time.perf_counter()
         candidates: list[RawTender] = []
         errors: list[str] = []
+        scanned_count = 0
+        prefilter_reasons: Counter[str] = Counter()
         headers = {
             "Referer": f"{self.base_url}/channel/business/bulletinList.shtml",
             "X-Requested-With": "XMLHttpRequest",
@@ -133,17 +136,19 @@ class MofcomSource(SourceAdapter):
                 )
                 payload = json.loads(response.text)
                 parsed = self.parse_search_response(payload, event_type)
-                candidates.extend(
-                    item
-                    for item in parsed
-                    if spec.start_date <= item.published_at.date() <= spec.end_date
-                    and (
-                        not spec.region
-                        or spec.region_level == "city"
-                        or not item.region
-                        or spec.region in item.region
-                    )
-                )
+                scanned_count += len(parsed)
+                for item in parsed:
+                    if not (spec.start_date <= item.published_at.date() <= spec.end_date):
+                        prefilter_reasons["outside_time"] += 1
+                    elif (
+                        spec.region
+                        and spec.region_level != "city"
+                        and item.region
+                        and spec.region not in item.region
+                    ):
+                        prefilter_reasons["region_mismatch"] += 1
+                    else:
+                        candidates.append(item)
             except (FetchError, json.JSONDecodeError, TypeError, ValueError) as exc:
                 errors.append(f"类型 {type_code}: {exc}")
 
@@ -168,6 +173,8 @@ class MofcomSource(SourceAdapter):
             source=self.name,
             status=status,
             items=detailed,
+            scanned_count=scanned_count,
+            prefilter_reasons=dict(prefilter_reasons),
             message="；".join(errors[:3]) if errors else "商务部机电产品招标公告与详情检索完成。",
             latency_ms=latency,
         )

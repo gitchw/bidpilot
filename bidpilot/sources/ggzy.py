@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import Counter
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -101,27 +102,38 @@ class GGZYSource(SourceAdapter):
         return item
 
     @staticmethod
-    def _matches(item: RawTender, spec: TenderQuerySpec) -> bool:
+    def _filter_reason(item: RawTender, spec: TenderQuerySpec) -> str | None:
         if not (spec.start_date <= item.published_at.date() <= spec.end_date):
-            return False
+            return "outside_time"
         if (
             spec.region
             and spec.region_level != "city"
             and item.region
             and spec.region not in item.region
         ):
-            return False
+            return "region_mismatch"
         haystack = item.title.lower()
-        return any(keyword.lower() in haystack for keyword in spec.keywords if len(keyword) >= 2)
+        if not any(keyword.lower() in haystack for keyword in spec.keywords if len(keyword) >= 2):
+            return "keyword_mismatch"
+        return None
+
+    @staticmethod
+    def _matches(item: RawTender, spec: TenderQuerySpec) -> bool:
+        return GGZYSource._filter_reason(item, spec) is None
 
     async def search(self, spec: TenderQuerySpec, fetcher: HttpFetcher) -> SourceSearchResult:
         started = time.perf_counter()
         try:
             page = await fetcher.get(self.base_url, encoding="utf-8", retries=1)
             feed = self.parse_home_feed(page.text)
-            candidates = [item for item in feed if self._matches(item, spec)][
-                : self.settings.max_results_per_source
-            ]
+            prefilter_reasons: Counter[str] = Counter()
+            candidates: list[RawTender] = []
+            for item in feed:
+                reason = self._filter_reason(item, spec)
+                if reason:
+                    prefilter_reasons[reason] += 1
+                elif len(candidates) < self.settings.max_results_per_source:
+                    candidates.append(item)
             detailed: list[RawTender] = []
             errors: list[str] = []
             for item in candidates:
@@ -141,6 +153,8 @@ class GGZYSource(SourceAdapter):
                 source=self.name,
                 status=SourceStatus.PARTIAL,
                 items=detailed,
+                scanned_count=len(feed),
+                prefilter_reasons=dict(prefilter_reasons),
                 message=message,
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )

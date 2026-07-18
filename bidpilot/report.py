@@ -200,20 +200,33 @@ def generate_report(
         _set_cell_text(cells[1], value)
 
     document.add_heading("来源覆盖与质量", level=1)
-    coverage = document.add_table(rows=1, cols=5)
+    coverage = document.add_table(rows=1, cols=6)
     coverage.style = "Table Grid"
     coverage.alignment = WD_TABLE_ALIGNMENT.CENTER
-    for index, text in enumerate(("来源", "状态", "抓取", "保留", "说明")):
+    for index, text in enumerate(("来源", "状态", "扫描", "候选", "保留", "淘汰与说明")):
         _set_cell_text(coverage.cell(0, index), text, bold=True, color="FFFFFF")
         _set_cell_shading(coverage.cell(0, index), ACCENT)
     for diagnostic in diagnostics:
         cells = coverage.add_row().cells
+        reason_labels = {
+            "outside_time": "时间外",
+            "region_mismatch": "地域不符",
+            "event_type_mismatch": "类型不符",
+            "excluded_keyword": "命中排除词",
+            "keyword_mismatch": "主题未命中",
+            "low_relevance": "相关度不足",
+        }
+        rejection = "；".join(
+            f"{reason_labels.get(reason, reason)} {count}"
+            for reason, count in diagnostic.rejection_reasons.items()
+        )
         values = (
             diagnostic.source,
             diagnostic.status.value,
+            str(diagnostic.scanned_count),
             str(diagnostic.fetched_count),
             str(diagnostic.kept_count),
-            diagnostic.message or "-",
+            "；".join(item for item in (rejection, diagnostic.message) if item) or "-",
         )
         for index, value in enumerate(values):
             _set_cell_text(cells[index], value)

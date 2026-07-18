@@ -69,6 +69,42 @@ class IntentSchedule(BaseModel):
     expression: str = Field(default="立即执行", description="面向用户的中文计划说明")
 
 
+class IntentFieldDecision(BaseModel):
+    """一次混合解析中某个字段的可审计合并决定。"""
+
+    field: str = Field(description="被检查的结构化字段")
+    outcome: Literal["accepted", "rejected", "locked", "unchanged"] = Field(
+        description="接受模型提议、拒绝提议、规则高置信锁定或无需修改"
+    )
+    rule_value: Any | None = Field(default=None, description="规则基线值")
+    proposed_value: Any | None = Field(default=None, description="经过 JSON 解析的模型提议值")
+    final_value: Any | None = Field(default=None, description="最终采用值")
+    reason: str = Field(description="本地校验与合并理由")
+
+
+class IntentResolution(BaseModel):
+    """不含密钥、端点和模型原文的安全意图解析轨迹。"""
+
+    mode: Literal["rules", "hybrid"] = Field(default="rules", description="最终解析模式")
+    llm_status: Literal[
+        "not_needed",
+        "disabled",
+        "not_configured",
+        "applied",
+        "confirmed",
+        "rejected",
+        "invalid_response",
+        "unavailable",
+    ] = Field(default="not_needed", description="LLM 辅助状态")
+    trigger_reasons: list[str] = Field(default_factory=list, description="调用或跳过 LLM 的原因")
+    decisions: list[IntentFieldDecision] = Field(
+        default_factory=list,
+        description="字段级接受、拒绝或锁定记录",
+    )
+    latency_ms: int = Field(default=0, ge=0, description="本轮 LLM 调用耗时；未调用为 0")
+    summary: str = Field(default="规则解析结果可直接使用。", description="面向用户的中文说明")
+
+
 class TenderQuerySpec(BaseModel):
     raw_query: str = Field(description="规范化后的用户原始问题")
     topic: str = Field(description="用于严格匹配的核心产品、服务或行业主题")
@@ -93,7 +129,11 @@ class TenderQuerySpec(BaseModel):
         description="主题、地域、时间和计划字段置信度",
     )
     warnings: list[str] = Field(default_factory=list, description="需要用户确认的解析警告")
-    parser_version: str = Field(default="rules-v2", description="解析器规则版本")
+    parser_version: str = Field(default="hybrid-v1", description="最终意图解析器版本")
+    resolution: IntentResolution = Field(
+        default_factory=IntentResolution,
+        description="规则与 LLM 的安全合并轨迹；历史数据缺失时自动补默认值",
+    )
 
     @field_validator("keywords")
     @classmethod
@@ -104,6 +144,14 @@ class TenderQuerySpec(BaseModel):
     @classmethod
     def deduplicate_exclude_keywords(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+
+
+class IntentComparison(BaseModel):
+    """同一问题的规则基线与混合引擎最终结果。"""
+
+    rules: TenderQuerySpec = Field(description="未经过 LLM 的确定性规则基线")
+    resolved: TenderQuerySpec = Field(description="严格校验和保守合并后的最终结果")
+    changed_fields: list[str] = Field(default_factory=list, description="最终实际变化的字段")
 
 
 class Attachment(BaseModel):
@@ -207,20 +255,72 @@ class Opportunity(BaseModel):
 
 
 class SourceDiagnostic(BaseModel):
-    source: str
-    status: SourceStatus
-    fetched_count: int = 0
-    kept_count: int = 0
-    latency_ms: int = 0
-    message: str = ""
+    source: str = Field(description="来源显示名称")
+    status: SourceStatus = Field(description="来源状态：正常完成、覆盖不完整、需要登录或抓取失败")
+    scanned_count: int = Field(default=0, ge=0, description="来源页面/API 中实际扫描的公告数")
+    fetched_count: int = Field(
+        default=0, ge=0, description="通过来源端初筛并进入统一证据核验的候选数"
+    )
+    kept_count: int = Field(default=0, ge=0, description="统一核验、去重后保留的可信结果数")
+    rejected_count: int = Field(
+        default=0,
+        ge=0,
+        description="来源端预过滤和统一证据过滤合计排除的公告数",
+    )
+    rejection_reasons: dict[str, int] = Field(
+        default_factory=dict,
+        description="按时间、地域、主题等原因统计的淘汰数量",
+    )
+    latency_ms: int = Field(default=0, ge=0, description="该来源本轮耗时，单位毫秒")
+    message: str = Field(default="", description="来源覆盖、授权或故障的中文说明")
 
 
 class SourceSearchResult(BaseModel):
     source: str
     status: SourceStatus
     items: list[RawTender] = Field(default_factory=list)
+    scanned_count: int = Field(default=0, ge=0, description="适配器扫描但不一定返回的公告数")
+    prefilter_reasons: dict[str, int] = Field(
+        default_factory=dict,
+        description="来源适配器在下载详情前执行的安全预过滤统计",
+    )
     message: str = ""
     latency_ms: int = 0
+
+
+class SearchSuggestion(BaseModel):
+    id: str = Field(description="稳定的建议标识")
+    title: str = Field(description="按钮标题")
+    query: str = Field(description="只填回查询框、不会自动执行的建议问题")
+    explanation: str = Field(description="为什么建议这样调整，以及可能增加的噪声")
+
+
+class SearchExplanation(BaseModel):
+    outcome: Literal["matched", "matched_partial", "all_filtered", "no_candidates"] = Field(
+        description="结果类型：完整命中、部分覆盖命中、候选全部被过滤或没有候选"
+    )
+    total_scanned: int = Field(default=0, ge=0, description="全部来源实际读取的列表公告总数")
+    total_candidates: int = Field(
+        default=0, ge=0, description="通过来源端初筛并进入统一核验的候选总数"
+    )
+    total_kept: int = Field(default=0, ge=0, description="最终保留的可信结果总数")
+    rejection_reasons: dict[str, int] = Field(
+        default_factory=dict,
+        description="按时间、地域、主题、公告类型和排除词等原因汇总的排除数量",
+    )
+    coverage_complete: bool = Field(
+        default=False,
+        description="是否所有已接入来源都完成了当前能力范围内的正常检索",
+    )
+    coverage_notes: list[str] = Field(
+        default_factory=list,
+        description="覆盖不完整、需要登录或抓取失败的逐来源中文说明",
+    )
+    summary: str = Field(description="面向普通用户的真实结果解释")
+    suggestions: list[SearchSuggestion] = Field(
+        default_factory=list,
+        description="最多三条安全放宽建议；客户端只能填回问题，不能自动执行",
+    )
 
 
 class RunResult(BaseModel):
@@ -229,6 +329,10 @@ class RunResult(BaseModel):
     spec: TenderQuerySpec
     records: list[TenderRecord]
     diagnostics: list[SourceDiagnostic]
+    search_explanation: SearchExplanation | None = Field(
+        default=None,
+        description="候选扫描、淘汰原因、覆盖边界和不自动执行的放宽建议",
+    )
     report_path: str | None = None
     new_count: int = 0
     started_at: datetime

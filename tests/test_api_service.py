@@ -110,6 +110,13 @@ def test_api_query_to_docx_flow(tmp_path: Path):
         parsed = client.post("/api/v1/intent/parse", json={"query": "最近1个月安徽服务器招标信息"})
         assert parsed.status_code == 200
         assert parsed.json()["topic"] == "服务器"
+        assert parsed.json()["resolution"]["llm_status"] == "not_needed"
+        compared = client.post(
+            "/api/v1/intent/compare",
+            json={"query": "最近1个月安徽服务器招标信息"},
+        )
+        assert compared.status_code == 200
+        assert compared.json()["changed_fields"] == []
 
         response = client.post(
             "/api/v1/runs",
@@ -594,6 +601,8 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
                 "llm_base_url": "http://127.0.0.1:8045/v1",
                 "llm_model": "compatible-test-model",
                 "llm_api_key": secret_value,
+                "intent_llm_mode": "always",
+                "intent_llm_confidence_threshold": 0.91,
                 "smtp_port": 587,
                 "smtp_security": "starttls",
             },
@@ -622,6 +631,8 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
     assert persisted.ai.llm_base_url == "http://127.0.0.1:8045/v1"
     assert persisted.ai.llm_model == "compatible-test-model"
     assert persisted.ai.llm_api_key.configured is True
+    assert persisted.ai.intent_llm_mode == "always"
+    assert persisted.ai.intent_llm_confidence_threshold == 0.91
     assert restarted.settings.smtp_port == 587
     with restarted.db.connection() as conn:
         stored_secret = conn.execute(
@@ -660,7 +671,7 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
                 continue
             operations.append((method.upper(), path, operation))
 
-    assert len(operations) == 29
+    assert len(operations) == 31
     for method, path, operation in operations:
         description = operation.get("description", "")
         assert path in api_reference, f"{method} {path} 未写入独立 API 参考"

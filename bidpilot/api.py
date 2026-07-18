@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from bidpilot import __version__
 from bidpilot.config import Settings, get_settings
+from bidpilot.control import ControlPlane
 from bidpilot.models import (
     HealthResponse,
+    IntentComparison,
     Opportunity,
     OpportunityCreate,
     OpportunityStage,
@@ -120,6 +124,7 @@ def create_app(
     settings = settings or get_settings()
     service = BidPilotService(settings, sources=sources)
     config_tokens = ConfigEditTokenManager()
+    control_plane = ControlPlane(settings)
 
     def require_config_token(
         x_bidpilot_config_token: Annotated[
@@ -156,6 +161,7 @@ def create_app(
     )
     app.state.service = service
     app.state.config_tokens = config_tokens
+    app.state.control_plane = control_plane
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -191,18 +197,39 @@ def create_app(
         **_api_docs(
             tag="意图解析",
             summary="解析中文招投标意图",
-            purpose="把一句中文需求拆成主题、城市/省份、时间窗口、公告类型、排除词、计划和投递通道，供用户在执行前确认。",
+            purpose="先用确定性规则拆解中文需求；仅在低置信、缺失或冲突时调用已配置 LLM 提议修复，再由本地地域、日期、计划和枚举校验器逐字段决定是否合并。",
             parameters="JSON 请求体：`query` 为 2～500 字自然语言；`delivery_channel` 在本接口中仅兼容接收，不改变解析结果。",
-            returns="HTTP 200；返回完整 TenderQuerySpec、字段置信度、解析器版本和需要用户确认的警告。",
-            side_effects="无。只做本地解析，不抓取网站、不生成报告、不创建订阅。",
-            errors="422：问题太短、时间或计划数值非法，或请求体格式不正确。",
+            returns="HTTP 200；返回完整 TenderQuerySpec、字段置信度、警告，以及不含密钥和模型原文的 resolution 解释轨迹。",
+            side_effects="不抓取网站、不生成报告、不创建订阅。若模式为 auto/always 且满足触发条件，会把原问题和规则基线发送到用户配置的模型服务；失败自动回退。",
+            errors="422：问题太短、规则层日期或计划数值非法，或请求体格式不正确。模型错误不会让本接口失败。",
             example='POST /api/v1/intent/parse\n{"query":"最近1个月深圳充电桩招标信息"}',
             responses={422: "自然语言为空、过短或包含无效的日期/计划值。"},
         ),
     )
     async def parse_intent(request: QueryRequest):
         try:
-            return service.parser.parse(request.query)
+            return await service.parse_intent(request.query)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/intent/compare",
+        response_model=IntentComparison,
+        **_api_docs(
+            tag="意图解析",
+            summary="对比规则基线与混合解析结果",
+            purpose="用于调试和人工确认：在一个响应中并列纯规则基线、严格校验后的最终结果、实际变化字段和字段级接受/拒绝理由。",
+            parameters="JSON 请求体只使用 `query`；兼容字段 `delivery_channel` 不参与意图对比。",
+            returns="HTTP 200；`rules` 为确定性规则结果，`resolved` 为最终结果，`changed_fields` 仅列出真正发生变化的结构化字段。",
+            side_effects="不抓取标讯、不写运行或订阅。与解析接口相同，满足配置条件时可能调用用户自己的模型服务。",
+            errors="422：自然语言为空、过短或规则日期非法；模型不可用时仍以 HTTP 200 返回安全回退结果。",
+            example='POST /api/v1/intent/compare\n{"query":"帮我查最近45天泉州储能系统项目"}',
+            responses={422: "自然语言或规则字段不合法。"},
+        ),
+    )
+    async def compare_intent(request: QueryRequest):
+        try:
+            return await service.compare_intent(request.query)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -212,9 +239,9 @@ def create_app(
         **_api_docs(
             tag="情报任务",
             summary="立即执行一次情报任务",
-            purpose="解析问题、访问已启用来源、清洗去重、生成证据摘要、持久化结果并在有新增时生成 Word 报告。",
+            purpose="解析问题、访问已启用来源、清洗去重、生成证据摘要并持久化结果。即时任务即使保留 0 条，也会生成包含扫描漏斗、排除原因和覆盖边界的 Word 诊断报告。",
             parameters="JSON 请求体：`query` 为自然语言；`delivery_channel` 可选 local、feishu_webhook、feishu_app、email、dingtalk_webhook、wecom_webhook 或 generic_webhook。",
-            returns="HTTP 200；返回运行 ID、结构化意图、可信记录、来源诊断、新增数量、报告路径和投递结果。",
+            returns="HTTP 200；返回运行 ID、结构化意图、可信记录、逐来源扫描/候选/保留诊断、`search_explanation`、新增数量、报告路径和投递结果。`search_explanation` 会区分没有候选与候选全部被过滤，并给出不会自动执行的安全放宽建议。",
             side_effects="【有副作用】会访问公开/已授权来源、写入运行与标讯记录、可能生成 DOCX，并可能向选定外部通道推送。",
             errors="422：请求体不合法；502：来源执行、报告生成或投递失败。失败运行仍保留诊断记录。",
             example='POST /api/v1/runs\n{"query":"最近1个月深圳充电桩招标信息","delivery_channel":"local"}',
@@ -323,7 +350,7 @@ def create_app(
     )
     async def create_subscription(request: SubscriptionCreate):
         try:
-            return service.create_subscription(
+            return await service.create_subscription_hybrid(
                 request.name,
                 request.query,
                 request.delivery_channel,
@@ -389,7 +416,7 @@ def create_app(
     )
     async def update_subscription(subscription_id: str, request: SubscriptionUpdate):
         try:
-            return service.update_subscription(subscription_id, request)
+            return await service.update_subscription_hybrid(subscription_id, request)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SubscriptionBusyError as exc:
@@ -652,6 +679,46 @@ def create_app(
     async def system_status():
         return service.system_status()
 
+    @app.post(
+        "/api/v1/system/shutdown",
+        **_api_docs(
+            tag="系统",
+            summary="优雅停止本机服务",
+            purpose="供 `python -m bidpilot stop` 使用：先返回接收确认，再让当前 Uvicorn 服务停止接收新请求并执行 lifespan 清理。",
+            parameters="请求必须来自回环地址，并在 `X-BidPilot-Control-Token` 请求头携带本机 `data/secrets/control.token`；普通网页和远程请求不能调用。",
+            returns='HTTP 202；返回 `{"accepted":true}`。随后服务通常在数秒内退出。',
+            side_effects="【进程级副作用】停止当前 Web 进程及其内嵌 worker；不删除数据库、报告、订阅、机会或配置。",
+            errors="403：不是本机请求或令牌错误；409：当前进程不是由可控 `serve` 命令启动；服务已停止时无法连接。",
+            example="POST /api/v1/system/shutdown\nX-BidPilot-Control-Token: <本机控制令牌>",
+            responses={
+                403: "本机来源或控制令牌校验失败。",
+                409: "当前启动方式不支持远程优雅停止。",
+            },
+        ),
+        status_code=202,
+    )
+    async def shutdown_service(
+        request: Request,
+        x_bidpilot_control_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Control-Token"),
+        ] = None,
+    ):
+        client_host = request.client.host if request.client else ""
+        try:
+            is_loopback = ipaddress.ip_address(client_host).is_loopback
+        except ValueError:
+            is_loopback = client_host == "testclient"
+        if not is_loopback or not control_plane.verify(x_bidpilot_control_token):
+            raise HTTPException(status_code=403, detail="只允许持有本机控制令牌的回环请求停止服务")
+        callback = getattr(request.app.state, "shutdown_callback", None)
+        if callback is None:
+            raise HTTPException(
+                status_code=409, detail="当前服务不是由可控 serve 命令启动，请在终端按 Ctrl+C"
+            )
+        asyncio.get_running_loop().call_later(0.2, callback)
+        return {"accepted": True, "message": "已接收停止请求，正在完成清理"}
+
     @app.get(
         "/api/v1/sources/status",
         **_api_docs(
@@ -674,7 +741,7 @@ def create_app(
         **_api_docs(
             tag="配置中心",
             summary="读取脱敏后的运行时配置",
-            purpose="为网页配置中心读取模型、飞书、SMTP、钉钉、企业微信和通用 Webhook 的非敏感字段与就绪状态。",
+            purpose="为网页配置中心读取混合意图模式、置信阈值、模型、飞书、SMTP、钉钉、企业微信和通用 Webhook 的非敏感字段与就绪状态。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；敏感字段仅返回 `{configured:true/false}`，永不返回 API Key、密码、Webhook 完整地址、签名密钥或 Bearer Token。",
             side_effects="无，只读 SQLite 与当前内存设置。",
@@ -711,7 +778,7 @@ def create_app(
             tag="配置中心",
             summary="保存白名单运行时配置",
             purpose="在网页中保存模型和推送通道设置。仅接受 schema 明列字段；保存后当前进程立即生效，重启后从 SQLite 恢复。",
-            parameters="请求头必须含短期编辑令牌。JSON 可局部提交字段；敏感字段留空/省略表示保持原值；要清除时把字段名放入 `clear_secrets`。",
+            parameters="请求头必须含短期编辑令牌。JSON 可局部提交 `intent_llm_mode`（off/auto/always）、`intent_llm_confidence_threshold`（0.50～0.99）及模型/渠道字段；敏感字段留空表示保持原值，清除时放入 `clear_secrets`。",
             returns="HTTP 200；返回脱敏后的最新 RuntimeConfigView。",
             side_effects="【有副作用】写入 runtime_config 表并更新共享 Settings。未知字段被拒绝；响应和日志不回显敏感原文。",
             errors="403：编辑令牌缺失/过期；422：未知字段、URL、端口、超时或枚举值非法。",

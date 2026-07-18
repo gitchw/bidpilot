@@ -6,7 +6,8 @@
 
 ## 已实现能力
 
-- 中文查询编译 v2：主题、同义词、省/常见城市、中文数字时间、公告类型、排除词、每日/每周/每月/一次性计划和投递渠道。
+- 混合意图引擎：`rules-v2` 先给基线，低置信/缺失/冲突字段再由 LLM 输出严格 JSON 提议，本地逐字段校验后保守合并并展示解释轨迹。
+- 中文查询编译 v2：主题、同义词、全国省级与地级行政区、中文数字时间、公告类型、排除词、每日/每周/每月/一次性计划和投递渠道。
 - 5 个来源适配器：公开源、官方源和用户主动授权的免费会员源。
 - 证据优先流水线：正文清洗、附件提取、严格筛选、跨站去重、项目生命周期聚类、机会评分。
 - 安全摘要：默认离线抽取；可选 OpenAI-compatible 模型，事实无法回指证据时自动降级。
@@ -19,6 +20,7 @@
 - 网页配置中心：OpenAI-compatible 模型、飞书、SMTP、钉钉、企业微信和通用 Webhook 保存后立即生效并持久化，敏感值加密且不回显。
 - 投递渠道：本地报告中心、飞书群机器人、飞书应用文件、SMTP 邮件附件、钉钉、企业微信和通用 Webhook。
 - 来源中心：展示接入模式、授权边界、最近状态、实际抓取数和保留数。
+- 零结果解释：展示扫描 → 候选 → 保留漏斗、逐项排除原因、覆盖缺口和只填入不自动执行的安全放宽建议。
 
 > “不重复”指应用在收到渠道成功确认后登记版本账本，后续不再发送同一公告版本。任何外部网络系统都存在“对方已收到但本端未收到确认”的极小不确定窗口，项目不虚假宣称分布式绝对恰好一次。
 
@@ -29,6 +31,7 @@ flowchart LR
     U["Web / REST API / CLI"] --> S["BidPilotService"]
     W["持久 Worker"] -->|"SQLite 租约领取"| S
     S --> Q["中文查询编译器"]
+    Q --> H["规则基线 / LLM 严格 JSON / 本地校验"]
     S --> P["多源证据流水线"]
     P --> A["5 个来源适配器"]
     P --> N["筛选 / 去重 / 生命周期 / 摘要"]
@@ -66,12 +69,17 @@ python bootstrap.py --dev
 ```text
 python -m bidpilot parse "最近1个月江苏服务器招标信息，每天9点发送"
 python -m bidpilot run "最近1个月江苏服务器招标信息"
+python -m bidpilot status
+python -m bidpilot stop
+python -m bidpilot restart
 python -m bidpilot sources
 python -m bidpilot worker
 python -m bidpilot openapi
 ```
 
 如未激活虚拟环境，请把命令中的 `python` 换成上面的平台对应解释器路径。
+
+`serve` 是前台服务：启动它的终端窗口需要保持打开。停止时可在该窗口按 `Ctrl+C`，也可在另一个终端运行 `python -m bidpilot stop`。`stop` 使用本机控制令牌请求优雅退出，不按 PID 强杀进程；`restart` 会先停止旧服务，再在当前终端前台启动。完整到逐点击级别的说明见 [零基础操作说明书](docs/BEGINNER_MANUAL.md)。
 
 ## Docker Compose
 
@@ -81,6 +89,7 @@ python -m bidpilot openapi
 docker compose up -d --build
 docker compose ps
 docker compose logs -f worker
+docker compose down
 ```
 
 Compose 使用命名卷持久化 `/app/data` 与 `/app/outputs/reports`，并对 Web 和 worker 配置 `restart: unless-stopped`。端口默认只绑定 `127.0.0.1`；项目当前不内置多用户登录，不应直接暴露到公网。需要公网报告下载时，请通过带 TLS 和访问控制的反向代理发布，并在网页配置中心填写公网报告地址。
@@ -146,6 +155,7 @@ python -m bidpilot auth qianlima
 打开 Web 后进入“配置中心”，可直接配置：
 
 - OpenAI-compatible API 地址、模型名、API Key 和超时；
+- 混合意图模式（关闭/自动/每次复核）和置信阈值；
 - 飞书群机器人与签名、飞书应用与接收 ID；
 - SMTP SSL/STARTTLS、发件人与多收件人；
 - 钉钉群机器人与加签；
@@ -176,8 +186,9 @@ node --check bidpilot/static/app.js
 
 ## 完整文档
 
+- [零基础操作说明书](docs/BEGINNER_MANUAL.md)
 - [用户操作手册](docs/USER_GUIDE.md)
-- [API 参考：29 个操作逐条说明](docs/API_REFERENCE.md)
+- [API 参考：31 个操作逐条说明](docs/API_REFERENCE.md)
 - [配置中心指南](docs/CONFIGURATION_GUIDE.md)
 - [投递渠道与成功语义](docs/DELIVERY_CHANNELS.md)
 - [产品与验收范围](SPEC.md)

@@ -104,21 +104,31 @@ async def normalize_item(
     spec: TenderQuerySpec,
     summarizer: EvidenceSummarizer,
 ) -> TenderRecord | None:
+    record, _reason = await evaluate_item(item, spec, summarizer)
+    return record
+
+
+async def evaluate_item(
+    item: RawTender,
+    spec: TenderQuerySpec,
+    summarizer: EvidenceSummarizer,
+) -> tuple[TenderRecord | None, str | None]:
+    """Return both the record and a stable reason when strict filtering rejects it."""
     if item.published_at.date() < spec.start_date or item.published_at.date() > spec.end_date:
-        return None
+        return None, "outside_time"
     if not region_matches(item, spec):
-        return None
+        return None, "region_mismatch"
     if spec.event_types and item.event_type not in spec.event_types:
-        return None
+        return None, "event_type_mismatch"
     searchable = f"{item.title} {item.buyer or ''} {item.body}".casefold()
     if any(keyword.casefold() in searchable for keyword in spec.exclude_keywords):
-        return None
+        return None, "excluded_keyword"
     hits, exact_title = keyword_hits(item, spec)
     if not exact_title and hits == 0:
-        return None
+        return None, "keyword_mismatch"
     relevance = relevance_score(item, spec)
     if relevance < 45:
-        return None
+        return None, "low_relevance"
     summary = await summarizer.summarize(item)
     project_key = _project_key(item)
     return TenderRecord(
@@ -142,7 +152,7 @@ async def normalize_item(
         duplicate_count=1,
         lifecycle_id=project_key,
         auth_level=item.auth_level,
-    )
+    ), None
 
 
 def _merge_records(primary: TenderRecord, duplicate: TenderRecord) -> TenderRecord:

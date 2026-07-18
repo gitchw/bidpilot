@@ -6,7 +6,7 @@
   <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
   <title>标擎 BidPilot</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=0.4.0">
+  <link rel="stylesheet" href="/static/app.css?v=0.5.0">
 </head>
 <body>
   <div class="noise"></div>
@@ -73,6 +73,7 @@
           </div>
         </div>
         <div class="intent-grid" id="intent-grid"></div>
+        <div class="intent-resolution" id="intent-resolution"></div>
         <div class="warnings" id="intent-warnings"></div>
       </section>
 
@@ -147,13 +148,16 @@
       <div class="config-grid">
         <article class="config-card">
           <div class="config-card-head"><div><p class="eyebrow">AI MODEL</p><h2>OpenAI-compatible 模型</h2></div><span class="state-badge muted" id="config-status-ai">未配置</span></div>
-          <p>支持 OpenAI、兼容网关和本机模型服务。模型不可用时自动降级到证据抽取摘要。</p>
+          <p>模型有两个用途：低置信意图复核与证据约束摘要。意图复核只发送你输入的自然语言和规则基线；模型只能提议，本地校验通过后才会改字段。</p>
           <div class="config-fields">
             <label class="wide"><span>API 基础地址</span><input data-config="llm_base_url" type="url" placeholder="http://127.0.0.1:8045/v1"></label>
             <label><span>模型名称</span><input data-config="llm_model" placeholder="例如 gemini-3-flash-agent"></label>
             <label><span>超时（秒）</span><input data-config="llm_timeout" type="number" min="3" max="120" step="1"></label>
+            <label><span>意图辅助模式</span><select data-config="intent_llm_mode"><option value="auto">自动（推荐）</option><option value="off">关闭，只用规则</option><option value="always">每次都复核</option></select><small>自动模式仅在低置信、缺失或冲突时调用模型。</small></label>
+            <label><span>置信阈值</span><input data-config="intent_llm_confidence_threshold" type="number" min="0.5" max="0.99" step="0.01"><small>字段低于此值才允许模型参与修复；建议 0.85。</small></label>
             <label class="wide secret-field"><span>API 密钥 <em data-secret-state="llm_api_key">未配置</em></span><input data-config="llm_api_key" type="password" autocomplete="new-password" placeholder="留空保持原密钥"><small><input data-clear="llm_api_key" type="checkbox"> 清除已保存密钥</small></label>
           </div>
+          <div class="privacy-callout"><b>发送边界</b><span>不会把抓取到的招标正文、订阅历史、机会备注、密钥或渠道地址发送给意图模型。云端模型仍会看到你在查询框输入的原句。</span></div>
           <div class="config-card-actions"><button class="secondary-button" id="test-model">测试模型连接</button><span id="test-result-ai"></span></div>
         </article>
 
@@ -226,6 +230,6 @@
   </aside>
 
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.4.0" defer></script>
+  <script src="/static/app.js?v=0.5.0" defer></script>
 </body>
 </html>

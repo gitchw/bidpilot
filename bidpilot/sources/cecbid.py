@@ -152,7 +152,12 @@ class CECBidSource(SourceAdapter):
                 else "已获取公开搜索摘要；配置免费会员登录态后可补充完整正文。"
             )
             return SourceSearchResult(
-                source=self.name, status=status, items=items, message=message, latency_ms=latency
+                source=self.name,
+                status=status,
+                items=items,
+                scanned_count=len(items),
+                message=message,
+                latency_ms=latency,
             )
         except (TimeoutError, FetchError) as exc:
             return SourceSearchResult(

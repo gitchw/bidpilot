@@ -38,13 +38,15 @@ class Settings(BaseSettings):
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
-        "BidPilot/0.4.0"
+        "BidPilot/0.5.0"
     )
 
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
     llm_timeout: float = Field(default=30.0, ge=3, le=120)
+    intent_llm_mode: Literal["off", "auto", "always"] = "auto"
+    intent_llm_confidence_threshold: float = Field(default=0.85, ge=0.5, le=0.99)
 
     cecbid_cookie: str = ""
     qianlima_cookie: str = ""

@@ -11,10 +11,12 @@ from zoneinfo import ZoneInfo
 from bidpilot.config import Settings
 from bidpilot.db import Database
 from bidpilot.delivery import DeliveryManager, DeliveryReceipt
+from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intent import IntentParser
 from bidpilot.models import (
     DeliveryPolicy,
     EventType,
+    IntentComparison,
     Opportunity,
     OpportunityCreate,
     OpportunityStage,
@@ -62,6 +64,7 @@ class BidPilotService:
         self.db = Database(settings.database_path)
         self.runtime_config = RuntimeConfiguration(self.db, settings)
         self.parser = IntentParser(settings.timezone)
+        self.intent_engine = HybridIntentEngine(settings, self.parser)
         self.sources = sources or [
             CECBidSource(settings),
             CCGPSource(settings),
@@ -73,6 +76,25 @@ class BidPilotService:
         self.delivery = DeliveryManager(settings)
         self._live_results: dict[str, RunResult] = {}
         self.worker = None
+
+    async def parse_intent(
+        self,
+        query: str,
+        *,
+        now: datetime | None = None,
+    ) -> TenderQuerySpec:
+        """Resolve an intent through rules first and a guarded LLM repair when needed."""
+        self.runtime_config.load_persisted()
+        return await self.intent_engine.resolve(query, now=now)
+
+    async def compare_intent(
+        self,
+        query: str,
+        *,
+        now: datetime | None = None,
+    ) -> IntentComparison:
+        self.runtime_config.load_persisted()
+        return await self.intent_engine.compare(query, now=now)
 
     async def run_query(
         self,
@@ -87,7 +109,7 @@ class BidPilotService:
         # without restarting that worker.
         self.runtime_config.load_persisted()
         started_at = datetime.now(ZoneInfo(self.settings.timezone))
-        spec = self.parser.parse(query, now=started_at)
+        spec = await self.intent_engine.resolve(query, now=started_at)
         if delivery_channel:
             spec.delivery_channel = delivery_channel
         channel = spec.delivery_channel
@@ -213,6 +235,7 @@ class BidPilotService:
                 spec=spec,
                 records=output_records,
                 diagnostics=pipeline_result.diagnostics,
+                search_explanation=pipeline_result.search_explanation,
                 report_path=str(report_path) if report_path else None,
                 new_count=len(output_records),
                 started_at=started_at,
@@ -265,6 +288,43 @@ class BidPilotService:
     ) -> Subscription:
         now = datetime.now(ZoneInfo(self.settings.timezone))
         spec = self.parser.parse(query, now=now)
+        return self._create_subscription_from_spec(
+            name,
+            spec,
+            delivery_channel,
+            delivery_policy,
+            run_immediately,
+            now,
+        )
+
+    async def create_subscription_hybrid(
+        self,
+        name: str,
+        query: str,
+        delivery_channel: str = "local",
+        delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
+        run_immediately: bool = True,
+    ) -> Subscription:
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        spec = await self.parse_intent(query, now=now)
+        return self._create_subscription_from_spec(
+            name,
+            spec,
+            delivery_channel,
+            delivery_policy,
+            run_immediately,
+            now,
+        )
+
+    def _create_subscription_from_spec(
+        self,
+        name: str,
+        spec: TenderQuerySpec,
+        delivery_channel: str,
+        delivery_policy: DeliveryPolicy,
+        run_immediately: bool,
+        now: datetime,
+    ) -> Subscription:
         if spec.schedule.kind == ScheduleKind.IMMEDIATE:
             raise ValueError("订阅问题必须包含每天、每周或明确的未来发送时间")
         if not self._channel_is_configured(delivery_channel):
@@ -441,6 +501,41 @@ class BidPilotService:
                 raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改规则")
             now = datetime.now(ZoneInfo(self.settings.timezone))
             spec = self.parser.parse(update.query, now=now)
+            if spec.schedule.kind == ScheduleKind.IMMEDIATE:
+                raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
+            spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
+            next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
+        self.db.update_subscription(
+            subscription_id,
+            name=update.name,
+            spec=spec,
+            next_run_at=next_run_at,
+            update_next_run=spec is not None,
+            delivery_channel=update.delivery_channel,
+            delivery_policy=update.delivery_policy,
+        )
+        subscription = self.get_subscription(subscription_id)
+        assert subscription is not None
+        return subscription
+
+    async def update_subscription_hybrid(
+        self,
+        subscription_id: str,
+        update: SubscriptionUpdate,
+    ) -> Subscription:
+        row = self.db.get_subscription(subscription_id)
+        if row is None:
+            raise KeyError(f"订阅不存在：{subscription_id}")
+        if update.delivery_channel and not self._channel_is_configured(update.delivery_channel):
+            raise ValueError(f"投递通道 {update.delivery_channel} 尚未配置")
+        spec = None
+        next_run_at = None
+        if update.query is not None:
+            current = self._subscription_from_row(row)
+            if current.in_progress:
+                raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改规则")
+            now = datetime.now(ZoneInfo(self.settings.timezone))
+            spec = await self.parse_intent(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
             spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
@@ -690,6 +785,7 @@ class BidPilotService:
             "running_subscription_count": running_count,
             "due_count": due_count,
             "delivery_channels": self.delivery.channel_status(),
+            "intent_engine": self.intent_engine.metrics,
             "timezone": self.settings.timezone,
         }
 
@@ -718,12 +814,17 @@ class BidPilotService:
                     if isinstance(source, CECBidSource)
                     else "公开"
                 ),
-                "official": isinstance(source, (CCGPSource, GGZYSource, MofcomSource)),
+                "official": isinstance(source, CCGPSource | GGZYSource | MofcomSource),
                 "last_status": latest.get(source.name, {}).get("status"),
                 "last_checked_at": latest.get(source.name, {}).get("started_at"),
                 "last_message": latest.get(source.name, {}).get("message"),
+                "last_scanned_count": latest.get(source.name, {}).get("scanned_count", 0),
                 "last_fetched_count": latest.get(source.name, {}).get("fetched_count", 0),
                 "last_kept_count": latest.get(source.name, {}).get("kept_count", 0),
+                "last_rejected_count": latest.get(source.name, {}).get("rejected_count", 0),
+                "last_rejection_reasons": json.loads(
+                    latest.get(source.name, {}).get("rejection_json", "{}") or "{}"
+                ),
             }
             for source in self.sources
         ]

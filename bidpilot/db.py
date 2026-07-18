@@ -60,8 +60,11 @@ class Database:
             run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
             source TEXT NOT NULL,
             status TEXT NOT NULL,
+            scanned_count INTEGER NOT NULL DEFAULT 0,
             fetched_count INTEGER NOT NULL DEFAULT 0,
             kept_count INTEGER NOT NULL DEFAULT 0,
+            rejected_count INTEGER NOT NULL DEFAULT 0,
+            rejection_json TEXT NOT NULL DEFAULT '{}',
             latency_ms INTEGER NOT NULL DEFAULT 0,
             message TEXT NOT NULL DEFAULT ''
         );
@@ -179,6 +182,9 @@ class Database:
             self._ensure_column(conn, "subscriptions", "last_run_id", "TEXT")
             self._ensure_column(conn, "subscriptions", "lease_owner", "TEXT")
             self._ensure_column(conn, "subscriptions", "lease_until", "TEXT")
+            self._ensure_column(conn, "source_runs", "scanned_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "source_runs", "rejected_count", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "source_runs", "rejection_json", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_subscription "
                 "ON runs(subscription_id, started_at DESC)"
@@ -249,15 +255,19 @@ class Database:
         with self.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO source_runs(run_id, source, status, fetched_count, kept_count,
-                  latency_ms, message) VALUES(?,?,?,?,?,?,?)
+                INSERT INTO source_runs(run_id, source, status, scanned_count, fetched_count,
+                  kept_count, rejected_count, rejection_json, latency_ms, message)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     run_id,
                     diagnostic["source"],
                     diagnostic["status"],
+                    diagnostic.get("scanned_count", 0),
                     diagnostic.get("fetched_count", 0),
                     diagnostic.get("kept_count", 0),
+                    diagnostic.get("rejected_count", 0),
+                    json.dumps(diagnostic.get("rejection_reasons", {}), ensure_ascii=False),
                     diagnostic.get("latency_ms", 0),
                     diagnostic.get("message", ""),
                 ),
