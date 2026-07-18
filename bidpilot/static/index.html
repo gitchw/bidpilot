@@ -6,7 +6,7 @@
   <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
   <title>标擎 BidPilot</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=0.3.0">
 </head>
 <body>
   <div class="noise"></div>
@@ -17,6 +17,7 @@
     </a>
     <nav aria-label="主导航">
       <button class="nav-link active" data-tab="search">情报检索</button>
+      <button class="nav-link" data-tab="opportunities">机会工作台</button>
       <button class="nav-link" data-tab="subscriptions">订阅中心</button>
       <button class="nav-link" data-tab="sources">来源中心</button>
       <button class="nav-link" data-tab="reports">报告历史</button>
@@ -102,6 +103,17 @@
       </section>
     </section>
 
+    <section class="tab-panel" id="tab-opportunities">
+      <div class="page-heading"><p class="eyebrow">OPPORTUNITY WORKSPACE</p><h1>机会工作台</h1><p>把真实标讯转成项目级线索，分配负责人、记录下一步并沿生命周期持续跟进。</p></div>
+      <div class="opportunity-toolbar">
+        <label><span>搜索机会</span><input id="opportunity-search" type="search" placeholder="项目、采购人、负责人或标签"></label>
+        <label><span>阶段</span><select id="opportunity-stage-filter"><option value="">全部阶段</option><option value="new">待评估</option><option value="following">跟进中</option><option value="bidding">投标准备</option><option value="won">已中标</option><option value="lost">未中标</option><option value="archived">已归档</option></select></label>
+        <button class="secondary-button" id="refresh-opportunities">刷新</button>
+      </div>
+      <div class="opportunity-summary" id="opportunity-summary" aria-live="polite"><div class="loading-card">正在读取机会…</div></div>
+      <div class="opportunity-board" id="opportunity-board" aria-live="polite"><div class="loading-card">正在读取机会…</div></div>
+    </section>
+
     <section class="tab-panel" id="tab-subscriptions">
       <div class="page-heading"><p class="eyebrow">CONFIRMED DELIVERY LEDGER</p><h1>订阅中心</h1><p>同一公告版本经成功确认后不再重复投递；更正与中标作为生命周期新事件继续提醒。</p></div>
       <div class="scheduler-health" id="scheduler-health"><div><i></i><b>正在检查长期任务 worker…</b><p>订阅先持久化，再由 worker 领取；进程重启不会丢失。</p></div><button class="secondary-button" id="refresh-subscriptions">刷新状态</button></div>
@@ -129,6 +141,6 @@
   </aside>
 
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=0.3.0" defer></script>
 </body>
 </html>

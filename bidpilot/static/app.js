@@ -1,6 +1,16 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const state = { spec: null, run: null, system: null, activeTab: "search" };
+const state = {
+  spec: null,
+  run: null,
+  system: null,
+  activeTab: "search",
+  opportunityProjectKeys: new Set(),
+};
+const OPPORTUNITY_STAGES = {
+  new: "待评估", following: "跟进中", bidding: "投标准备",
+  won: "已中标", lost: "未中标", archived: "已归档"
+};
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -16,6 +26,14 @@ function formatTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+}
+
+function formatDateTimeInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
 }
 
 function toast(message, duration = 3200) {
@@ -93,10 +111,127 @@ function renderResults(run) {
     empty.classList.add("hidden");
     list.innerHTML = run.records.map((item) => {
       const links = item.source_urls.map((url, i) => `<a href="${escapeHtml(safeUrl(url))}" target="_blank" rel="noreferrer">来源 ${i + 1} ↗</a>`).join("");
-      return `<article class="result-card"><div class="result-top"><div><h3>${escapeHtml(item.title)}</h3><div class="record-meta"><span><b>${escapeHtml(item.event_type)}</b></span><span>${escapeHtml(item.published_at.slice(0,10))}</span><span>${escapeHtml(item.region || "地域未标注")}</span><span>${escapeHtml(item.buyer || "采购人未提取")}</span><span>合并 ${item.duplicate_count} 条</span></div></div><div class="score">${Math.round(item.opportunity_score)}</div></div><p class="summary">${escapeHtml(item.summary)}</p><div class="record-links">${links}</div></article>`;
+      const tracked = state.opportunityProjectKeys.has(item.project_key);
+      return `<article class="result-card"><div class="result-top"><div><h3>${escapeHtml(item.title)}</h3><div class="record-meta"><span><b>${escapeHtml(item.event_type)}</b></span><span>${escapeHtml(item.published_at.slice(0,10))}</span><span>${escapeHtml(item.region || "地域未标注")}</span><span>${escapeHtml(item.buyer || "采购人未提取")}</span><span>合并 ${item.duplicate_count} 条</span></div></div><div class="score">${Math.round(item.opportunity_score)}</div></div><p class="summary">${escapeHtml(item.summary)}</p><div class="record-links">${links}<button class="add-opportunity" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}" ${tracked ? "disabled" : ""}>${tracked ? "✓ 已加入" : "＋ 加入机会"}</button></div></article>`;
     }).join("");
+    bindResultOpportunityActions();
   }
   $("#results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function bindResultOpportunityActions() {
+  $$(".add-opportunity").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true; button.textContent = "加入中…";
+    try {
+      const opportunity = await api("/api/v1/opportunities", { method: "POST", body: JSON.stringify({ canonical_id: button.dataset.canonical, version_hash: button.dataset.version }) });
+      state.opportunityProjectKeys.add(opportunity.project_key);
+      button.textContent = "✓ 已加入";
+      toast(`已加入机会：${opportunity.record.title}`, 5000);
+      await loadOpportunities();
+    } catch (error) { button.disabled = false; button.textContent = "＋ 加入机会"; toast(error.message, 5000); }
+  }));
+}
+
+function opportunityStageOptions(selected) {
+  return Object.entries(OPPORTUNITY_STAGES).map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function opportunityCard(item) {
+  const record = item.record;
+  const source = record.source_urls[0] ? `<a href="${escapeHtml(safeUrl(record.source_urls[0]))}" target="_blank" rel="noreferrer">原文 ↗</a>` : "";
+  const tags = item.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
+  return `<article class="opportunity-card ${item.is_read ? "" : "unread"}" data-id="${escapeHtml(item.id)}">
+    <div class="opportunity-card-head"><div><div class="opportunity-kicker"><span>${escapeHtml(record.event_type)}</span><span>${escapeHtml(record.region || "地域未标注")}</span></div><h3>${escapeHtml(record.title)}</h3></div><div class="score">${Math.round(record.opportunity_score)}</div></div>
+    <p class="opportunity-buyer">${escapeHtml(record.buyer || "采购人未提取")} · ${escapeHtml(record.published_at.slice(0, 10))}</p>
+    <div class="opportunity-tags">${tags || "<span>未设置标签</span>"}</div>
+    <div class="opportunity-next"><span><small>负责人</small><b>${escapeHtml(item.owner || "待分配")}</b></span><span><small>下一步</small><b>${item.next_action_at ? formatTime(item.next_action_at) : "待安排"}</b></span></div>
+    <div class="opportunity-links">${source}<button class="mark-read">${item.is_read ? "标为未读" : "标为已读"}</button><button class="view-timeline" aria-expanded="false">生命周期</button></div>
+    <details class="opportunity-editor"><summary>跟进设置</summary><div class="opportunity-form">
+      <label><span>阶段</span><select class="opportunity-stage" aria-label="机会阶段">${opportunityStageOptions(item.stage)}</select></label>
+      <label><span>负责人</span><input class="opportunity-owner" maxlength="100" value="${escapeHtml(item.owner)}" placeholder="姓名或团队"></label>
+      <label><span>下一步时间</span><input class="opportunity-next-at" type="datetime-local" value="${formatDateTimeInput(item.next_action_at)}"></label>
+      <label><span>标签</span><input class="opportunity-tags-input" maxlength="240" value="${escapeHtml(item.tags.join("，"))}" placeholder="重点，GPU，教育"></label>
+      <label class="opportunity-notes-label"><span>跟进备注</span><textarea class="opportunity-notes" rows="3" maxlength="4000" placeholder="记录判断、风险与下一步">${escapeHtml(item.notes)}</textarea></label>
+    </div><button class="primary-button compact save-opportunity">保存跟进</button></details>
+    <div class="opportunity-timeline hidden"></div>
+  </article>`;
+}
+
+async function loadOpportunities() {
+  const filter = $("#opportunity-stage-filter")?.value || "";
+  const search = $("#opportunity-search")?.value.trim() || "";
+  const params = new URLSearchParams();
+  if (filter) params.set("stage", filter); if (search) params.set("search", search);
+  const rows = await api(`/api/v1/opportunities${params.size ? `?${params}` : ""}`);
+  rows.forEach((item) => state.opportunityProjectKeys.add(item.project_key));
+  const summary = $("#opportunity-summary"), board = $("#opportunity-board");
+  if (!summary || !board) return rows;
+  const now = Date.now(), soon = now + 3 * 86400000;
+  const due = rows.filter((item) => item.next_action_at && new Date(item.next_action_at).getTime() <= soon && !["won", "lost", "archived"].includes(item.stage)).length;
+  summary.innerHTML = [[filter || search ? "筛选结果" : "机会总数", rows.length], ["未读", rows.filter((item) => !item.is_read).length], ["三日内待办", due], ["已中标", rows.filter((item) => item.stage === "won").length]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
+  if (!rows.length) {
+    const filtered = Boolean(filter || search);
+    board.innerHTML = `<section class="opportunity-zero"><span>${filtered ? "⌕" : "◎"}</span><h2>${filtered ? "没有符合当前条件的机会" : "还没有机会项目"}</h2><p>${filtered ? "清空搜索和阶段筛选，回到完整机会看板。" : "先检索真实标讯，再从结果卡点击“加入机会”；这里不会填充演示假数据。"}</p><button class="secondary-button" data-empty-action="${filtered ? "clear" : "search"}">${filtered ? "清空筛选" : "去检索真实标讯"}</button></section>`;
+    const emptyAction = board.querySelector("[data-empty-action]");
+    emptyAction.addEventListener("click", async () => {
+      try {
+        if (emptyAction.dataset.emptyAction === "clear") {
+          $("#opportunity-search").value = "";
+          $("#opportunity-stage-filter").value = "";
+          await loadOpportunities();
+        } else {
+          await activateTab("search");
+          $("#query-input").focus();
+        }
+      } catch (error) { toast(error.message, 5000); }
+    });
+    return rows;
+  }
+  const stages = filter ? [filter] : Object.keys(OPPORTUNITY_STAGES);
+  board.innerHTML = stages.map((stage) => {
+    const items = rows.filter((item) => item.stage === stage);
+    return `<section class="opportunity-column" data-stage="${stage}"><div class="opportunity-column-head"><h2>${OPPORTUNITY_STAGES[stage]}</h2><span>${items.length}</span></div><div class="opportunity-column-body">${items.length ? items.map(opportunityCard).join("") : `<div class="opportunity-empty">暂无${OPPORTUNITY_STAGES[stage]}机会</div>`}</div></section>`;
+  }).join("");
+  bindOpportunityActions();
+  return rows;
+}
+
+function bindOpportunityActions() {
+  $$(".opportunity-card").forEach((card) => {
+    const id = card.dataset.id;
+    card.querySelector(".save-opportunity").addEventListener("click", async (event) => {
+      const button = event.currentTarget; button.disabled = true; button.textContent = "保存中…";
+      const tags = card.querySelector(".opportunity-tags-input").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean);
+      const nextAction = card.querySelector(".opportunity-next-at").value || null;
+      try {
+        await api(`/api/v1/opportunities/${id}`, { method: "PATCH", body: JSON.stringify({ stage: card.querySelector(".opportunity-stage").value, owner: card.querySelector(".opportunity-owner").value.trim(), next_action_at: nextAction, notes: card.querySelector(".opportunity-notes").value.trim(), tags }) });
+        toast("机会跟进信息已保存"); await loadOpportunities();
+      } catch (error) { button.disabled = false; button.textContent = "保存跟进"; toast(error.message, 5000); }
+    });
+    card.querySelector(".mark-read").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const unread = card.classList.contains("unread");
+      button.disabled = true;
+      try {
+        await api(`/api/v1/opportunities/${id}`, { method: "PATCH", body: JSON.stringify({ is_read: unread }) });
+        await loadOpportunities();
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message, 5000);
+      }
+    });
+    card.querySelector(".view-timeline").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const root = card.querySelector(".opportunity-timeline");
+      if (!root.classList.contains("hidden")) { root.classList.add("hidden"); button.setAttribute("aria-expanded", "false"); return; }
+      button.setAttribute("aria-expanded", "true");
+      root.classList.remove("hidden"); root.textContent = "正在读取项目生命周期…";
+      try {
+        const events = await api(`/api/v1/opportunities/${id}/timeline`);
+        root.innerHTML = events.map((event) => `<div class="timeline-event"><i></i><div><b>${escapeHtml(event.event_type)} · ${escapeHtml(event.published_at.slice(0, 10))}</b><p>${escapeHtml(event.title)}</p><a href="${escapeHtml(safeUrl(event.source_urls[0] || ""))}" target="_blank" rel="noreferrer">查看证据 ↗</a></div></div>`).join("");
+      } catch (error) { root.textContent = error.message; }
+    });
+  });
 }
 
 async function loadSources() {
@@ -296,7 +431,7 @@ async function activateTab(tab) {
   state.activeTab = tab;
   $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.tab === tab));
   $$(".tab-panel").forEach((node) => node.classList.remove("active")); $(`#tab-${tab}`).classList.add("active");
-  if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "reports") await loadReports();
+  if (tab === "opportunities") await loadOpportunities(); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "reports") await loadReports();
 }
 
 $$(".nav-link").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab).catch((error) => toast(error.message))));
@@ -305,10 +440,16 @@ $("#parse-button").addEventListener("click", () => parseIntent().catch((error) =
 $("#run-button").addEventListener("click", runQuery);
 $("#create-subscription-button").addEventListener("click", () => createSubscriptionFromQuery().catch((error) => toast(error.message, 5000)));
 $("#delivery-channel").addEventListener("change", renderChannelHint);
+$("#refresh-opportunities").addEventListener("click", () => loadOpportunities().catch((error) => toast(error.message)));
+$("#opportunity-stage-filter").addEventListener("change", () => loadOpportunities().catch((error) => toast(error.message)));
+$("#opportunity-search").addEventListener("input", () => {
+  clearTimeout(window.__opportunitySearchTimer);
+  window.__opportunitySearchTimer = setTimeout(() => loadOpportunities().catch((error) => toast(error.message)), 250);
+});
 $("#query-input").addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery(); });
 document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#query-input").focus(); } });
 window.createBidPilotSubscription = createSubscriptionFromQuery;
-Promise.all([loadSystemStatus(), loadSources(), loadReports(), loadSubscriptions()]).catch((error) => toast(error.message));
+Promise.all([loadSystemStatus(), loadSources(), loadReports(), loadSubscriptions(), loadOpportunities()]).catch((error) => toast(error.message));
 setInterval(() => {
   const editing = $(".subscription-editor:not(.hidden)");
   if (state.activeTab === "subscriptions" && !editing) loadSubscriptions().catch(() => {});

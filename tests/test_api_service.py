@@ -10,6 +10,9 @@ from bidpilot.config import Settings
 from bidpilot.models import (
     EventType,
     EvidenceSpan,
+    OpportunityCreate,
+    OpportunityStage,
+    OpportunityUpdate,
     RawTender,
     SourceSearchResult,
     SourceStatus,
@@ -36,6 +39,50 @@ class FakeSource(SourceAdapter):
             event_type=EventType.TENDER,
             project_id="AH-2026-001",
             evidence=[EvidenceSpan(text=body, source_url="https://example.com/tender/1")],
+        )
+        return SourceSearchResult(
+            source=self.name,
+            status=SourceStatus.OK,
+            items=[item],
+            message="fixture",
+            latency_ms=5,
+        )
+
+
+class SequencedLifecycleSource(SourceAdapter):
+    name = "生命周期测试源"
+
+    def __init__(self):
+        self.calls = 0
+
+    async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+        self.calls += 1
+        changed = self.calls > 1
+        body = "项目编号：AH-2026-009。采购 GPU 服务器，资格条件以招标文件为准。"
+        item = RawTender(
+            source=self.name,
+            source_url=(
+                "https://example.com/tender/9-change" if changed else "https://example.com/tender/9"
+            ),
+            title=(
+                "安徽大学 GPU 服务器采购更正公告" if changed else "安徽大学 GPU 服务器采购招标公告"
+            ),
+            published_at=datetime(2026, 7, 10, 9, 0),
+            region="安徽",
+            buyer="安徽大学",
+            body=body,
+            event_type=EventType.CHANGE if changed else EventType.TENDER,
+            project_id="AH-2026-009",
+            evidence=[
+                EvidenceSpan(
+                    text=body,
+                    source_url=(
+                        "https://example.com/tender/9-change"
+                        if changed
+                        else "https://example.com/tender/9"
+                    ),
+                )
+            ],
         )
         return SourceSearchResult(
             source=self.name,
@@ -394,3 +441,116 @@ async def test_manual_run_renews_lease_during_long_running_subscription(tmp_path
     assert duplicate is None
     result = await task
     assert result.new_count == 1
+
+
+async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    service = BidPilotService(settings, sources=[FakeSource()])
+    run = await service.run_query("最近1个月安徽服务器招标信息")
+    tender = run.records[0]
+    award = tender.model_copy(
+        update={
+            "canonical_id": f"{tender.canonical_id}-award",
+            "version_hash": "award-version",
+            "title": "安徽大学 GPU 服务器采购中标公告",
+            "event_type": EventType.AWARD,
+            "published_at": tender.published_at + timedelta(days=1),
+            "source_urls": ["https://example.com/tender/award"],
+        }
+    )
+    service.db.upsert_records([award.model_dump(mode="json")])
+
+    opportunity = service.create_opportunity(
+        OpportunityCreate(
+            canonical_id=tender.canonical_id,
+            version_hash=tender.version_hash,
+        )
+    )
+    assert opportunity.record.event_type == EventType.AWARD
+    duplicate = service.create_opportunity(
+        OpportunityCreate(
+            canonical_id=award.canonical_id,
+            version_hash=award.version_hash,
+        )
+    )
+    assert duplicate.id == opportunity.id
+    assert len(service.list_opportunities()) == 1
+
+    next_action = datetime(2026, 7, 20, 9, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
+    updated = service.update_opportunity(
+        opportunity.id,
+        OpportunityUpdate(
+            stage=OpportunityStage.FOLLOWING,
+            owner="王同学",
+            next_action_at=next_action,
+            notes="联系采购人并核验资质要求",
+            tags=["重点", "服务器", "重点"],
+            is_read=True,
+        ),
+    )
+    assert updated.stage == OpportunityStage.FOLLOWING
+    assert updated.owner == "王同学"
+    assert updated.tags == ["重点", "服务器"]
+    assert updated.next_action_at == next_action
+    assert service.list_opportunities(search="采购人")[0]["id"] == opportunity.id
+
+    timeline = service.opportunity_timeline(opportunity.id)
+    assert [item["event_type"] for item in timeline] == ["招标公告", "中标公告"]
+    assert timeline[1]["source_urls"] == ["https://example.com/tender/award"]
+
+    restarted = BidPilotService(settings, sources=[FakeSource()])
+    persisted = restarted.get_opportunity(opportunity.id)
+    assert persisted is not None
+    assert persisted.owner == "王同学"
+    assert persisted.notes == "联系采购人并核验资质要求"
+
+    app = create_app(settings, sources=[FakeSource()])
+    with TestClient(app) as client:
+        invalid = client.patch(
+            f"/api/v1/opportunities/{opportunity.id}",
+            json={"stage": "not-a-stage"},
+        )
+        assert invalid.status_code == 422
+        missing = client.post(
+            "/api/v1/opportunities",
+            json={"canonical_id": "forged", "version_hash": "forged"},
+        )
+        assert missing.status_code == 404
+        assert missing.json()["detail"] == "只能收藏系统已抓取并验证过的标讯记录"
+
+
+async def test_new_lifecycle_event_refreshes_opportunity_without_losing_follow_up(tmp_path: Path):
+    source = SequencedLifecycleSource()
+    service = BidPilotService(make_settings(tmp_path), sources=[source])
+    first_run = await service.run_query("最近1个月安徽服务器招标信息")
+    tender = first_run.records[0]
+    opportunity = service.create_opportunity(
+        OpportunityCreate(
+            canonical_id=tender.canonical_id,
+            version_hash=tender.version_hash,
+        )
+    )
+    service.update_opportunity(
+        opportunity.id,
+        OpportunityUpdate(
+            stage=OpportunityStage.FOLLOWING,
+            owner="项目负责人",
+            notes="已核验初始招标公告",
+            is_read=True,
+        ),
+    )
+
+    await service.run_query("最近1个月安徽服务器招标信息")
+
+    refreshed = service.get_opportunity(opportunity.id)
+    assert refreshed is not None
+    assert refreshed.record.event_type == EventType.CHANGE
+    assert refreshed.record.title == "安徽大学 GPU 服务器采购更正公告"
+    assert refreshed.is_read is False
+    assert refreshed.stage == OpportunityStage.FOLLOWING
+    assert refreshed.owner == "项目负责人"
+    assert refreshed.notes == "已核验初始招标公告"
+    assert [item["event_type"] for item in service.opportunity_timeline(opportunity.id)] == [
+        "招标公告",
+        "更正公告",
+    ]

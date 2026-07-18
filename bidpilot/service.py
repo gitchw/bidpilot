@@ -14,6 +14,11 @@ from bidpilot.delivery import DeliveryManager, DeliveryReceipt
 from bidpilot.intent import IntentParser
 from bidpilot.models import (
     DeliveryPolicy,
+    EventType,
+    Opportunity,
+    OpportunityCreate,
+    OpportunityStage,
+    OpportunityUpdate,
     RunResult,
     RunStatus,
     ScheduleKind,
@@ -21,12 +26,22 @@ from bidpilot.models import (
     Subscription,
     SubscriptionUpdate,
     TenderQuerySpec,
+    TenderRecord,
 )
 from bidpilot.pipeline import TenderPipeline
 from bidpilot.report import generate_report
 from bidpilot.scheduler import maintain_subscription_lease, next_schedule_time, retry_time
 from bidpilot.sources import CCGPSource, CECBidSource, GGZYSource, MofcomSource, QianlimaSource
 from bidpilot.sources.base import SourceAdapter
+
+_EVENT_RECENCY_RANK = {
+    EventType.INTENTION: 0,
+    EventType.TENDER: 1,
+    EventType.CHANGE: 2,
+    EventType.AWARD: 3,
+    EventType.CONTRACT: 4,
+    EventType.OTHER: 0,
+}
 
 
 class RunExecutionError(RuntimeError):
@@ -86,6 +101,7 @@ class BidPilotService:
             records = pipeline_result.records
             result_count = len(records)
             self.db.upsert_records([record.model_dump(mode="json") for record in records])
+            self._refresh_opportunities_for_projects(records)
             diagnostics_dump = [
                 item.model_dump(mode="json") for item in pipeline_result.diagnostics
             ]
@@ -499,6 +515,141 @@ class BidPilotService:
 
     def list_reports(self) -> list[dict]:
         return self.db.list_reports()
+
+    @staticmethod
+    def _opportunity_from_row(row: dict) -> Opportunity:
+        return Opportunity(
+            id=row["id"],
+            project_key=row["project_key"],
+            record=TenderRecord.model_validate_json(row["snapshot_json"]),
+            stage=OpportunityStage(row["stage"]),
+            owner=row.get("owner", ""),
+            next_action_at=(
+                datetime.fromisoformat(row["next_action_at"]) if row.get("next_action_at") else None
+            ),
+            notes=row.get("notes", ""),
+            tags=json.loads(row.get("tags_json") or "[]"),
+            is_read=bool(row.get("is_read")),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def _record_recency_key(self, record: TenderRecord) -> tuple[datetime, int]:
+        published_at = record.published_at
+        if published_at.tzinfo is None:
+            published_at = published_at.replace(tzinfo=ZoneInfo(self.settings.timezone))
+        return (
+            published_at.astimezone(UTC),
+            _EVENT_RECENCY_RANK[record.event_type],
+        )
+
+    def _latest_project_record(self, project_key: str) -> TenderRecord:
+        records = [
+            TenderRecord.model_validate_json(row["payload_json"])
+            for row in self.db.list_project_items(project_key)
+        ]
+        if not records:
+            raise KeyError(f"项目不存在：{project_key}")
+        _, latest = max(
+            enumerate(records),
+            key=lambda item: (*self._record_recency_key(item[1]), item[0]),
+        )
+        return latest
+
+    def _refresh_opportunities_for_projects(self, records: list[TenderRecord]) -> None:
+        for project_key in {record.project_key for record in records}:
+            if self.db.get_opportunity_by_project_key(project_key) is None:
+                continue
+            latest = self._latest_project_record(project_key)
+            self.db.refresh_opportunity_snapshot(
+                project_key=project_key,
+                canonical_id=latest.canonical_id,
+                version_hash=latest.version_hash,
+                snapshot=latest.model_dump(mode="json"),
+            )
+
+    def create_opportunity(self, request: OpportunityCreate) -> Opportunity:
+        selected = self.db.get_tender_item(request.canonical_id, request.version_hash)
+        if selected is None:
+            raise KeyError("只能收藏系统已抓取并验证过的标讯记录")
+        latest = self._latest_project_record(selected["project_key"])
+        row = self.db.upsert_opportunity(
+            opportunity_id=uuid4().hex,
+            project_key=latest.project_key,
+            canonical_id=latest.canonical_id,
+            version_hash=latest.version_hash,
+            snapshot=latest.model_dump(mode="json"),
+        )
+        return self._opportunity_from_row(row)
+
+    def get_opportunity(self, opportunity_id: str) -> Opportunity | None:
+        row = self.db.get_opportunity(opportunity_id)
+        return self._opportunity_from_row(row) if row else None
+
+    def list_opportunities(
+        self,
+        *,
+        stage: OpportunityStage | None = None,
+        search: str | None = None,
+    ) -> list[dict]:
+        opportunities = [
+            self._opportunity_from_row(row)
+            for row in self.db.list_opportunities(stage.value if stage else None)
+        ]
+        needle = (search or "").strip().casefold()
+        if needle:
+            opportunities = [
+                item
+                for item in opportunities
+                if needle
+                in " ".join(
+                    (
+                        item.record.title,
+                        item.record.buyer or "",
+                        item.record.region or "",
+                        item.owner,
+                        item.notes,
+                        " ".join(item.tags),
+                    )
+                ).casefold()
+            ]
+        return [item.model_dump(mode="json") for item in opportunities]
+
+    def update_opportunity(self, opportunity_id: str, update: OpportunityUpdate) -> Opportunity:
+        if self.db.get_opportunity(opportunity_id) is None:
+            raise KeyError(f"机会不存在：{opportunity_id}")
+        changes: dict[str, object] = {}
+        fields = update.model_fields_set
+        if "stage" in fields and update.stage is not None:
+            changes["stage"] = update.stage.value
+        if "owner" in fields:
+            changes["owner"] = (update.owner or "").strip()
+        if "next_action_at" in fields:
+            next_action_at = update.next_action_at
+            if next_action_at and next_action_at.tzinfo is None:
+                next_action_at = next_action_at.replace(tzinfo=ZoneInfo(self.settings.timezone))
+            changes["next_action_at"] = next_action_at.isoformat() if next_action_at else None
+        if "notes" in fields:
+            changes["notes"] = (update.notes or "").strip()
+        if "tags" in fields:
+            changes["tags_json"] = json.dumps(update.tags or [], ensure_ascii=False)
+        if "is_read" in fields:
+            changes["is_read"] = int(bool(update.is_read))
+        self.db.update_opportunity(opportunity_id, changes)
+        result = self.get_opportunity(opportunity_id)
+        assert result is not None
+        return result
+
+    def opportunity_timeline(self, opportunity_id: str) -> list[dict]:
+        opportunity = self.db.get_opportunity(opportunity_id)
+        if opportunity is None:
+            raise KeyError(f"机会不存在：{opportunity_id}")
+        records = [
+            TenderRecord.model_validate_json(row["payload_json"])
+            for row in self.db.list_project_items(opportunity["project_key"])
+        ]
+        records.sort(key=self._record_recency_key)
+        return [item.model_dump(mode="json") for item in records]
 
     def system_status(self) -> dict:
         now = datetime.now(UTC)

@@ -130,11 +130,28 @@ class Database:
             pid INTEGER NOT NULL,
             hostname TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS opportunities (
+            id TEXT PRIMARY KEY,
+            project_key TEXT NOT NULL UNIQUE,
+            canonical_id TEXT NOT NULL,
+            version_hash TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            stage TEXT NOT NULL DEFAULT 'new',
+            owner TEXT NOT NULL DEFAULT '',
+            next_action_at TEXT,
+            notes TEXT NOT NULL DEFAULT '',
+            tags_json TEXT NOT NULL DEFAULT '[]',
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_subscriptions_due ON subscriptions(enabled, next_run_at);
         CREATE INDEX IF NOT EXISTS idx_delivery_attempts_run ON delivery_attempts(run_id);
+        CREATE INDEX IF NOT EXISTS idx_opportunities_stage ON opportunities(stage, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_opportunities_next_action ON opportunities(next_action_at);
         """
         with self.connection() as conn:
             conn.executescript(schema)
@@ -264,6 +281,143 @@ class Database:
                         now,
                     ),
                 )
+
+    def get_tender_item(self, canonical_id: str, version_hash: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM tender_items WHERE canonical_id=? AND version_hash=?
+                """,
+                (canonical_id, version_hash),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_project_items(self, project_key: str) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM tender_items
+                WHERE project_key=?
+                ORDER BY first_seen_at ASC, rowid ASC
+                """,
+                (project_key,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_opportunity(
+        self,
+        *,
+        opportunity_id: str,
+        project_key: str,
+        canonical_id: str,
+        version_hash: str,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = utcnow_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO opportunities(
+                  id, project_key, canonical_id, version_hash, snapshot_json,
+                  created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?)
+                ON CONFLICT(project_key) DO UPDATE SET
+                  canonical_id=excluded.canonical_id,
+                  version_hash=excluded.version_hash,
+                  snapshot_json=excluded.snapshot_json,
+                  is_read=0,
+                  updated_at=excluded.updated_at
+                WHERE opportunities.canonical_id != excluded.canonical_id
+                   OR opportunities.version_hash != excluded.version_hash
+                """,
+                (
+                    opportunity_id,
+                    project_key,
+                    canonical_id,
+                    version_hash,
+                    json.dumps(snapshot, ensure_ascii=False, default=str),
+                    now,
+                    now,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM opportunities WHERE project_key=?", (project_key,)
+            ).fetchone()
+        assert row is not None
+        return dict(row)
+
+    def get_opportunity(self, opportunity_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM opportunities WHERE id=?", (opportunity_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_opportunity_by_project_key(self, project_key: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM opportunities WHERE project_key=?", (project_key,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def refresh_opportunity_snapshot(
+        self,
+        *,
+        project_key: str,
+        canonical_id: str,
+        version_hash: str,
+        snapshot: dict[str, Any],
+    ) -> bool:
+        """Surface a newly observed lifecycle event without overwriting user follow-up fields."""
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE opportunities
+                SET canonical_id=?, version_hash=?, snapshot_json=?, is_read=0, updated_at=?
+                WHERE project_key=? AND (canonical_id != ? OR version_hash != ?)
+                """,
+                (
+                    canonical_id,
+                    version_hash,
+                    json.dumps(snapshot, ensure_ascii=False, default=str),
+                    utcnow_iso(),
+                    project_key,
+                    canonical_id,
+                    version_hash,
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def list_opportunities(self, stage: str | None = None) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            if stage:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM opportunities WHERE stage=? ORDER BY updated_at DESC
+                    """,
+                    (stage,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM opportunities ORDER BY updated_at DESC"
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_opportunity(self, opportunity_id: str, changes: dict[str, Any]) -> bool:
+        allowed = {"stage", "owner", "next_action_at", "notes", "tags_json", "is_read"}
+        invalid = set(changes) - allowed
+        if invalid:
+            raise ValueError(f"Unsupported opportunity fields: {sorted(invalid)}")
+        if not changes:
+            return self.get_opportunity(opportunity_id) is not None
+        assignments = [f"{column}=?" for column in changes]
+        assignments.append("updated_at=?")
+        values = [*changes.values(), utcnow_iso(), opportunity_id]
+        with self.connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE opportunities SET {', '.join(assignments)} WHERE id=?", values
+            )
+        return cursor.rowcount > 0
 
     def undelivered_keys(
         self, subscription_id: str, keys: list[tuple[str, str]]

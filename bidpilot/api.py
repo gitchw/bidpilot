@@ -12,10 +12,15 @@ from bidpilot import __version__
 from bidpilot.config import Settings, get_settings
 from bidpilot.models import (
     HealthResponse,
+    Opportunity,
+    OpportunityCreate,
+    OpportunityStage,
+    OpportunityUpdate,
     RunResult,
     SubscriptionCreate,
     SubscriptionUpdate,
     TenderQuerySpec,
+    TenderRecord,
 )
 from bidpilot.scheduler import SubscriptionWorker
 from bidpilot.service import BidPilotService, SubscriptionBusyError
@@ -29,6 +34,10 @@ class QueryRequest(BaseModel):
 
 class ResumeRequest(BaseModel):
     run_immediately: bool = False
+
+
+def _key_error_detail(error: KeyError) -> str:
+    return str(error.args[0]) if error.args else str(error)
 
 
 def create_app(
@@ -205,6 +214,44 @@ def create_app(
         if service.get_subscription(subscription_id) is None:
             raise HTTPException(status_code=404, detail="订阅不存在")
         return service.list_delivery_attempts(subscription_id)
+
+    @app.post("/api/v1/opportunities", response_model=Opportunity)
+    async def create_opportunity(request: OpportunityCreate):
+        try:
+            return service.create_opportunity(request)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.get("/api/v1/opportunities", response_model=list[Opportunity])
+    async def list_opportunities(
+        stage: OpportunityStage | None = None,
+        search: str | None = None,
+    ):
+        return service.list_opportunities(stage=stage, search=search)
+
+    @app.get("/api/v1/opportunities/{opportunity_id}", response_model=Opportunity)
+    async def get_opportunity(opportunity_id: str):
+        result = service.get_opportunity(opportunity_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="机会不存在")
+        return result
+
+    @app.patch("/api/v1/opportunities/{opportunity_id}", response_model=Opportunity)
+    async def update_opportunity(opportunity_id: str, request: OpportunityUpdate):
+        try:
+            return service.update_opportunity(opportunity_id, request)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+
+    @app.get(
+        "/api/v1/opportunities/{opportunity_id}/timeline",
+        response_model=list[TenderRecord],
+    )
+    async def opportunity_timeline(opportunity_id: str):
+        try:
+            return service.opportunity_timeline(opportunity_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
 
     @app.get("/api/v1/system/status")
     async def system_status():

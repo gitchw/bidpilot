@@ -18,6 +18,7 @@
     {"id": "F14", "description": "End-to-end online run generates multiple real reports and passes an independent judge-style evaluation.", "status": "partial_real_runs_verified_independent_judge_review_pending"},
     {"id": "F15", "description": "Cross-platform Python bootstrap, Docker image, Compose web/worker deployment and Windows/macOS/Linux CI are provided.", "status": "passing_local_windows_docker_unavailable"},
     {"id": "F16", "description": "Users can inspect source operations and fully manage subscription rules, state, delivery policy and execution logs in the Web UI.", "status": "passing_browser_verified"},
-    {"id": "F17", "description": "Standard SMTP delivery sends DOCX attachments and no-change receipts with SSL or STARTTLS without blocking the async worker.", "status": "passing_mock_smtp_verified"}
+    {"id": "F17", "description": "Standard SMTP delivery sends DOCX attachments and no-change receipts with SSL or STARTTLS without blocking the async worker.", "status": "passing_mock_smtp_verified"},
+    {"id": "F18", "description": "Project-level opportunity workspace only accepts persisted tender evidence, deduplicates by project, persists follow-up state, refreshes lifecycle snapshots and provides a browser-managed board and evidence timeline.", "status": "passing_browser_verified"}
   ]
 }

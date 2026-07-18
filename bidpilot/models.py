@@ -44,6 +44,15 @@ class EventType(StrEnum):
     OTHER = "其他公告"
 
 
+class OpportunityStage(StrEnum):
+    NEW = "new"
+    FOLLOWING = "following"
+    BIDDING = "bidding"
+    WON = "won"
+    LOST = "lost"
+    ARCHIVED = "archived"
+
+
 class IntentSchedule(BaseModel):
     kind: ScheduleKind = ScheduleKind.IMMEDIATE
     send_time: time | None = None
@@ -122,6 +131,41 @@ class TenderRecord(BaseModel):
     duplicate_count: int = 1
     lifecycle_id: str
     auth_level: str = "public"
+
+
+class OpportunityCreate(BaseModel):
+    canonical_id: str = Field(min_length=1, max_length=128)
+    version_hash: str = Field(min_length=1, max_length=128)
+
+
+class OpportunityUpdate(BaseModel):
+    stage: OpportunityStage | None = None
+    owner: str | None = Field(default=None, max_length=100)
+    next_action_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=4000)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    is_read: bool | None = None
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return list(dict.fromkeys(item.strip()[:40] for item in value if item.strip()))
+
+
+class Opportunity(BaseModel):
+    id: str
+    project_key: str
+    record: TenderRecord
+    stage: OpportunityStage = OpportunityStage.NEW
+    owner: str = ""
+    next_action_at: datetime | None = None
+    notes: str = ""
+    tags: list[str] = Field(default_factory=list)
+    is_read: bool = False
+    created_at: datetime
+    updated_at: datetime
 
 
 class SourceDiagnostic(BaseModel):
