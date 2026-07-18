@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from contextlib import suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -19,6 +18,7 @@ from bidpilot.config import get_settings
 from bidpilot.control import ControlPlane, local_control_url
 from bidpilot.scheduler import SubscriptionWorker
 from bidpilot.service import BidPilotService
+from bidpilot.source_auth import SourceAuthError
 
 app = typer.Typer(
     name="bidpilot",
@@ -250,40 +250,35 @@ def sources_command() -> None:
 
 
 @app.command("auth")
-def auth_command(source: str = typer.Argument("qianlima")) -> None:
-    if source.lower() != "qianlima":
-        raise typer.BadParameter("当前交互登录仅支持 qianlima")
-    asyncio.run(_authorize_qianlima())
+def auth_command(
+    source: str = typer.Argument("qianlima", help="qianlima 或 cecbid"),
+    test: bool = typer.Option(True, "--test/--no-test", help="保存后执行一次真实授权测试"),
+) -> None:
+    asyncio.run(_authorize_source(source.lower(), test=test))
 
 
-async def _authorize_qianlima() -> None:
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as exc:
-        raise typer.BadParameter(
-            "请先用当前 Python 运行 `python -m pip install -e '.[auth]'`，"
-            "再运行 `python -m playwright install chromium`"
-        ) from exc
-
+async def _authorize_source(source: str, *, test: bool) -> None:
     settings = get_settings()
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=False)
-        context = await browser.new_context()
-        page = await context.new_page()
-        await page.goto("https://wap.qianlima.com/login.jsp")
-        console.print("[yellow]请在打开的浏览器中完成免费会员登录。登录成功后回到此窗口。[/yellow]")
-        await asyncio.to_thread(input, "按 Enter 保存本机会话（不会保存密码）...")
-        cookies = await context.cookies("https://wap.qianlima.com")
-        await browser.close()
-    if not cookies:
-        raise typer.BadParameter("未检测到登录会话")
-    cookie_header = "; ".join(f"{item['name']}={item['value']}" for item in cookies)
-    path: Path = settings.qianlima_cookie_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(cookie_header, encoding="utf-8")
-    with suppress(OSError):
-        path.chmod(0o600)
-    console.print(f"[green]授权会话已保存到 {path}（已被 .gitignore 排除）[/green]")
+    service = BidPilotService(settings)
+    try:
+        session = await service.source_auth.start(source)
+        console.print(
+            "[yellow]可见浏览器已经打开。请由你本人完成登录、扫码或验证码，"
+            "成功后回到这个终端。[/yellow]"
+        )
+        await asyncio.to_thread(input, "按 Enter 加密保存本机会话（不会保存密码）...")
+        completed = await service.source_auth.complete(session.session_id)
+        if completed.status != "completed":
+            raise SourceAuthError(completed.message)
+        console.print("[green]授权会话已使用本机密钥加密写入 SQLite。[/green]")
+        if test:
+            result = await service.source_auth.test(source)
+            color = "green" if result.success else "yellow"
+            console.print(f"[{color}]{result.message}[/{color}]")
+    except SourceAuthError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        await service.source_auth.close_all()
 
 
 @app.command("openapi")

@@ -109,7 +109,7 @@ class QianlimaSource(SourceAdapter):
             return SourceSearchResult(
                 source=self.name,
                 status=SourceStatus.AUTH_REQUIRED,
-                message="需要用户授权的免费会员登录态；运行 bidpilot auth qianlima 完成登录。",
+                message="需要用户授权的免费会员登录态；请在来源中心点击“打开浏览器授权”。",
                 latency_ms=0,
             )
         headers = {"Cookie": cookie, "Referer": f"{self.base_url}/"}

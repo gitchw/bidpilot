@@ -155,6 +155,17 @@ class Database:
             is_secret INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS source_authorizations (
+            source_id TEXT PRIMARY KEY,
+            encrypted_cookie TEXT NOT NULL,
+            cookie_names_json TEXT NOT NULL DEFAULT '[]',
+            domains_json TEXT NOT NULL DEFAULT '[]',
+            authorized_at TEXT NOT NULL,
+            expires_at TEXT,
+            last_test_at TEXT,
+            last_test_status TEXT NOT NULL DEFAULT 'not_tested',
+            last_message TEXT NOT NULL DEFAULT ''
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
@@ -162,6 +173,7 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_delivery_attempts_run ON delivery_attempts(run_id);
         CREATE INDEX IF NOT EXISTS idx_opportunities_stage ON opportunities(stage, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_opportunities_next_action ON opportunities(next_action_at);
+        CREATE INDEX IF NOT EXISTS idx_source_auth_test ON source_authorizations(last_test_at DESC);
         """
         with self.connection() as conn:
             conn.executescript(schema)
@@ -826,6 +838,86 @@ class Database:
                     for field, (value, is_secret) in values.items()
                 ],
             )
+
+    def get_source_authorization(self, source_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM source_authorizations WHERE source_id=?",
+                (source_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_source_authorizations(self) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM source_authorizations ORDER BY authorized_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_source_authorization(
+        self,
+        *,
+        source_id: str,
+        encrypted_cookie: str,
+        cookie_names: list[str],
+        domains: list[str],
+        authorized_at: str,
+        expires_at: str | None,
+        message: str,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO source_authorizations(
+                  source_id, encrypted_cookie, cookie_names_json, domains_json,
+                  authorized_at, expires_at, last_test_status, last_message
+                ) VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                  encrypted_cookie=excluded.encrypted_cookie,
+                  cookie_names_json=excluded.cookie_names_json,
+                  domains_json=excluded.domains_json,
+                  authorized_at=excluded.authorized_at,
+                  expires_at=excluded.expires_at,
+                  last_test_at=NULL,
+                  last_test_status='not_tested',
+                  last_message=excluded.last_message
+                """,
+                (
+                    source_id,
+                    encrypted_cookie,
+                    json.dumps(cookie_names, ensure_ascii=False),
+                    json.dumps(domains, ensure_ascii=False),
+                    authorized_at,
+                    expires_at,
+                    "not_tested",
+                    message,
+                ),
+            )
+
+    def update_source_authorization_test(
+        self,
+        source_id: str,
+        *,
+        status: str,
+        message: str,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE source_authorizations
+                SET last_test_at=?, last_test_status=?, last_message=?
+                WHERE source_id=?
+                """,
+                (utcnow_iso(), status, message, source_id),
+            )
+
+    def delete_source_authorization(self, source_id: str) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM source_authorizations WHERE source_id=?",
+                (source_id,),
+            )
+        return cursor.rowcount > 0
 
     def latest_source_runs(self) -> dict[str, dict[str, Any]]:
         with self.connection() as conn:

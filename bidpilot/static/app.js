@@ -8,6 +8,7 @@ const state = {
   configEditToken: null,
   activeTab: "search",
   opportunityProjectKeys: new Set(),
+  sources: [],
 };
 const OPPORTUNITY_STAGES = {
   new: "待评估", following: "跟进中", bidding: "投标准备",
@@ -20,7 +21,7 @@ const FILTER_REASON_LABELS = {
 };
 const SOURCE_STATUS_LABELS = {
   ok: "正常完成", partial: "覆盖不完整",
-  auth_required: "需要登录", failed: "抓取失败",
+  auth_required: "需要登录", failed: "抓取失败", skipped: "本轮未调用",
 };
 
 function escapeHtml(value = "") {
@@ -290,6 +291,7 @@ function bindOpportunityActions() {
 
 async function loadSources() {
   const rows = await api("/api/v1/sources/status");
+  state.sources = rows;
   $("#source-list").innerHTML = rows.map((row) => {
     const warning = !row.configured || ["partial", "failed", "auth_required"].includes(row.last_status);
     const detail = row.last_message || (row.configured ? "等待首次运行" : "待授权或配置");
@@ -303,8 +305,42 @@ function sourceState(row) {
   if (!row.configured) return ["待授权", "muted"];
   if (row.last_status === "failed") return ["最近失败", "danger"];
   if (["partial", "auth_required"].includes(row.last_status)) return ["部分可用", "warning"];
+  if (row.last_status === "skipped") return ["按地域跳过", "muted"];
   if (row.last_status === "ok") return ["运行正常", "success"];
   return ["等待首轮", "muted"];
+}
+
+function authStateLabel(auth) {
+  const labels = {
+    not_supported: "无需/不可复用授权", not_authorized: "尚未授权",
+    authorizing: "等待你完成登录", authorized: "授权已保存",
+    expired: "授权已过期", failed: "授权失败",
+  };
+  return labels[auth?.state] || "授权状态未知";
+}
+
+function sourceCapabilityTags(row) {
+  const tags = [];
+  if (row.supports_query_variants) tags.push("关键词补搜");
+  tags.push(row.supports_region_filter ? "地域过滤" : "本地硬校验地域");
+  tags.push(row.supports_date_filter ? "日期过滤" : "本地硬校验日期");
+  if (row.supports_pagination) tags.push("分页");
+  tags.push(row.supports_detail ? "正文" : "列表摘要");
+  return tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
+}
+
+function sourceAuthActions(row) {
+  const auth = row.authorization || {};
+  if (!auth.managed) {
+    return auth.login_url ? `<a class="secondary-button compact" href="${escapeHtml(safeUrl(auth.login_url))}" target="_blank" rel="noreferrer">打开原站工作台 ↗</a>` : "";
+  }
+  if (auth.state === "authorizing") {
+    return `<button class="primary-button compact source-auth-complete" data-source-id="${escapeHtml(row.id)}" data-session-id="${escapeHtml(auth.active_session_id || "")}">我已登录，完成授权</button><button class="secondary-button compact source-auth-clear" data-source-id="${escapeHtml(row.id)}">取消并清理</button>`;
+  }
+  if (auth.state === "authorized") {
+    return `<button class="secondary-button compact source-auth-test" data-source-id="${escapeHtml(row.id)}">测试授权</button><button class="secondary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">重新授权</button><button class="danger-button source-auth-clear" data-source-id="${escapeHtml(row.id)}">清除</button>`;
+  }
+  return `<button class="primary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">打开浏览器授权</button>`;
 }
 
 function renderSourceCenter(rows) {
@@ -319,9 +355,58 @@ function renderSourceCenter(rows) {
     const access = row.member_enhanced ? `${row.mode} · 已授权增强` : row.mode;
     const checked = row.last_checked_at ? formatTime(row.last_checked_at) : "尚未运行";
     const message = row.last_message || (row.configured ? "等待首轮真实查询验证" : "需要用户在本机完成授权或配置");
+    const auth = row.authorization || { state: "not_supported", authorization_scope: "该公开来源无需授权。", message: "" };
     const rejection = Object.entries(row.last_rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)} ${count}</span>`).join("");
-    return `<article class="source-card"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p>${!row.configured ? `<div class="source-action-note">需授权源不会被静默伪装成成功；完成本机登录后，下次任务自动启用。</div>` : ""}</article>`;
+    return `<article class="source-card" data-source-id="${escapeHtml(row.id)}"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span><span>${escapeHtml(row.query_mode || "列表检索")}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-capabilities">${sourceCapabilityTags(row)}</div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span><span><small>最近耗时</small><b>${row.last_latency_ms ? `${row.last_latency_ms} ms` : "暂无"}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p><details class="source-boundary"><summary>覆盖范围与限制</summary><p>${escapeHtml(row.coverage_note || "来源暂未提供覆盖说明。")}</p></details><div class="source-auth-panel ${escapeHtml(auth.state)}"><div><b>${escapeHtml(authStateLabel(auth))}</b><p>${escapeHtml(auth.authorization_scope || "")}</p><small>${escapeHtml(auth.message || "")}${auth.last_test_status === "passed" ? " · 最近测试通过" : auth.last_test_status === "failed" ? " · 最近测试失败" : ""}</small></div><div class="source-auth-actions">${sourceAuthActions(row)}</div></div></article>`;
   }).join("");
+  bindSourceAuthActions();
+}
+
+async function startSourceAuth(sourceId, button) {
+  button.disabled = true; button.textContent = "正在打开浏览器…";
+  try {
+    await configApi(`/api/v1/sources/${encodeURIComponent(sourceId)}/auth/start`, { method: "POST" });
+    toast("授权浏览器已打开。请在里面亲自完成登录，再回到这里点击“我已登录，完成授权”。", 7000);
+    await loadSources();
+  } catch (error) { toast(error.message, 7000); }
+  finally { button.disabled = false; }
+}
+
+async function completeSourceAuth(sessionId, button) {
+  if (!sessionId) return toast("授权会话已失效，请重新开始", 5000);
+  button.disabled = true; button.textContent = "正在加密保存…";
+  try {
+    await configApi(`/api/v1/sources/auth/sessions/${encodeURIComponent(sessionId)}/complete`, { method: "POST" });
+    toast("授权已加密保存。现在可以点击“测试授权”验证真实检索。", 6000);
+    await loadSources();
+  } catch (error) { toast(error.message, 7000); await loadSources(); }
+  finally { button.disabled = false; }
+}
+
+async function testSourceAuth(sourceId, button) {
+  button.disabled = true; button.textContent = "真实测试中…";
+  try {
+    const result = await configApi(`/api/v1/sources/${encodeURIComponent(sourceId)}/auth/test`, { method: "POST" });
+    toast(result.message, 7000); await loadSources();
+  } catch (error) { toast(error.message, 7000); await loadSources(); }
+  finally { button.disabled = false; }
+}
+
+async function clearSourceAuth(sourceId, button) {
+  if (!window.confirm("确定清除这个来源保存在本机的加密授权会话吗？不会删除原网站账号。")) return;
+  button.disabled = true;
+  try {
+    await configApi(`/api/v1/sources/${encodeURIComponent(sourceId)}/auth`, { method: "DELETE" });
+    toast("本机授权会话已清除"); await loadSources();
+  } catch (error) { toast(error.message, 6000); }
+  finally { button.disabled = false; }
+}
+
+function bindSourceAuthActions() {
+  $$(".source-auth-start").forEach((button) => button.addEventListener("click", () => startSourceAuth(button.dataset.sourceId, button)));
+  $$(".source-auth-complete").forEach((button) => button.addEventListener("click", () => completeSourceAuth(button.dataset.sessionId, button)));
+  $$(".source-auth-test").forEach((button) => button.addEventListener("click", () => testSourceAuth(button.dataset.sourceId, button)));
+  $$(".source-auth-clear").forEach((button) => button.addEventListener("click", () => clearSourceAuth(button.dataset.sourceId, button)));
 }
 
 function renderDeliveryOptions() {

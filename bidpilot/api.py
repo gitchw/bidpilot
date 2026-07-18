@@ -37,6 +37,12 @@ from bidpilot.runtime_config import (
 )
 from bidpilot.scheduler import SubscriptionWorker
 from bidpilot.service import BidPilotService, SubscriptionBusyError
+from bidpilot.source_auth import (
+    SourceAuthError,
+    SourceAuthSessionView,
+    SourceAuthTestResult,
+    SourceAuthView,
+)
 from bidpilot.sources.base import SourceAdapter
 
 
@@ -79,6 +85,7 @@ OPENAPI_TAGS = [
     {"name": "长期订阅", "description": "创建、编辑、暂停、恢复和审计持久化订阅。"},
     {"name": "机会工作台", "description": "把已抓取标讯转为项目级跟进机会并查看生命周期。"},
     {"name": "配置中心", "description": "安全管理模型与推送通道，并执行真实连通性测试。"},
+    {"name": "来源授权", "description": "由用户本人完成可见浏览器登录，并管理加密的来源会话。"},
 ]
 
 
@@ -135,6 +142,19 @@ def create_app(
         if not config_tokens.validate(x_bidpilot_config_token):
             raise HTTPException(status_code=403, detail="配置编辑令牌缺失、无效或已过期")
 
+    def require_loopback_config_token(
+        request: Request,
+        token: str | None,
+    ) -> None:
+        client_host = request.client.host if request.client else ""
+        try:
+            is_loopback = ipaddress.ip_address(client_host).is_loopback
+        except ValueError:
+            is_loopback = client_host == "testclient"
+        if not is_loopback:
+            raise HTTPException(status_code=403, detail="来源授权只允许从运行服务的本机操作")
+        require_config_token(token)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         worker = None
@@ -145,6 +165,7 @@ def create_app(
         try:
             yield
         finally:
+            await service.source_auth.close_all()
             if worker:
                 await worker.stop()
 
@@ -734,6 +755,170 @@ def create_app(
     )
     async def source_status():
         return service.source_status()
+
+    @app.get(
+        "/api/v1/sources/authorizations",
+        response_model=list[SourceAuthView],
+        **_api_docs(
+            tag="来源授权",
+            summary="读取全部来源的脱敏授权状态",
+            purpose="来源中心用它区分无需授权、可管理授权、正在登录、已授权、已过期以及仅能打开原站工作台的来源。",
+            parameters="无请求体、无查询参数。",
+            returns="HTTP 200；逐来源返回状态、官方登录页、授权真实作用范围、时间和测试结论；不返回 Cookie 名称或值。",
+            side_effects="无。不会打开浏览器、访问外站或刷新会话。",
+            errors="通常无业务错误；数据库不可用时返回 500。",
+            example="GET /api/v1/sources/authorizations",
+        ),
+    )
+    async def list_source_authorizations():
+        return service.source_auth.list_status()
+
+    @app.post(
+        "/api/v1/sources/{source_id}/auth/start",
+        response_model=SourceAuthSessionView,
+        **_api_docs(
+            tag="来源授权",
+            summary="开始可见浏览器授权",
+            purpose="在本机打开独立可见 Chromium，让用户本人登录、扫码、输入验证码或按原站要求使用 CA。",
+            parameters="路径 source_id 当前支持 qianlima、cecbid；请求头必须含 X-BidPilot-Config-Token；无请求体。",
+            returns="HTTP 200；返回一次性会话 ID、15 分钟截止时间和操作提示。",
+            side_effects="【本机副作用】启动一个可见浏览器进程并打开官方登录页；不会自动输入账号、密码、验证码或点击提交。",
+            errors="403：非回环请求或编辑令牌无效；409：来源不支持安全复用授权、浏览器组件缺失或 Chromium 无法启动。",
+            example="POST /api/v1/sources/qianlima/auth/start\nX-BidPilot-Config-Token: <token>",
+            responses={403: "必须从本机并携带短期令牌。", 409: "来源不支持或浏览器组件不可用。"},
+        ),
+    )
+    async def start_source_authorization(
+        source_id: str,
+        request: Request,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_loopback_config_token(request, x_bidpilot_config_token)
+        try:
+            return await service.source_auth.start(source_id)
+        except SourceAuthError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get(
+        "/api/v1/sources/auth/sessions/{session_id}",
+        response_model=SourceAuthSessionView,
+        **_api_docs(
+            tag="来源授权",
+            summary="查看一次授权窗口状态",
+            purpose="确认可见浏览器授权窗口是否仍在 15 分钟有效期内，以及是否已经完成、失败或过期。",
+            parameters="路径 session_id 来自开始授权接口；不需要请求体。",
+            returns="HTTP 200；返回脱敏状态和下一步中文提示。",
+            side_effects="只会清理已经超时的本机浏览器会话；不会读取或保存 Cookie。",
+            errors="404：会话不存在或服务重启后已失效。",
+            example="GET /api/v1/sources/auth/sessions/<session_id>",
+            responses={404: "会话不存在。"},
+        ),
+    )
+    async def get_source_authorization_session(session_id: str):
+        try:
+            return await service.source_auth.session(session_id)
+        except SourceAuthError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post(
+        "/api/v1/sources/auth/sessions/{session_id}/complete",
+        response_model=SourceAuthSessionView,
+        **_api_docs(
+            tag="来源授权",
+            summary="完成并加密保存授权",
+            purpose="用户确认已完成登录后，读取临时浏览器中属于允许域名的 Cookie，加密写入 SQLite 并关闭授权浏览器。",
+            parameters="路径 session_id；请求头必须含短期编辑令牌；无请求体。",
+            returns="HTTP 200；返回 completed 或 failed 及脱敏原因。不会返回 Cookie 名称和值。",
+            side_effects="【敏感写入】仅保存允许域名的会话 Cookie，使用本机 Fernet 密钥加密；不保存账号、密码、验证码或 CA。",
+            errors="403：非回环请求或令牌无效；404：会话不存在；409：未检测到允许域名会话。",
+            example="POST /api/v1/sources/auth/sessions/<session_id>/complete\nX-BidPilot-Config-Token: <token>",
+            responses={403: "必须从本机并携带短期令牌。", 404: "会话不存在。"},
+        ),
+    )
+    async def complete_source_authorization(
+        session_id: str,
+        request: Request,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_loopback_config_token(request, x_bidpilot_config_token)
+        try:
+            result = await service.source_auth.complete(session_id)
+        except SourceAuthError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if result.status == "failed":
+            raise HTTPException(status_code=409, detail=result.message)
+        return result
+
+    @app.post(
+        "/api/v1/sources/{source_id}/auth/test",
+        response_model=SourceAuthTestResult,
+        **_api_docs(
+            tag="来源授权",
+            summary="真实测试来源授权",
+            purpose="携带已加密保存的会话执行一次有界真实搜索，确认来源不再要求登录并实际读取到会员可见内容。",
+            parameters="路径 source_id；请求头必须含短期编辑令牌；无请求体。",
+            returns="HTTP 200；返回 passed/failed、耗时和脱敏诊断，不返回请求 Cookie。",
+            side_effects="【外部调用】会访问来源的服务器关键词检索；遵守全局限速和重试上限，不下载付费文件。",
+            errors="403：非回环请求或令牌无效；409：尚未授权或来源不支持；502：授权测试失败。",
+            example="POST /api/v1/sources/cecbid/auth/test\nX-BidPilot-Config-Token: <token>",
+            responses={
+                403: "必须从本机并携带短期令牌。",
+                409: "尚未授权。",
+                502: "真实测试未证明授权有效。",
+            },
+        ),
+    )
+    async def test_source_authorization(
+        source_id: str,
+        request: Request,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_loopback_config_token(request, x_bidpilot_config_token)
+        try:
+            result = await service.source_auth.test(source_id)
+        except SourceAuthError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not result.success:
+            raise HTTPException(status_code=502, detail=result.message)
+        return result
+
+    @app.delete(
+        "/api/v1/sources/{source_id}/auth",
+        response_model=SourceAuthView,
+        **_api_docs(
+            tag="来源授权",
+            summary="清除来源授权",
+            purpose="关闭该来源仍在进行的授权窗口，删除 SQLite 中的加密 Cookie，并立即停止后续会员增强检索。",
+            parameters="路径 source_id；请求头必须含短期编辑令牌；无请求体。",
+            returns="HTTP 200；返回 not_authorized 脱敏状态。",
+            side_effects="【删除副作用】永久删除本机保存的该来源加密会话；不会注销原网站账号，也不会修改账号密码。",
+            errors="403：非回环请求或令牌无效；409：该来源没有受管授权。",
+            example="DELETE /api/v1/sources/qianlima/auth\nX-BidPilot-Config-Token: <token>",
+            responses={403: "必须从本机并携带短期令牌。", 409: "来源没有受管授权。"},
+        ),
+    )
+    async def clear_source_authorization(
+        source_id: str,
+        request: Request,
+        x_bidpilot_config_token: Annotated[
+            str | None,
+            Header(alias="X-BidPilot-Config-Token"),
+        ] = None,
+    ):
+        require_loopback_config_token(request, x_bidpilot_config_token)
+        try:
+            return await service.source_auth.clear(source_id)
+        except SourceAuthError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get(
         "/api/v1/config",

@@ -24,6 +24,8 @@ def main() -> None:
     target = ".[" + ",".join(extras) + "]" if extras else "."
     subprocess.run([str(python), "-m", "pip", "install", "--upgrade", "pip"], check=True)
     subprocess.run([str(python), "-m", "pip", "install", "-e", target], cwd=root, check=True)
+    if args.auth:
+        subprocess.run([str(python), "-m", "playwright", "install", "chromium"], check=True)
     print(f"BidPilot environment is ready: {python}")
     print(f"Start the app: {python} -m bidpilot serve")
 

@@ -34,6 +34,7 @@ from bidpilot.pipeline import TenderPipeline
 from bidpilot.report import generate_report
 from bidpilot.runtime_config import RuntimeConfiguration
 from bidpilot.scheduler import maintain_subscription_lease, next_schedule_time, retry_time
+from bidpilot.source_auth import SourceAuthManager
 from bidpilot.sources import (
     CCGPSource,
     CEBPubServiceSource,
@@ -86,6 +87,7 @@ class BidPilotService:
             MofcomSource(settings),
             QianlimaSource(settings),
         ]
+        self.source_auth = SourceAuthManager(self.db, settings, self.sources)
         self.pipeline = TenderPipeline(settings, self.sources)
         self.delivery = DeliveryManager(settings)
         self._live_results: dict[str, RunResult] = {}
@@ -122,6 +124,7 @@ class BidPilotService:
         # SQLite-backed settings before every real run so Web changes apply
         # without restarting that worker.
         self.runtime_config.load_persisted()
+        self.source_auth.load_persisted()
         started_at = datetime.now(ZoneInfo(self.settings.timezone))
         spec = await self.intent_engine.resolve(query, now=started_at)
         if delivery_channel:
@@ -814,10 +817,9 @@ class BidPilotService:
         rows = []
         for source in self.sources:
             capabilities = source.capabilities()
+            authorization = self.source_auth.status(source.source_id)
             configured = (
-                bool(self.settings.load_qianlima_cookie())
-                if isinstance(source, QianlimaSource)
-                else True
+                authorization.state == "authorized" if isinstance(source, QianlimaSource) else True
             )
             rows.append(
                 {
@@ -826,9 +828,9 @@ class BidPilotService:
                     "requires_auth": source.requires_auth,
                     "configured": configured,
                     "member_enhanced": (
-                        bool(self.settings.cecbid_cookie)
+                        authorization.state == "authorized"
                         if isinstance(source, CECBidSource)
-                        else bool(self.settings.load_qianlima_cookie())
+                        else authorization.state == "authorized"
                         if isinstance(source, QianlimaSource)
                         else False
                     ),
@@ -840,19 +842,15 @@ class BidPilotService:
                         else "公开"
                     ),
                     "official": source.official,
-                    "authorization_state": (
-                        "authorized"
-                        if configured and source.requires_auth
-                        else "available"
-                        if source.authorization_supported
-                        else "not_applicable"
-                    ),
+                    "authorization_state": (authorization.state),
+                    "authorization": authorization.model_dump(mode="json"),
                     "last_status": latest.get(source.name, {}).get("status"),
                     "last_checked_at": latest.get(source.name, {}).get("started_at"),
                     "last_message": latest.get(source.name, {}).get("message"),
                     "last_scanned_count": latest.get(source.name, {}).get("scanned_count", 0),
                     "last_fetched_count": latest.get(source.name, {}).get("fetched_count", 0),
                     "last_kept_count": latest.get(source.name, {}).get("kept_count", 0),
+                    "last_latency_ms": latest.get(source.name, {}).get("latency_ms", 0),
                     "last_rejected_count": latest.get(source.name, {}).get("rejected_count", 0),
                     "last_rejection_reasons": json.loads(
                         latest.get(source.name, {}).get("rejection_json", "{}") or "{}"

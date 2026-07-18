@@ -154,11 +154,14 @@ class CECBidSource(SourceAdapter):
                         detailed.append(item)
                 items = detailed
             latency = int((time.perf_counter() - started) * 1000)
-            status = SourceStatus.OK if cookie else SourceStatus.PARTIAL
+            enhanced = any(item.auth_level == "free_member" for item in items)
+            status = SourceStatus.OK if enhanced else SourceStatus.PARTIAL
             message = (
                 "已使用授权会员态读取搜索与详情。"
+                if enhanced
+                else "已携带授权会话，但本轮没有证明会员正文已解锁；请在来源中心测试或重新授权。"
                 if cookie
-                else "已获取公开搜索摘要；配置免费会员登录态后可补充完整正文。"
+                else "已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"
             )
             return SourceSearchResult(
                 source=self.name,
