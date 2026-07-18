@@ -12,10 +12,12 @@ from bidpilot.config import Settings
 from bidpilot.db import Database
 from bidpilot.delivery import DeliveryManager, DeliveryReceipt
 from bidpilot.hybrid_intent import HybridIntentEngine
+from bidpilot.intelligence import IntelligenceBriefGenerator
 from bidpilot.intent import IntentParser
 from bidpilot.models import (
     DeliveryPolicy,
     EventType,
+    IntelligenceBrief,
     IntentComparison,
     Opportunity,
     OpportunityCreate,
@@ -89,6 +91,7 @@ class BidPilotService:
         ]
         self.source_auth = SourceAuthManager(self.db, settings, self.sources)
         self.pipeline = TenderPipeline(settings, self.sources)
+        self.intelligence = IntelligenceBriefGenerator(settings)
         self.delivery = DeliveryManager(settings)
         self._live_results: dict[str, RunResult] = {}
         self.worker = None
@@ -164,6 +167,8 @@ class BidPilotService:
                     if (record.canonical_id, record.version_hash) in allowed
                 ]
 
+            intelligence_brief = await self._build_intelligence_brief(spec, output_records)
+
             if output_records or not incremental:
                 report_path = generate_report(
                     spec,
@@ -172,6 +177,7 @@ class BidPilotService:
                     self.settings.report_dir,
                     generated_at=started_at,
                     incremental=incremental,
+                    intelligence_brief=intelligence_brief,
                 )
 
             policy = DeliveryPolicy(
@@ -254,6 +260,7 @@ class BidPilotService:
                 diagnostics=pipeline_result.diagnostics,
                 search_explanation=pipeline_result.search_explanation,
                 retrieval=pipeline_result.retrieval,
+                intelligence_brief=intelligence_brief,
                 report_path=str(report_path) if report_path else None,
                 new_count=len(output_records),
                 started_at=started_at,
@@ -271,6 +278,7 @@ class BidPilotService:
                 new_count=len(output_records),
                 diagnostics=diagnostics_dump,
                 retrieval=pipeline_result.retrieval.model_dump(mode="json"),
+                brief=intelligence_brief.model_dump(mode="json"),
             )
             self._live_results[run_id] = result
             return result
@@ -286,6 +294,43 @@ class BidPilotService:
                 error=str(exc),
             )
             raise RunExecutionError(run_id, str(exc)) from exc
+
+    async def _build_intelligence_brief(
+        self,
+        spec: TenderQuerySpec,
+        records: list[TenderRecord],
+    ) -> IntelligenceBrief:
+        cache_key = self.intelligence.cache_key(spec, records)
+        if (
+            records
+            and self.settings.intelligence_brief_mode == "auto"
+            and self.settings.llm_base_url
+            and self.settings.llm_model
+        ):
+            cached = self.db.get_cached_intelligence_brief(cache_key)
+            if cached:
+                try:
+                    brief = IntelligenceBrief.model_validate(cached)
+                    if brief.mode == "llm_grounded":
+                        return brief.model_copy(
+                            update={
+                                "status": "cached",
+                                "cache_hit": True,
+                                "summary": (
+                                    "内容与模型配置未变化，已复用本机证据简报缓存；"
+                                    "标题、评分和链接仍来自同一批可信记录。"
+                                ),
+                            }
+                        )
+                except (TypeError, ValueError):
+                    pass
+        brief = await self.intelligence.generate(spec, records)
+        if brief.mode == "llm_grounded" and brief.status == "applied":
+            self.db.set_cached_intelligence_brief(
+                cache_key,
+                brief.model_dump(mode="json"),
+            )
+        return brief
 
     def _channel_is_configured(self, channel: str) -> bool:
         if channel == "feishu":
@@ -614,6 +659,7 @@ class BidPilotService:
             row["spec"] = json.loads(row.pop("spec_json"))
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
+            row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
         return rows
 
     def list_delivery_attempts(self, subscription_id: str | None = None) -> list[dict]:
@@ -625,6 +671,7 @@ class BidPilotService:
             row["spec"] = json.loads(row.pop("spec_json"))
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
+            row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
         return rows
 
     def get_run(self, run_id: str) -> dict | RunResult | None:
@@ -635,6 +682,7 @@ class BidPilotService:
             row["spec"] = json.loads(row.pop("spec_json"))
             row["diagnostics"] = json.loads(row.pop("diagnostics_json"))
             row["retrieval"] = json.loads(row.pop("retrieval_json", "{}") or "{}")
+            row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
         return row
 
     def list_reports(self) -> list[dict]:

@@ -13,7 +13,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
-from bidpilot.models import SourceDiagnostic, TenderQuerySpec, TenderRecord
+from bidpilot.models import IntelligenceBrief, SourceDiagnostic, TenderQuerySpec, TenderRecord
 
 ACCENT = "2F6BFF"
 INK = "172033"
@@ -118,6 +118,7 @@ def generate_report(
     *,
     generated_at: datetime | None = None,
     incremental: bool = False,
+    intelligence_brief: IntelligenceBrief | None = None,
 ) -> Path:
     generated_at = generated_at or datetime.now(ZoneInfo(spec.schedule.timezone))
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +183,71 @@ def generate_report(
         document.add_paragraph(
             "本次在已成功访问的来源与查询口径内未发现匹配结果。请结合下方来源覆盖状态判断是否需要扩大时间、地域或关键词。"
         )
+
+    if intelligence_brief:
+        document.add_heading("情报副驾驶", level=1)
+        status_labels = {
+            "applied": "证据约束 AI",
+            "cached": "证据约束 AI（缓存复用）",
+            "disabled": "确定性分析（AI 已关闭）",
+            "not_configured": "确定性分析（模型未配置）",
+            "invalid_response": "确定性分析（模型输出未通过校验）",
+            "unavailable": "确定性分析（模型不可用）",
+            "empty": "零结果诊断",
+        }
+        brief_meta = document.add_paragraph()
+        meta_label = brief_meta.add_run(
+            status_labels.get(intelligence_brief.status, intelligence_brief.status)
+        )
+        meta_label.bold = True
+        meta_label.font.color.rgb = RGBColor.from_string(ACCENT)
+        brief_meta.add_run(f"  ·  {intelligence_brief.summary}")
+        document.add_paragraph(intelligence_brief.overview)
+
+        if intelligence_brief.priorities:
+            document.add_heading("优先机会", level=2)
+            priority_table = document.add_table(rows=1, cols=4)
+            priority_table.style = "Table Grid"
+            priority_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            for index, text in enumerate(("证据与机会", "阶段 / 分数", "优先原因", "建议动作")):
+                _set_cell_text(priority_table.cell(0, index), text, bold=True, color="FFFFFF")
+                _set_cell_shading(priority_table.cell(0, index), ACCENT)
+            for priority in intelligence_brief.priorities:
+                cells = priority_table.add_row().cells
+                _set_cell_text(cells[0], f"[{priority.evidence_id}] {priority.title}")
+                _add_hyperlink(cells[0].paragraphs[0], "打开原文", priority.source_url)
+                _set_cell_text(
+                    cells[1],
+                    f"{priority.event_type}\n{priority.opportunity_score:.1f}",
+                    bold=True,
+                )
+                _set_cell_text(cells[2], priority.reason)
+                _set_cell_text(cells[3], priority.recommended_action)
+
+        if intelligence_brief.buyer_needs:
+            document.add_heading("采购需求判断", level=2)
+            for claim in intelligence_brief.buyer_needs:
+                document.add_paragraph(
+                    f"[{', '.join(claim.evidence_ids)}] {claim.text}",
+                    style="List Bullet",
+                )
+
+        if intelligence_brief.risks:
+            document.add_heading("风险提示", level=2)
+            risk_labels = {"high": "高", "medium": "中", "low": "低"}
+            for risk in intelligence_brief.risks:
+                document.add_paragraph(
+                    f"[{risk_labels[risk.level]}] [{', '.join(risk.evidence_ids)}] {risk.text}",
+                    style="List Bullet",
+                )
+
+        if intelligence_brief.actions:
+            document.add_heading("下一步行动", level=2)
+            for action in intelligence_brief.actions:
+                document.add_paragraph(
+                    f"[{action.priority}] [{', '.join(action.evidence_ids)}] {action.text}",
+                    style="List Bullet",
+                )
 
     document.add_heading("查询口径", level=1)
     scope = document.add_table(rows=0, cols=2)

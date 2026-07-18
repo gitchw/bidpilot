@@ -54,6 +54,7 @@ class Database:
             new_count INTEGER NOT NULL DEFAULT 0,
             diagnostics_json TEXT NOT NULL DEFAULT '[]',
             retrieval_json TEXT NOT NULL DEFAULT '{}',
+            brief_json TEXT NOT NULL DEFAULT '{}',
             error TEXT
         );
         CREATE TABLE IF NOT EXISTS source_runs (
@@ -166,6 +167,12 @@ class Database:
             last_test_status TEXT NOT NULL DEFAULT 'not_tested',
             last_message TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS intelligence_briefs (
+            cache_key TEXT PRIMARY KEY,
+            brief_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_items_project ON tender_items(project_key);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
@@ -174,6 +181,8 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_opportunities_stage ON opportunities(stage, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_opportunities_next_action ON opportunities(next_action_at);
         CREATE INDEX IF NOT EXISTS idx_source_auth_test ON source_authorizations(last_test_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_intelligence_briefs_used
+          ON intelligence_briefs(last_used_at DESC);
         """
         with self.connection() as conn:
             conn.executescript(schema)
@@ -199,6 +208,7 @@ class Database:
             self._ensure_column(conn, "source_runs", "rejected_count", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "source_runs", "rejection_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "retrieval_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "runs", "brief_json", "TEXT NOT NULL DEFAULT '{}'")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_subscription "
                 "ON runs(subscription_id, started_at DESC)"
@@ -246,13 +256,14 @@ class Database:
         new_count: int,
         diagnostics: list[dict[str, Any]],
         retrieval: dict[str, Any] | None = None,
+        brief: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE runs SET status=?, completed_at=?, report_path=?, result_count=?,
-                  new_count=?, diagnostics_json=?, retrieval_json=?, error=? WHERE id=?
+                  new_count=?, diagnostics_json=?, retrieval_json=?, brief_json=?, error=? WHERE id=?
                 """,
                 (
                     status.value,
@@ -262,9 +273,46 @@ class Database:
                     new_count,
                     json.dumps(diagnostics, ensure_ascii=False),
                     json.dumps(retrieval or {}, ensure_ascii=False),
+                    json.dumps(brief or {}, ensure_ascii=False),
                     error,
                     run_id,
                 ),
+            )
+
+    def get_cached_intelligence_brief(self, cache_key: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT brief_json FROM intelligence_briefs WHERE cache_key=?",
+                (cache_key,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE intelligence_briefs SET last_used_at=? WHERE cache_key=?",
+                    (utcnow_iso(), cache_key),
+                )
+        if row is None:
+            return None
+        try:
+            return json.loads(row["brief_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def set_cached_intelligence_brief(
+        self,
+        cache_key: str,
+        brief: dict[str, Any],
+    ) -> None:
+        now = utcnow_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO intelligence_briefs(cache_key, brief_json, created_at, last_used_at)
+                VALUES(?,?,?,?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                  brief_json=excluded.brief_json,
+                  last_used_at=excluded.last_used_at
+                """,
+                (cache_key, json.dumps(brief, ensure_ascii=False), now, now),
             )
 
     def add_source_run(self, run_id: str, diagnostic: dict[str, Any]) -> None:

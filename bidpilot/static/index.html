@@ -100,6 +100,7 @@
         </div>
         <div class="metric-strip" id="metric-strip"></div>
         <div class="source-coverage" id="source-coverage"></div>
+        <section class="intelligence-brief hidden" id="intelligence-brief"></section>
         <section class="retrieval-trace hidden" id="retrieval-trace"></section>
         <div class="result-list" id="result-list"></div>
         <div class="empty-state hidden" id="empty-state"><span>◎</span><h3>本次没有匹配的新情报</h3><p>这也是可信结果：系统不会用无关内容填充报告。可尝试扩大时间或地域。</p></div>
@@ -149,7 +150,7 @@
       <div class="config-grid">
         <article class="config-card">
           <div class="config-card-head"><div><p class="eyebrow">AI MODEL</p><h2>OpenAI-compatible 模型</h2></div><span class="state-badge muted" id="config-status-ai">未配置</span></div>
-          <p>模型当前参与三个受控环节：低置信意图复核、检索词规划和边界候选语义复核。模型只能提议；地域、日期、公告类型和排除词始终由本地校验把关。</p>
+          <p>模型参与四个受控环节：低置信意图复核、检索词规划、边界候选语义复核和证据约束情报简报。模型只能提议；地域、日期、公告类型、排除词和证据引用始终由本地校验把关。</p>
           <div class="config-fields">
             <label class="wide"><span>API 基础地址</span><input data-config="llm_base_url" type="url" placeholder="http://127.0.0.1:8045/v1"></label>
             <label><span>模型名称</span><input data-config="llm_model" placeholder="例如 gemini-3-flash-agent"></label>
@@ -161,9 +162,11 @@
             <label><span>每来源查询预算</span><input data-config="retrieval_query_budget_per_source" type="number" min="1" max="5" step="1"><small>控制每个支持关键词来源最多执行几个词，建议 2。</small></label>
             <label><span>语义接受阈值</span><input data-config="retrieval_semantic_threshold" type="number" min="0.5" max="0.99" step="0.01"><small>仅作用于已通过日期/地域等硬过滤的边界候选。</small></label>
             <label class="wide checkbox-config"><input data-config="retrieval_semantic_review" type="checkbox"><span><b>启用 AI 边界复核</b><small>关闭后，字面未命中的候选会保守拒绝；确定性检索仍可运行。</small></span></label>
+            <label><span>AI 情报简报</span><select data-config="intelligence_brief_mode"><option value="auto">自动生成（推荐）</option><option value="off">关闭模型，只用确定性建议</option></select><small>模型输出必须引用本轮 E 编号，否则整份回退。</small></label>
+            <label><span>简报证据上限</span><input data-config="intelligence_brief_max_records" type="number" min="3" max="25" step="1"><small>按机会分选取最多多少条证据发送给模型，建议 12。</small></label>
             <label class="wide secret-field"><span>API 密钥 <em data-secret-state="llm_api_key">未配置</em></span><input data-config="llm_api_key" type="password" autocomplete="new-password" placeholder="留空保持原密钥"><small><input data-clear="llm_api_key" type="checkbox"> 清除已保存密钥</small></label>
           </div>
-          <div class="privacy-callout"><b>发送边界</b><span>意图与检索规划会发送查询原句；仅在边界复核开启时，最多发送受控数量的候选标题和 500 字证据片段。绝不发送订阅历史、机会备注、密钥、Cookie 或渠道地址。</span></div>
+          <div class="privacy-callout"><b>发送边界</b><span>意图与检索规划会发送查询原句；边界复核最多发送候选标题和 500 字证据片段；情报简报只发送配置上限内的可信记录。绝不发送订阅历史、机会备注、密钥、Cookie 或渠道地址。</span></div>
           <div class="config-card-actions"><button class="secondary-button" id="test-model">测试模型连接</button><span id="test-result-ai"></span></div>
         </article>
 

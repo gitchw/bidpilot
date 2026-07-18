@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     retrieval_semantic_review: bool = True
     retrieval_semantic_threshold: float = Field(default=0.82, ge=0.5, le=0.99)
     retrieval_semantic_candidate_limit: int = Field(default=12, ge=1, le=30)
+    intelligence_brief_mode: Literal["off", "auto"] = "auto"
+    intelligence_brief_max_records: int = Field(default=12, ge=3, le=25)
 
     cecbid_cookie: str = ""
     qianlima_cookie: str = ""

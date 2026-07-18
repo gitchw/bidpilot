@@ -143,6 +143,7 @@ function renderResults(run) {
     const statusLabel = SOURCE_STATUS_LABELS[item.status] || item.status;
     return `<span class="source-chip ${escapeHtml(item.status)}" title="${escapeHtml(rejection || item.message || "无额外诊断")}">${escapeHtml(item.source)} · 扫描 ${item.scanned_count ?? item.fetched_count} / 候选 ${item.fetched_count} / 保留 ${item.kept_count} · ${escapeHtml(statusLabel)}</span>`;
   }).join("");
+  renderIntelligenceBrief(run);
   renderRetrievalTrace(run);
   const list = $("#result-list"), empty = $("#empty-state");
   if (!run.records.length) {
@@ -158,6 +159,30 @@ function renderResults(run) {
     bindResultOpportunityActions();
   }
   $("#results-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderIntelligenceBrief(run) {
+  const root = $("#intelligence-brief"), brief = run.intelligence_brief;
+  if (!root) return;
+  if (!brief) { root.innerHTML = ""; root.classList.add("hidden"); return; }
+  root.classList.remove("hidden");
+  const statusLabels = {
+    applied: "证据约束 AI", cached: "AI 缓存复用", disabled: "确定性建议 · AI 已关闭",
+    not_configured: "确定性建议 · 模型未配置", invalid_response: "确定性建议 · AI 输出已拒绝",
+    unavailable: "确定性建议 · 模型不可用", empty: "零结果诊断",
+  };
+  const riskLabels = { high: "高风险", medium: "中风险", low: "提示" };
+  const catalog = new Map((brief.evidence_catalog || []).map((item) => [item.evidence_id, item]));
+  const references = (ids) => (ids || []).map((id) => {
+    const evidence = catalog.get(id);
+    return evidence ? `<a href="${escapeHtml(evidence.source_url)}" target="_blank" rel="noopener" title="${escapeHtml(evidence.title)}">${escapeHtml(id)}</a>` : `<span>${escapeHtml(id)}</span>`;
+  }).join(" ");
+  const needs = (brief.buyer_needs || []).map((item) => `<li><span>${references(item.evidence_ids)}</span><p>${escapeHtml(item.text)}</p></li>`).join("");
+  const priorities = (brief.priorities || []).map((item) => `<article class="brief-priority"><div><span>${escapeHtml(item.evidence_id)}</span><small>${escapeHtml(item.event_type)} · ${Math.round(item.opportunity_score)} 分</small></div><h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.buyer || "采购人待原文确认")}</p><dl><div><dt>为什么优先</dt><dd>${escapeHtml(item.reason)}</dd></div><div><dt>下一步</dt><dd>${escapeHtml(item.recommended_action)}</dd></div></dl><a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener">核验证据原文 ↗</a></article>`).join("");
+  const risks = (brief.risks || []).map((item) => `<li class="${escapeHtml(item.level)}"><b>${escapeHtml(riskLabels[item.level] || item.level)}</b><p>${escapeHtml(item.text)}</p><span>${references(item.evidence_ids)}</span></li>`).join("");
+  const actions = (brief.actions || []).map((item) => `<li><b>${escapeHtml(item.priority)}</b><p>${escapeHtml(item.text)}</p><span>${references(item.evidence_ids)}</span></li>`).join("");
+  const fallback = brief.mode !== "llm_grounded";
+  root.innerHTML = `<div class="brief-head"><div><p class="eyebrow">EVIDENCE-GROUNDED COPILOT</p><h3>AI 情报副驾驶</h3></div><span class="state-badge ${fallback ? "warning" : "success"}">${escapeHtml(statusLabels[brief.status] || brief.status)}</span></div><p class="brief-overview">${escapeHtml(brief.overview)}</p><small class="brief-summary">${escapeHtml(brief.summary)}</small>${priorities ? `<div class="brief-priorities">${priorities}</div>` : ""}<div class="brief-grid">${needs ? `<section><h4>采购需求判断</h4><ul class="brief-claims">${needs}</ul></section>` : ""}${risks ? `<section><h4>风险提示</h4><ul class="brief-risks">${risks}</ul></section>` : ""}${actions ? `<section class="wide"><h4>建议行动</h4><ul class="brief-actions">${actions}</ul></section>` : ""}</div>`;
 }
 
 function renderRetrievalTrace(run) {
@@ -504,6 +529,7 @@ function renderConfig(config) {
   const values = {
     llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout, intent_llm_mode: config.ai.intent_llm_mode, intent_llm_confidence_threshold: config.ai.intent_llm_confidence_threshold,
     retrieval_llm_mode: config.ai.retrieval_llm_mode, retrieval_max_rounds: config.ai.retrieval_max_rounds, retrieval_query_budget_per_source: config.ai.retrieval_query_budget_per_source, retrieval_semantic_review: config.ai.retrieval_semantic_review, retrieval_semantic_threshold: config.ai.retrieval_semantic_threshold,
+    intelligence_brief_mode: config.ai.intelligence_brief_mode, intelligence_brief_max_records: config.ai.intelligence_brief_max_records,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
     delivery_webhook_timeout: config.generic_webhook.timeout,

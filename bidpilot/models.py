@@ -129,6 +129,76 @@ class RetrievalTrace(BaseModel):
     summary: str = Field(description="完整检索链路的中文摘要")
 
 
+class BriefEvidence(BaseModel):
+    """A locally hydrated evidence reference; the model never controls its URL."""
+
+    evidence_id: str = Field(pattern=r"^E\d{2}$", description="本轮稳定证据编号")
+    record_id: str = Field(description="本地可信标讯规范 ID")
+    title: str = Field(max_length=500)
+    buyer: str | None = Field(default=None, max_length=300)
+    published_at: datetime
+    event_type: str = Field(max_length=40)
+    opportunity_score: float = Field(ge=0, le=100)
+    source_url: str = Field(max_length=3000)
+    excerpt: str = Field(max_length=500)
+
+
+class BriefClaim(BaseModel):
+    text: str = Field(min_length=2, max_length=360)
+    evidence_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+class BriefPriority(BaseModel):
+    evidence_id: str
+    title: str = Field(max_length=500)
+    buyer: str | None = Field(default=None, max_length=300)
+    published_at: datetime
+    event_type: str = Field(max_length=40)
+    opportunity_score: float = Field(ge=0, le=100)
+    reason: str = Field(min_length=2, max_length=360)
+    recommended_action: str = Field(min_length=2, max_length=360)
+    source_url: str = Field(max_length=3000)
+
+
+class BriefRisk(BaseModel):
+    level: Literal["high", "medium", "low"]
+    text: str = Field(min_length=2, max_length=360)
+    evidence_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+class BriefAction(BaseModel):
+    priority: Literal["P0", "P1", "P2"]
+    text: str = Field(min_length=2, max_length=360)
+    evidence_ids: list[str] = Field(min_length=1, max_length=5)
+
+
+class IntelligenceBrief(BaseModel):
+    """Evidence-grounded buyer needs, priorities, risks and next actions."""
+
+    brief_version: str = "intelligence-v1"
+    mode: Literal["llm_grounded", "deterministic"] = "deterministic"
+    status: Literal[
+        "applied",
+        "cached",
+        "disabled",
+        "not_configured",
+        "invalid_response",
+        "unavailable",
+        "empty",
+    ]
+    overview: str = Field(max_length=500)
+    buyer_needs: list[BriefClaim] = Field(default_factory=list, max_length=6)
+    priorities: list[BriefPriority] = Field(default_factory=list, max_length=5)
+    risks: list[BriefRisk] = Field(default_factory=list, max_length=6)
+    actions: list[BriefAction] = Field(default_factory=list, max_length=6)
+    evidence_catalog: list[BriefEvidence] = Field(default_factory=list, max_length=25)
+    generated_at: datetime
+    latency_ms: int = Field(default=0, ge=0)
+    repair_count: int = Field(default=0, ge=0, le=1)
+    cache_hit: bool = False
+    summary: str = Field(max_length=500)
+
+
 class EventType(StrEnum):
     INTENTION = "采购意向"
     TENDER = "招标公告"
@@ -429,6 +499,10 @@ class RunResult(BaseModel):
     retrieval: RetrievalTrace | None = Field(
         default=None,
         description="AI 检索计划、多轮补搜、缺口判断和语义复核的完整审计轨迹",
+    )
+    intelligence_brief: IntelligenceBrief | None = Field(
+        default=None,
+        description="只引用本轮真实证据编号的采购需求、优先机会、风险和行动建议",
     )
     report_path: str | None = None
     new_count: int = 0

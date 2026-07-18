@@ -1,8 +1,10 @@
 import asyncio
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from docx import Document
 from fastapi.testclient import TestClient
 
 from bidpilot.api import create_app
@@ -126,10 +128,14 @@ def test_api_query_to_docx_flow(tmp_path: Path):
         result = response.json()
         assert result["new_count"] == 1
         assert result["records"][0]["project_id"] == "AH-2026-001"
+        assert result["intelligence_brief"]["status"] == "not_configured"
+        assert result["intelligence_brief"]["priorities"][0]["evidence_id"] == "E01"
         report_name = Path(result["report_path"]).name
         download = client.get(f"/api/v1/reports/{report_name}")
         assert download.status_code == 200
         assert download.content.startswith(b"PK")
+        report = Document(BytesIO(download.content))
+        assert "情报副驾驶" in "\n".join(item.text for item in report.paragraphs)
         assert client.get("/api/v1/reports").json()[0]["item_count"] == 1
 
 
@@ -603,6 +609,8 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
                 "llm_api_key": secret_value,
                 "intent_llm_mode": "always",
                 "intent_llm_confidence_threshold": 0.91,
+                "intelligence_brief_mode": "off",
+                "intelligence_brief_max_records": 9,
                 "smtp_port": 587,
                 "smtp_security": "starttls",
             },
@@ -633,6 +641,8 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
     assert persisted.ai.llm_api_key.configured is True
     assert persisted.ai.intent_llm_mode == "always"
     assert persisted.ai.intent_llm_confidence_threshold == 0.91
+    assert persisted.ai.intelligence_brief_mode == "off"
+    assert persisted.ai.intelligence_brief_max_records == 9
     assert restarted.settings.smtp_port == 587
     with restarted.db.connection() as conn:
         stored_secret = conn.execute(

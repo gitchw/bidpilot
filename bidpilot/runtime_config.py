@@ -57,6 +57,8 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "retrieval_query_budget_per_source",
         "retrieval_semantic_review",
         "retrieval_semantic_threshold",
+        "intelligence_brief_mode",
+        "intelligence_brief_max_records",
         "feishu_webhook_url",
         "feishu_webhook_secret",
         "feishu_app_id",
@@ -107,6 +109,8 @@ class RuntimeConfigUpdate(BaseModel):
     retrieval_query_budget_per_source: int | None = Field(default=None, ge=1, le=5)
     retrieval_semantic_review: bool | None = None
     retrieval_semantic_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
+    intelligence_brief_mode: Literal["off", "auto"] | None = None
+    intelligence_brief_max_records: int | None = Field(default=None, ge=3, le=25)
 
     feishu_webhook_url: SecretStr | None = None
     feishu_webhook_secret: SecretStr | None = None
@@ -185,6 +189,8 @@ class AIConfigView(BaseModel):
     retrieval_query_budget_per_source: int
     retrieval_semantic_review: bool
     retrieval_semantic_threshold: float
+    intelligence_brief_mode: Literal["off", "auto"]
+    intelligence_brief_max_records: int
     llm_api_key: SecretState
     ready: bool
 
@@ -354,6 +360,8 @@ class RuntimeConfiguration:
                 retrieval_query_budget_per_source=(self.settings.retrieval_query_budget_per_source),
                 retrieval_semantic_review=self.settings.retrieval_semantic_review,
                 retrieval_semantic_threshold=self.settings.retrieval_semantic_threshold,
+                intelligence_brief_mode=self.settings.intelligence_brief_mode,
+                intelligence_brief_max_records=self.settings.intelligence_brief_max_records,
                 llm_api_key=secret("llm_api_key"),
                 ready=bool(self.settings.llm_base_url and self.settings.llm_model),
             ),
