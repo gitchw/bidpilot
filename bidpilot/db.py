@@ -1050,11 +1050,40 @@ class Database:
             ).fetchall()
         return {row["field"]: dict(row) for row in rows}
 
-    def set_runtime_config(self, values: dict[str, tuple[str, bool]]) -> None:
-        if not values:
-            return
+    def get_runtime_config_revision(self) -> int:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_config WHERE field='_revision'"
+            ).fetchone()
+        if row is None:
+            return 0
+        try:
+            return max(0, int(row["value"]))
+        except (TypeError, ValueError):
+            return 0
+
+    def set_runtime_config(
+        self,
+        values: dict[str, tuple[str, bool]],
+        *,
+        delete_fields: set[str] | frozenset[str] = frozenset(),
+        expected_revision: int | None = None,
+    ) -> int | None:
         updated_at = utcnow_iso()
         with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM runtime_config WHERE field='_revision'"
+            ).fetchone()
+            try:
+                current_revision = max(0, int(row["value"])) if row else 0
+            except (TypeError, ValueError):
+                current_revision = 0
+            if expected_revision is not None and current_revision != expected_revision:
+                return None
+            safe_deletes = {field for field in delete_fields if field != "_revision"}
+            if not values and not safe_deletes:
+                return current_revision
             conn.executemany(
                 """
                 INSERT INTO runtime_config(field, value, is_secret, updated_at)
@@ -1067,6 +1096,22 @@ class Database:
                     for field, (value, is_secret) in values.items()
                 ],
             )
+            if safe_deletes:
+                conn.executemany(
+                    "DELETE FROM runtime_config WHERE field=?",
+                    [(field,) for field in safe_deletes],
+                )
+            new_revision = current_revision + 1
+            conn.execute(
+                """
+                INSERT INTO runtime_config(field, value, is_secret, updated_at)
+                VALUES('_revision', ?, 0, ?)
+                ON CONFLICT(field) DO UPDATE SET value=excluded.value,
+                  is_secret=0, updated_at=excluded.updated_at
+                """,
+                (str(new_revision), updated_at),
+            )
+        return new_revision
 
     def get_source_authorization(self, source_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:

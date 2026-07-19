@@ -10,6 +10,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from bidpilot.cli import _lan_access_urls
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -113,3 +115,26 @@ def test_real_cli_serve_status_restart_and_stop_share_control_directory(tmp_path
         stop_process(serve)
         if restart is not None:
             stop_process(restart)
+
+
+def test_local_mode_rejects_non_loopback_host_override(tmp_path: Path):
+    env = lifecycle_environment(tmp_path, available_port())
+    env["BIDPILOT_NETWORK_ACCESS_MODE"] = "local"
+    result = run_cli(env, "serve", "--host", "0.0.0.0")
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "--host" in output
+    assert "BIDPILOT_NETWORK_ACCESS_MODE=lan" in output
+
+
+def test_lan_startup_urls_only_include_private_non_loopback_addresses(monkeypatch):
+    monkeypatch.setattr(
+        "bidpilot.cli.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (2, 1, 6, "", ("192.168.1.12", 0)),
+            (2, 1, 6, "", ("127.0.0.1", 0)),
+            (2, 1, 6, "", ("8.8.8.8", 0)),
+        ],
+    )
+
+    assert _lan_access_urls(8000) == ["http://192.168.1.12:8000"]

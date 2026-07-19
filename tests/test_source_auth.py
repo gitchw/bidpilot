@@ -86,6 +86,7 @@ async def test_cecbid_auth_encrypts_scoped_cookies_and_clear_removes_session(tmp
     manager._launch_visible_browser = fake_launch  # type: ignore[method-assign]
     started = await manager.start("cecbid")
     assert started.status == "authorizing"
+    assert "运行 BidPilot 服务的电脑上打开" in started.message
     completed = await manager.complete(started.session_id)
     assert completed.status == "completed"
     assert settings.cecbid_cookie == "member_session=secret-cookie-value"

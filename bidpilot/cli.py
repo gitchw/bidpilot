@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import shlex
+import socket
 import sys
 import time
 from pathlib import Path
@@ -18,6 +20,8 @@ from bidpilot import __version__
 from bidpilot.api import create_app
 from bidpilot.config import get_settings
 from bidpilot.control import ControlPlane, local_control_url
+from bidpilot.db import Database
+from bidpilot.runtime_config import RuntimeConfiguration
 from bidpilot.scheduler import SubscriptionWorker
 from bidpilot.service import BidPilotService
 from bidpilot.source_auth import SourceAuthError
@@ -30,6 +34,13 @@ app = typer.Typer(
 console = Console()
 
 
+def _load_service_settings():
+    settings = get_settings()
+    RuntimeConfiguration(Database(settings.database_path), settings)
+    settings.host = "0.0.0.0" if settings.network_access_mode == "lan" else "127.0.0.1"
+    return settings
+
+
 def _python_module_command(command: str) -> str:
     """Return a copyable command using the interpreter that runs BidPilot now."""
     executable = str(Path(sys.executable).resolve())
@@ -38,6 +49,25 @@ def _python_module_command(command: str) -> str:
     else:
         launcher = shlex.quote(executable)
     return f"{launcher} -m bidpilot {command}"
+
+
+def _lan_access_urls(port: int) -> list[str]:
+    addresses: set[str] = set()
+    try:
+        for row in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addresses.add(row[4][0])
+    except OSError:
+        pass
+    usable = []
+    for value in addresses:
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if address.is_loopback or address.is_unspecified or not address.is_private:
+            continue
+        usable.append(address)
+    return [f"http://{address}:{port}" for address in sorted(usable, key=str)]
 
 
 @app.command("parse")
@@ -79,8 +109,21 @@ def serve_command(
             "可管理服务不启用自动重载。开发时请直接使用 uvicorn bidpilot.api:app --reload，"
             "并在该终端按 Ctrl+C 停止。"
         )
-    settings = get_settings()
-    _serve(settings, host or settings.host, port or settings.port)
+    settings = _load_service_settings()
+    bind_host = host or settings.host
+    try:
+        loopback_bind = (
+            bind_host.lower() == "localhost"
+            or ipaddress.ip_address(bind_host.strip("[]")).is_loopback
+        )
+    except ValueError:
+        loopback_bind = False
+    if settings.network_access_mode != "lan" and not loopback_bind:
+        raise typer.BadParameter(
+            "当前访问范围为“仅本机”，不能用 --host 暴露到其他设备。请先在网页配置中心"
+            "或 .env 设置 BIDPILOT_NETWORK_ACCESS_MODE=lan，保存后再启动。"
+        )
+    _serve(settings, bind_host, port or settings.port)
 
 
 def _serve(settings, host: str, port: int) -> None:
@@ -97,6 +140,12 @@ def _serve(settings, host: str, port: int) -> None:
     state = control.write_state(host=host, port=port, version=__version__)
     url = local_control_url(host, port)
     console.print(f"[bold green]标擎服务正在启动[/bold green]：{url}")
+    if settings.network_access_mode == "lan":
+        lan_urls = _lan_access_urls(port)
+        if lan_urls:
+            console.print("局域网设备可尝试打开：" + "  ·  ".join(lan_urls))
+        else:
+            console.print("局域网模式已开启；请在系统网络设置中查看这台电脑的 IPv4 地址。")
     console.print(f"版本：v{__version__} · 数据库：{settings.database_path.resolve()}")
     console.print(
         f"报告目录：{settings.report_dir.resolve()} · 控制目录：{settings.control_dir.resolve()}"
@@ -123,7 +172,7 @@ def _service_target(settings) -> tuple[ControlPlane, dict | None, str]:
 @app.command("status")
 def status_command() -> None:
     """检查服务是否可访问，并显示长期任务 worker 与订阅数量。"""
-    settings = get_settings()
+    settings = _load_service_settings()
     _control, state, base_url = _service_target(settings)
     try:
         with httpx.Client(timeout=3.0) as client:
@@ -224,7 +273,7 @@ def stop_command(
     wait_seconds: float = typer.Option(15.0, min=1.0, max=60.0, help="最多等待退出秒数"),
 ) -> None:
     """使用本机控制令牌优雅停止由 `bidpilot serve` 启动的服务。"""
-    if not _stop_service(get_settings(), wait_seconds):
+    if not _stop_service(_load_service_settings(), wait_seconds):
         raise typer.Exit(code=1)
 
 
@@ -234,7 +283,7 @@ def restart_command(
     port: int | None = typer.Option(None, help="重新启动后的端口"),
 ) -> None:
     """先优雅停止现有服务，再在当前终端前台启动新服务。"""
-    settings = get_settings()
+    settings = _load_service_settings()
     if not _stop_service(settings, 15.0, quiet_if_stopped=True):
         raise typer.Exit(code=1)
     _serve(settings, host or settings.host, port or settings.port)

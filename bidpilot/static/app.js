@@ -6,6 +6,13 @@ const state = {
   system: null,
   config: null,
   configEditToken: null,
+  configLoaded: false,
+  configDirty: new Set(),
+  configLoadSequence: 0,
+  configSaving: false,
+  configConflict: false,
+  lanAdminToken: null,
+  lanUnlockPromise: null,
   activeTab: "search",
   opportunityView: "opportunities",
   opportunityProjectKeys: new Set(),
@@ -81,8 +88,40 @@ function toast(message, duration = 3200) {
   clearTimeout(window.__toastTimer); window.__toastTimer = setTimeout(() => node.classList.remove("show"), duration);
 }
 
+function requestLanAdminToken(message = "") {
+  if (state.lanUnlockPromise) return state.lanUnlockPromise;
+  const modal = $("#lan-unlock"), input = $("#lan-unlock-token"), note = $("#lan-unlock-message");
+  const submit = $("#lan-unlock-submit"), cancel = $("#lan-unlock-cancel");
+  modal.classList.remove("hidden");
+  input.value = "";
+  note.textContent = message || "请输入至少 16 个字符。关闭标签页后需要重新输入。";
+  note.className = message ? "failed" : "";
+  state.lanUnlockPromise = new Promise((resolve) => {
+    const finish = (value) => {
+      submit.removeEventListener("click", unlock);
+      cancel.removeEventListener("click", close);
+      input.removeEventListener("keydown", keydown);
+      modal.classList.add("hidden");
+      state.lanUnlockPromise = null;
+      resolve(value);
+    };
+    const unlock = () => {
+      const value = input.value.trim();
+      if (value.length < 16) { note.textContent = "令牌至少需要 16 个字符，请重新输入。"; note.className = "failed"; input.focus(); return; }
+      finish(value);
+    };
+    const close = () => finish("");
+    const keydown = (event) => { if (event.key === "Enter") { event.preventDefault(); unlock(); } else if (event.key === "Escape") close(); };
+    submit.addEventListener("click", unlock);
+    cancel.addEventListener("click", close);
+    input.addEventListener("keydown", keydown);
+    input.focus();
+  });
+  return state.lanUnlockPromise;
+}
+
 async function api(path, options = {}) {
-  const { timeoutMs = 180000, ...requestOptions } = options;
+  const { timeoutMs = 180000, _lanRetry = true, ...requestOptions } = options;
   const controller = new AbortController();
   const externalSignal = requestOptions.signal;
   const abortFromExternal = () => controller.abort();
@@ -90,8 +129,16 @@ async function api(path, options = {}) {
   else externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   let response;
+  let requestAdminToken = "";
   try {
-    response = await fetch(path, { ...requestOptions, signal: controller.signal, headers: { "Content-Type": "application/json", ...(requestOptions.headers || {}) } });
+    if (state.lanAdminToken === null) {
+      try { state.lanAdminToken = window.sessionStorage.getItem("bidpilot.lanAdminToken") || ""; }
+      catch { state.lanAdminToken = ""; }
+    }
+    requestAdminToken = state.lanAdminToken || "";
+    const requestMethod = String(requestOptions.method || "GET").toUpperCase();
+    const adminHeaders = state.lanAdminToken && !["GET", "HEAD", "OPTIONS"].includes(requestMethod) ? { "X-BidPilot-Admin-Token": state.lanAdminToken } : {};
+    response = await fetch(path, { ...requestOptions, signal: controller.signal, headers: { "Content-Type": "application/json", ...adminHeaders, ...(requestOptions.headers || {}) } });
   } catch (error) {
     const transient = error?.name === "AbortError" || error instanceof TypeError;
     if (!transient) throw error;
@@ -104,6 +151,20 @@ async function api(path, options = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 403 && _lanRetry && typeof data.detail === "string" && data.detail.includes("管理员令牌")) {
+      const nextLanRetry = _lanRetry === true ? "correction" : false;
+      if (state.lanAdminToken && state.lanAdminToken !== requestAdminToken) return api(path, { ...options, _lanRetry: nextLanRetry });
+      if (requestAdminToken && state.lanAdminToken === requestAdminToken) {
+        state.lanAdminToken = "";
+        try { window.sessionStorage.removeItem("bidpilot.lanAdminToken"); } catch {}
+      }
+      const token = await requestLanAdminToken(data.detail);
+      if (token) {
+        state.lanAdminToken = token.trim();
+        try { window.sessionStorage.setItem("bidpilot.lanAdminToken", state.lanAdminToken); } catch {}
+        return api(path, { ...options, _lanRetry: nextLanRetry });
+      }
+    }
     const validation = Array.isArray(data.detail) ? data.detail.map((item) => `${(item.loc || []).slice(1).join(".") || "请求"}：${item.msg}`).join("；") : null;
     const error = new Error(typeof data.detail === "string" ? data.detail : validation || `请求失败 (${response.status})`);
     error.status = response.status; throw error;
@@ -1167,25 +1228,95 @@ function setConfigStatus(id, ready, readyLabel = "已就绪") {
   node.className = `state-badge ${ready ? "success" : "muted"}`;
 }
 
-function renderSecretState(field, configured) {
+const CONFIG_SECRET_FIELDS = new Set([
+  "llm_api_key", "feishu_webhook_url", "feishu_webhook_secret", "feishu_app_secret",
+  "smtp_password", "dingtalk_webhook_url", "dingtalk_webhook_secret", "wecom_webhook_url",
+  "generic_webhook_url", "generic_webhook_bearer_token", "lan_admin_token",
+]);
+
+function configFieldGroup(field) {
+  return $(`[data-config="${field}"]`)?.closest("[data-config-group]")?.dataset.configGroup || "";
+}
+
+function dirtyConfigFields(group = null) {
+  return [...state.configDirty].filter((field) => !group || configFieldGroup(field) === group);
+}
+
+function setConfigControlsAvailable(available) {
+  $$('[data-config], [data-clear]').forEach((input) => { input.disabled = !available; });
+  state.configLoaded = available;
+  updateConfigDirtyUI();
+}
+
+function updateConfigDirtyUI() {
+  const count = state.configDirty.size;
+  const saveState = $("#config-save-state");
+  if (saveState) {
+    if (!state.configLoaded) { saveState.textContent = "配置尚未加载"; saveState.className = "state-badge danger"; }
+    else if (state.configConflict) { saveState.textContent = `版本冲突 · ${count} 项草稿待处理`; saveState.className = "state-badge danger"; }
+    else if (count) { saveState.textContent = `${count} 项未保存`; saveState.className = "state-badge warning"; }
+    else { saveState.textContent = `配置已同步 · revision ${state.config?.revision ?? 0}`; saveState.className = "state-badge success"; }
+  }
+  const saveAll = $("#save-config"); if (saveAll) saveAll.disabled = !state.configLoaded || !count || state.configSaving;
+  $$('.save-config-card').forEach((button) => {
+    button.disabled = !state.configLoaded || !dirtyConfigFields(button.dataset.configSaveGroup).length || state.configSaving;
+  });
+  const aiDirty = dirtyConfigFields("ai").length > 0;
+  if ($("#test-model")) $("#test-model").disabled = !state.configLoaded || aiDirty || state.configSaving;
+  $$('.channel-test').forEach((button) => {
+    const group = channelTestGroup(button.dataset.testChannel);
+    button.disabled = !state.configLoaded || dirtyConfigFields(group).length > 0 || state.configSaving;
+  });
+}
+
+function markConfigDirty(field) {
+  if (!state.configLoaded || !field) return;
+  state.configDirty.add(field);
+  updateConfigDirtyUI();
+}
+
+function renderSecretState(field, configured, preserve = false) {
   const label = $(`[data-secret-state="${field}"]`);
   const input = $(`[data-config="${field}"]`);
   if (label) { label.textContent = configured ? "已配置" : "未配置"; label.classList.toggle("configured", configured); }
-  if (input) { input.value = ""; input.placeholder = configured ? "已配置，留空保持原值" : "尚未配置"; }
+  if (input && !preserve) { input.value = ""; input.placeholder = configured ? "已配置，留空保持原值" : "尚未配置"; }
 }
 
-function renderConfig(config) {
+function renderConfigMetadata(config) {
+  const sourceLabels = { web: "网页保存", environment: "环境变量 / .env", default: "程序默认" };
+  $$('[data-config]').forEach((input) => {
+    const field = input.dataset.config, meta = config.field_metadata?.[field];
+    const label = input.closest("label"); if (!meta || !label) return;
+    label.querySelectorAll(".config-origin").forEach((node) => node.remove());
+    const row = document.createElement("small"); row.className = "config-origin";
+    const updated = meta.updated_at ? ` · 更新 ${formatTime(meta.updated_at)}` : "";
+    row.textContent = `来源：${sourceLabels[meta.source] || meta.source}${updated}${meta.restart_required ? " · 修改后需重启" : " · 保存后立即生效"}`;
+    if (meta.resettable) {
+      const reset = document.createElement("button"); reset.type = "button"; reset.className = "link-button field-reset"; reset.dataset.resetField = field; reset.textContent = "恢复来源值";
+      reset.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); resetConfigField(field).catch((error) => toast(error.message, 6000)); });
+      row.append(" · ", reset);
+    }
+    label.append(row);
+  });
+}
+
+function renderConfig(config, { preserveFields = new Set() } = {}) {
   state.config = config;
+  state.configConflict = false;
   const values = {
     llm_base_url: config.ai.llm_base_url, llm_model: config.ai.llm_model, llm_timeout: config.ai.llm_timeout, intent_llm_mode: config.ai.intent_llm_mode, intent_llm_confidence_threshold: config.ai.intent_llm_confidence_threshold,
     retrieval_llm_mode: config.ai.retrieval_llm_mode, retrieval_max_rounds: config.ai.retrieval_max_rounds, retrieval_query_budget_per_source: config.ai.retrieval_query_budget_per_source, retrieval_semantic_review: config.ai.retrieval_semantic_review, retrieval_semantic_threshold: config.ai.retrieval_semantic_threshold,
+    retrieval_semantic_candidate_limit: config.ai.retrieval_semantic_candidate_limit, record_summary_mode: config.ai.record_summary_mode, record_summary_max_records: config.ai.record_summary_max_records, record_summary_concurrency: config.ai.record_summary_concurrency, record_summary_max_chars: config.ai.record_summary_max_chars,
     intelligence_brief_mode: config.ai.intelligence_brief_mode, intelligence_brief_max_records: config.ai.intelligence_brief_max_records,
     decision_assessment_mode: config.ai.decision_assessment_mode, decision_assessment_max_records: config.ai.decision_assessment_max_records,
+    request_timeout: config.retrieval.request_timeout, request_interval: config.retrieval.request_interval, max_results_per_source: config.retrieval.max_results_per_source, ccgp_max_pages: config.retrieval.ccgp_max_pages,
+    worker_poll_interval: config.worker.poll_interval, worker_lease_seconds: config.worker.lease_seconds, worker_heartbeat_ttl: config.worker.heartbeat_ttl,
+    network_access_mode: config.network.access_mode, lan_access_policy: config.network.access_policy, lan_trusted_networks: config.network.trusted_networks, port: config.network.port,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
     delivery_webhook_timeout: config.generic_webhook.timeout,
   };
-  Object.entries(values).forEach(([field, value]) => { const input = $(`[data-config="${field}"]`); if (input?.type === "checkbox") input.checked = Boolean(value); else if (input) input.value = value ?? ""; });
+  Object.entries(values).forEach(([field, value]) => { if (preserveFields.has(field)) return; const input = $(`[data-config="${field}"]`); if (input?.type === "checkbox") input.checked = Boolean(value); else if (input) input.value = value ?? ""; });
   const secrets = {
     llm_api_key: config.ai.llm_api_key.configured,
     feishu_webhook_url: config.feishu.webhook_url.configured,
@@ -1197,9 +1328,10 @@ function renderConfig(config) {
     wecom_webhook_url: config.wecom.webhook_url.configured,
     generic_webhook_url: config.generic_webhook.webhook_url.configured,
     generic_webhook_bearer_token: config.generic_webhook.bearer_token.configured,
+    lan_admin_token: config.network.lan_admin_token.configured,
   };
-  Object.entries(secrets).forEach(([field, configured]) => renderSecretState(field, configured));
-  $$('[data-clear]').forEach((input) => { input.checked = false; });
+  Object.entries(secrets).forEach(([field, configured]) => renderSecretState(field, configured, preserveFields.has(field)));
+  $$('[data-clear]').forEach((input) => { if (!preserveFields.has(input.dataset.clear)) input.checked = false; });
   setConfigStatus("ai", config.ai.ready, "模型已就绪");
   setConfigStatus("feishu", config.feishu.webhook_ready || config.feishu.app_ready, config.feishu.app_ready ? "应用已就绪" : "机器人已就绪");
   setConfigStatus("email", config.email.ready, "邮件已就绪");
@@ -1207,38 +1339,112 @@ function renderConfig(config) {
   setConfigStatus("wecom", config.wecom.ready, "机器人已就绪");
   setConfigStatus("generic", config.generic_webhook.ready, "接口已就绪");
   $("#config-security-notice").textContent = config.security_notice;
-  const saveState = $("#config-save-state"); saveState.textContent = "配置已同步"; saveState.className = "state-badge success";
+  const policyLabels = { admin_token: "管理员令牌保护", trusted_lan: "可信局域网免令牌" };
+  const effectiveScope = config.network.effective_access_mode === "lan" ? `局域网 ${config.network.effective_bind_host}:${config.network.effective_port} · ${policyLabels[config.network.effective_access_policy] || config.network.effective_access_policy}` : `仅本机 ${config.network.effective_bind_host}:${config.network.effective_port}`;
+  const nextScope = config.network.access_mode === "lan" ? `局域网 ${config.network.bind_host_after_restart}:${config.network.port} · ${policyLabels[config.network.access_policy] || config.network.access_policy}` : `仅本机 ${config.network.bind_host_after_restart}:${config.network.port}`;
+  $("#network-effective-state").textContent = config.network.pending_restart ? `现在：${effectiveScope}。保存的是：${nextScope}；请重启服务后生效。` : `现在：${effectiveScope}。没有等待重启的网络修改。`;
+  syncLanPolicyHelp();
+  renderConfigMetadata(config);
+  setConfigControlsAvailable(true);
 }
 
-async function loadConfig() {
-  const config = await api("/api/v1/config");
-  renderConfig(config); await ensureConfigEditToken(); return config;
+function syncLanPolicyHelp() {
+  const mode = $('[data-config="network_access_mode"]')?.value;
+  const policy = $('[data-config="lan_access_policy"]')?.value;
+  const field = $("#lan-admin-token-field");
+  if (!field) return;
+  const required = mode === "lan" && policy === "admin_token";
+  field.classList.toggle("attention-field", required);
+  const hint = field.querySelector("small");
+  if (hint) hint.title = required ? "令牌保护模式必须保存至少 16 个字符，并在重启后生效。" : "可信局域网模式不要求令牌；可保留以便以后切回保护模式。";
 }
 
-function collectConfigPayload() {
-  const payload = {};
-  $$('[data-config]').forEach((input) => {
-    const field = input.dataset.config;
-    if (input.type === "password") { if (input.value.trim()) payload[field] = input.value.trim(); return; }
-    if (input.type === "checkbox") { payload[field] = input.checked; return; }
-    if (input.type === "number") { if (input.value !== "") payload[field] = Number(input.value); return; }
-    payload[field] = input.value.trim();
+function generateLanAdminToken() {
+  const bytes = new Uint8Array(24);
+  window.crypto.getRandomValues(bytes);
+  const token = btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const input = $('[data-config="lan_admin_token"]');
+  input.value = token;
+  const clear = $('[data-clear="lan_admin_token"]'); if (clear) clear.checked = false;
+  markConfigDirty("lan_admin_token");
+  input.focus(); input.select();
+  toast("已在浏览器本地生成 32 字符安全令牌；请保存本卡并重启服务");
+}
+
+async function loadConfig(force = false) {
+  if (state.configLoaded && !force) return state.config;
+  if (force && state.configDirty.size && !window.confirm(`重新读取会丢弃 ${state.configDirty.size} 项未保存修改，确定继续吗？`)) return state.config;
+  const sequence = ++state.configLoadSequence;
+  setConfigControlsAvailable(false);
+  const saveState = $("#config-save-state"); saveState.textContent = "正在读取配置"; saveState.className = "state-badge muted";
+  try {
+    const config = await api("/api/v1/config");
+    await ensureConfigEditToken();
+    if (sequence !== state.configLoadSequence) return state.config;
+    state.configDirty.clear();
+    renderConfig(config);
+    return config;
+  } catch (error) {
+    if (sequence === state.configLoadSequence) {
+      state.configLoaded = false;
+      setConfigControlsAvailable(false);
+      saveState.textContent = "读取失败 · 请重试"; saveState.className = "state-badge danger";
+    }
+    throw error;
+  }
+}
+
+function collectConfigPayload(fields) {
+  const payload = { revision: state.config.revision };
+  fields.forEach((fieldName) => {
+    const input = $(`[data-config="${fieldName}"]`); if (!input) return;
+    if (input.type === "password") { if (input.value.trim()) payload[fieldName] = input.value.trim(); return; }
+    if (input.type === "checkbox") { payload[fieldName] = input.checked; return; }
+    if (input.type === "number") { if (input.value !== "") payload[fieldName] = Number(input.value); return; }
+    payload[fieldName] = input.value.trim();
   });
-  payload.clear_secrets = $$('[data-clear]:checked').map((input) => input.dataset.clear);
+  payload.clear_secrets = $$('[data-clear]:checked').map((input) => input.dataset.clear).filter((field) => fields.includes(field));
   return payload;
 }
 
-async function saveConfig(showMessage = true) {
+function validateConfigFields(fields) {
+  for (const field of fields) {
+    const input = $(`[data-config="${field}"]`);
+    if (input && !input.checkValidity()) { input.reportValidity(); input.focus(); return false; }
+  }
+  return true;
+}
+
+async function saveConfig(group = null, showMessage = true) {
+  if (!state.configLoaded || !state.config) throw new Error("配置尚未成功读取，禁止用空表单覆盖现有设置");
+  const fields = dirtyConfigFields(group);
+  if (!fields.length) { if (showMessage) toast(group ? "本卡没有未保存修改" : "当前没有未保存修改"); return state.config; }
+  if (!validateConfigFields(fields)) return null;
   const button = $("#save-config"), saveState = $("#config-save-state");
-  button.disabled = true; saveState.textContent = "正在保存"; saveState.className = "state-badge warning";
+  state.configSaving = true; updateConfigDirtyUI(); saveState.textContent = `正在保存 ${fields.length} 项`; saveState.className = "state-badge warning";
   try {
-    const config = await configApi("/api/v1/config", { method: "PUT", body: JSON.stringify(collectConfigPayload()) });
-    renderConfig(config); await loadSystemStatus();
-    if (showMessage) toast("配置已保存并立即生效");
+    const config = await configApi("/api/v1/config", { method: "PUT", body: JSON.stringify(collectConfigPayload(fields)) });
+    fields.forEach((field) => state.configDirty.delete(field));
+    const preserveFields = new Set(state.configDirty);
+    renderConfig(config, { preserveFields });
+    try { await loadSystemStatus(); }
+    catch { if (showMessage) toast("配置已保存；系统状态暂未刷新，可稍后重试", 6000); }
+    if (showMessage) toast(`已保存 ${fields.length} 项；其他卡片草稿保持不变`);
     return config;
   } catch (error) {
-    saveState.textContent = "保存失败"; saveState.className = "state-badge danger"; throw error;
-  } finally { button.disabled = false; }
+    if (error.status === 409) state.configConflict = true;
+    saveState.textContent = error.status === 409 ? "版本冲突 · 请重新读取" : "保存失败"; saveState.className = "state-badge danger"; throw error;
+  } finally { state.configSaving = false; button.disabled = false; updateConfigDirtyUI(); }
+}
+
+async function resetConfigField(field) {
+  if (!state.configLoaded || !state.config) throw new Error("配置尚未加载");
+  if (CONFIG_SECRET_FIELDS.has(field)) throw new Error("敏感字段只能显式清除，不能恢复并回显来源值");
+  if (state.configDirty.has(field) && !window.confirm("该字段有未保存修改；确定丢弃并恢复环境变量或程序默认值吗？")) return;
+  const config = await configApi("/api/v1/config", { method: "PUT", body: JSON.stringify({ revision: state.config.revision, reset_fields: [field] }) });
+  state.configDirty.delete(field);
+  renderConfig(config, { preserveFields: new Set(state.configDirty) });
+  toast(`${field} 已恢复为环境变量或程序默认值`);
 }
 
 function showConfigTestResult(group, result, failed = false) {
@@ -1248,9 +1454,9 @@ function showConfigTestResult(group, result, failed = false) {
 }
 
 async function testModelConnection() {
+  if (dirtyConfigFields("ai").length) return toast("AI 卡片有未保存修改；请先保存本卡，再测试已保存配置", 6000);
   const button = $("#test-model"); button.disabled = true; button.textContent = "连接中…";
   try {
-    await saveConfig(false);
     const result = await configApi("/api/v1/config/model/test", { method: "POST" });
     showConfigTestResult("ai", result); toast("模型连接测试成功");
   } catch (error) { showConfigTestResult("ai", error.message, true); toast(error.message, 5000); }
@@ -1267,10 +1473,10 @@ function channelTestGroup(channel) {
 
 async function testDeliveryChannel(button) {
   const channel = button.dataset.testChannel, group = channelTestGroup(channel);
+  if (dirtyConfigFields(group).length) return toast("本卡有未保存修改；请先保存本卡，再测试已保存配置", 6000);
   if (!window.confirm("此操作会通过所选通道真实发送一条“配置中心连通性测试”消息。确定继续吗？")) return;
   button.disabled = true; const original = button.textContent; button.textContent = "发送中…";
   try {
-    await saveConfig(false);
     const result = await configApi(`/api/v1/config/channels/${encodeURIComponent(channel)}/test`, { method: "POST" });
     showConfigTestResult(group, result); toast("测试消息已发送");
   } catch (error) { showConfigTestResult(group, error.message, true); toast(error.message, 5000); }
@@ -1411,10 +1617,11 @@ function pollSubscription(id, previousLastRunAt = null) {
 }
 
 async function activateTab(tab) {
+  if (state.activeTab === "config" && tab !== "config" && state.configDirty.size && !window.confirm(`配置中心还有 ${state.configDirty.size} 项未保存修改，确定离开并保留草稿吗？`)) return;
   state.activeTab = tab;
   $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.tab === tab));
   $$(".tab-panel").forEach((node) => node.classList.remove("active")); $(`#tab-${tab}`).classList.add("active");
-  if (tab === "decision") await loadDecisionCenter(); if (tab === "opportunities") await setOpportunityWorkspaceView(state.opportunityView); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(); if (tab === "reports") await loadReports();
+  if (tab === "decision") await loadDecisionCenter(); if (tab === "opportunities") await setOpportunityWorkspaceView(state.opportunityView); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(false); if (tab === "reports") await loadReports();
 }
 
 $$(".nav-link").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab).catch((error) => toast(error.message))));
@@ -1436,7 +1643,9 @@ $("#opportunity-search").addEventListener("input", () => {
   clearTimeout(window.__opportunitySearchTimer);
   window.__opportunitySearchTimer = setTimeout(() => loadOpportunities().catch((error) => toast(error.message)), 250);
 });
-$("#save-config").addEventListener("click", () => saveConfig().catch((error) => toast(error.message, 5000)));
+$("#save-config").addEventListener("click", () => saveConfig(null, true).catch((error) => toast(error.message, 6000)));
+$("#reload-config").addEventListener("click", () => loadConfig(true).catch((error) => toast(error.message, 6000)));
+$$('.save-config-card').forEach((button) => button.addEventListener("click", () => saveConfig(button.dataset.configSaveGroup, true).catch((error) => toast(error.message, 6000))));
 $("#save-profile").addEventListener("click", () => saveCompanyProfile().catch((error) => toast(error.message, 5000)));
 $("#reload-profile").addEventListener("click", () => loadCompanyProfile(true).catch(() => {}));
 $("#clear-feedback").addEventListener("click", () => clearAllFeedback().catch((error) => toast(error.message, 5000)));
@@ -1449,6 +1658,22 @@ $("#run-question").addEventListener("keydown", (event) => { if (event.key === "E
 $$('[data-run-question]').forEach((button) => button.addEventListener("click", () => { $("#run-question").value = button.dataset.runQuestion; $("#run-question").focus(); }));
 $("#test-model").addEventListener("click", testModelConnection);
 $$('.channel-test').forEach((button) => button.addEventListener("click", () => testDeliveryChannel(button)));
+$$('[data-config]').forEach((input) => {
+  const listener = () => {
+    if (input.type === "password" && input.value.trim()) {
+      const clear = $(`[data-clear="${input.dataset.config}"]`); if (clear) clear.checked = false;
+    }
+    markConfigDirty(input.dataset.config);
+    if (["network_access_mode", "lan_access_policy"].includes(input.dataset.config)) syncLanPolicyHelp();
+  };
+  input.addEventListener("input", listener); input.addEventListener("change", listener);
+});
+$("#generate-lan-token").addEventListener("click", generateLanAdminToken);
+$$('[data-clear]').forEach((clear) => clear.addEventListener("change", () => {
+  const input = $(`[data-config="${clear.dataset.clear}"]`);
+  if (clear.checked && input) input.value = "";
+  markConfigDirty(clear.dataset.clear);
+}));
 $("#profile-fields").addEventListener("input", () => { if (state.profileLoaded) { state.profileDirty = true; $("#profile-save-result").textContent = "有未保存的修改"; } });
 $("#profile-fields").addEventListener("change", () => { if (state.profileLoaded) { state.profileDirty = true; $("#profile-save-result").textContent = "有未保存的修改"; } });
 $("#query-input").addEventListener("input", () => {
@@ -1457,6 +1682,7 @@ $("#query-input").addEventListener("input", () => {
 });
 $("#query-input").addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery(); });
 document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#query-input").focus(); } });
+window.addEventListener("beforeunload", (event) => { if (state.configDirty.size) { event.preventDefault(); event.returnValue = ""; } });
 window.createBidPilotSubscription = createSubscriptionFromQuery;
 Promise.all([loadSystemStatus(), loadSources(), loadReports(), loadSubscriptions(), loadOpportunities()]).catch((error) => toast(error.message));
 setInterval(() => {

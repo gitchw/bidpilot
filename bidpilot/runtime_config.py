@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import time
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
 
 from bidpilot.config import Settings
 from bidpilot.db import Database
@@ -28,6 +29,7 @@ SecretField = Literal[
     "wecom_webhook_url",
     "generic_webhook_url",
     "generic_webhook_bearer_token",
+    "lan_admin_token",
 ]
 
 SECRET_FIELDS: frozenset[str] = frozenset(
@@ -42,6 +44,7 @@ SECRET_FIELDS: frozenset[str] = frozenset(
         "wecom_webhook_url",
         "generic_webhook_url",
         "generic_webhook_bearer_token",
+        "lan_admin_token",
     }
 )
 
@@ -58,6 +61,11 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "retrieval_query_budget_per_source",
         "retrieval_semantic_review",
         "retrieval_semantic_threshold",
+        "retrieval_semantic_candidate_limit",
+        "record_summary_mode",
+        "record_summary_max_records",
+        "record_summary_concurrency",
+        "record_summary_max_chars",
         "intelligence_brief_mode",
         "intelligence_brief_max_records",
         "decision_assessment_mode",
@@ -83,6 +91,29 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "generic_webhook_url",
         "generic_webhook_bearer_token",
         "delivery_webhook_timeout",
+        "request_timeout",
+        "request_interval",
+        "max_results_per_source",
+        "ccgp_max_pages",
+        "worker_poll_interval",
+        "worker_lease_seconds",
+        "worker_heartbeat_ttl",
+        "network_access_mode",
+        "lan_access_policy",
+        "lan_trusted_networks",
+        "port",
+        "lan_admin_token",
+    }
+)
+
+RESETTABLE_FIELDS: frozenset[str] = RUNTIME_FIELDS - SECRET_FIELDS
+RESTART_REQUIRED_FIELDS: frozenset[str] = frozenset(
+    {
+        "network_access_mode",
+        "lan_access_policy",
+        "lan_trusted_networks",
+        "lan_admin_token",
+        "port",
     }
 )
 
@@ -101,6 +132,8 @@ class RuntimeConfigUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    revision: int = Field(ge=0, description="读取配置时返回的版本号；旧版本写入会返回 409")
+
     llm_base_url: str | None = Field(default=None, max_length=2000)
     llm_api_key: SecretStr | None = None
     llm_model: str | None = Field(default=None, max_length=200)
@@ -112,6 +145,11 @@ class RuntimeConfigUpdate(BaseModel):
     retrieval_query_budget_per_source: int | None = Field(default=None, ge=1, le=5)
     retrieval_semantic_review: bool | None = None
     retrieval_semantic_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
+    retrieval_semantic_candidate_limit: int | None = Field(default=None, ge=1, le=30)
+    record_summary_mode: Literal["off", "auto"] | None = None
+    record_summary_max_records: int | None = Field(default=None, ge=0, le=30)
+    record_summary_concurrency: int | None = Field(default=None, ge=1, le=8)
+    record_summary_max_chars: int | None = Field(default=None, ge=500, le=12000)
     intelligence_brief_mode: Literal["off", "auto"] | None = None
     intelligence_brief_max_records: int | None = Field(default=None, ge=3, le=25)
     decision_assessment_mode: Literal["off", "auto"] | None = Field(
@@ -151,7 +189,48 @@ class RuntimeConfigUpdate(BaseModel):
     generic_webhook_bearer_token: SecretStr | None = None
     delivery_webhook_timeout: float | None = Field(default=None, ge=3, le=120)
 
+    request_timeout: float | None = Field(default=None, ge=3, le=120)
+    request_interval: float | None = Field(default=None, ge=0.1, le=10)
+    max_results_per_source: int | None = Field(default=None, ge=1, le=100)
+    ccgp_max_pages: int | None = Field(default=None, ge=1, le=20)
+    worker_poll_interval: float | None = Field(default=None, ge=0.2, le=300)
+    worker_lease_seconds: int | None = Field(default=None, ge=30, le=7200)
+    worker_heartbeat_ttl: int | None = Field(default=None, ge=5, le=600)
+    network_access_mode: Literal["local", "lan"] | None = Field(
+        default=None,
+        description="重启后的监听范围：local 仅本机，lan 允许局域网设备连接",
+    )
+    lan_access_policy: Literal["admin_token", "trusted_lan"] | None = Field(
+        default=None,
+        description="LAN 写操作保护：管理员令牌，或仅对可信私有网段免令牌",
+    )
+    lan_trusted_networks: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="可信私网 CIDR，逗号分隔；auto 使用内置私网、链路本地和组网范围",
+    )
+    port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        description="重启后的 Web 监听端口；默认值为 8000",
+    )
+    lan_admin_token: SecretStr | None = Field(
+        default=None,
+        description="LAN 管理员令牌，仅写入不回显；令牌模式至少 16 个字符",
+    )
+
     clear_secrets: list[SecretField] = Field(default_factory=list)
+    reset_fields: list[str] = Field(default_factory=list, max_length=len(RESETTABLE_FIELDS))
+
+    @field_validator("reset_fields")
+    @classmethod
+    def validate_reset_fields(cls, value: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        unknown = sorted(set(cleaned) - RESETTABLE_FIELDS)
+        if unknown:
+            raise ValueError(f"未知或不可恢复的配置字段：{', '.join(unknown)}")
+        return cleaned
 
     @field_validator(
         "llm_base_url",
@@ -202,6 +281,11 @@ class AIConfigView(BaseModel):
     retrieval_query_budget_per_source: int
     retrieval_semantic_review: bool
     retrieval_semantic_threshold: float
+    retrieval_semantic_candidate_limit: int
+    record_summary_mode: Literal["off", "auto"]
+    record_summary_max_records: int
+    record_summary_concurrency: int
+    record_summary_max_chars: int
     intelligence_brief_mode: Literal["off", "auto"]
     intelligence_brief_max_records: int
     decision_assessment_mode: Literal["off", "auto"] = Field(
@@ -251,13 +335,62 @@ class GenericWebhookConfigView(BaseModel):
     ready: bool
 
 
+class RetrievalConfigView(BaseModel):
+    request_timeout: float
+    request_interval: float
+    max_results_per_source: int
+    ccgp_max_pages: int
+
+
+class WorkerConfigView(BaseModel):
+    poll_interval: float
+    lease_seconds: int
+    heartbeat_ttl: int
+
+
+class NetworkConfigView(BaseModel):
+    access_mode: Literal["local", "lan"] = Field(description="已保存、重启后生效的访问范围")
+    access_policy: Literal["admin_token", "trusted_lan"] = Field(
+        description="已保存、重启后生效的 LAN 写操作保护方式"
+    )
+    trusted_networks: str = Field(description="已保存、重启后生效的可信私网范围")
+    port: int = Field(description="已保存、重启后生效的服务端口")
+    bind_host_after_restart: str = Field(description="按已保存范围计算的重启后监听地址")
+    effective_access_mode: Literal["local", "lan"] = Field(description="当前进程实际使用的访问范围")
+    effective_access_policy: Literal["admin_token", "trusted_lan"] = Field(
+        description="当前进程实际使用的 LAN 写操作保护方式"
+    )
+    effective_trusted_networks: str = Field(description="当前进程实际使用的可信私网范围")
+    effective_port: int = Field(description="当前进程实际使用的端口")
+    effective_bind_host: str = Field(description="当前进程实际使用的监听地址")
+    lan_admin_token: SecretState = Field(description="已保存令牌是否存在，不返回原文")
+    effective_lan_admin_token: SecretState = Field(
+        description="当前进程使用的令牌是否存在，不返回原文"
+    )
+    restart_required: bool = Field(description="网络类字段是否要求重启")
+    pending_restart: bool = Field(description="已保存值是否与当前进程实际值不同")
+
+
+class ConfigFieldMetadata(BaseModel):
+    source: Literal["web", "environment", "default"]
+    updated_at: str | None = None
+    restart_required: bool = False
+    resettable: bool = True
+
+
 class RuntimeConfigView(BaseModel):
+    revision: int
     ai: AIConfigView
+    retrieval: RetrievalConfigView
+    worker: WorkerConfigView
+    network: NetworkConfigView
     feishu: FeishuConfigView
     email: SMTPConfigView
     dingtalk: RobotConfigView
     wecom: RobotConfigView
     generic_webhook: GenericWebhookConfigView
+    field_metadata: dict[str, ConfigFieldMetadata]
+    updated_at: str | None = None
     security_notice: str
 
 
@@ -271,6 +404,12 @@ class ConnectionTestResult(BaseModel):
 
 class RuntimeConfigError(RuntimeError):
     pass
+
+
+class RuntimeConfigConflict(RuntimeConfigError):
+    def __init__(self, current_revision: int):
+        super().__init__("配置已被另一个页面或进程更新，请重新读取后再保存")
+        self.current_revision = current_revision
 
 
 class LocalSecretVault:
@@ -319,8 +458,18 @@ class RuntimeConfiguration:
     def __init__(self, db: Database, settings: Settings):
         self.db = db
         self.settings = settings
+        self.base_values = settings.model_dump()
+        self.default_values = Settings(_env_file=None).model_dump()
         self.vault = LocalSecretVault(settings.data_dir / "secrets" / "runtime_config.key")
         self.load_persisted()
+        self._effective_restart_values = {
+            field: getattr(settings, field) for field in RESTART_REQUIRED_FIELDS
+        }
+
+    def effective_restart_value(self, field: str) -> object:
+        if field not in RESTART_REQUIRED_FIELDS:
+            raise KeyError(f"{field} 不是需重启生效的配置")
+        return self._effective_restart_values[field]
 
     def load_persisted(self) -> None:
         rows = self.db.get_runtime_config()
@@ -351,6 +500,34 @@ class RuntimeConfiguration:
         def secret(field: str) -> SecretState:
             return SecretState(configured=bool(getattr(self.settings, field)))
 
+        rows = self.db.get_runtime_config()
+        metadata: dict[str, ConfigFieldMetadata] = {}
+        for field in sorted(RUNTIME_FIELDS):
+            row = rows.get(field)
+            if row is not None:
+                source: Literal["web", "environment", "default"] = "web"
+                updated_at = row.get("updated_at")
+            else:
+                environment_key = f"BIDPILOT_{field.upper()}"
+                source = (
+                    "environment"
+                    if environment_key in os.environ
+                    or self.base_values.get(field) != self.default_values.get(field)
+                    else "default"
+                )
+                updated_at = None
+            metadata[field] = ConfigFieldMetadata(
+                source=source,
+                updated_at=updated_at,
+                restart_required=field in RESTART_REQUIRED_FIELDS,
+                resettable=field in RESETTABLE_FIELDS,
+            )
+        updated_values = [
+            str(row.get("updated_at"))
+            for field, row in rows.items()
+            if field != "_revision" and row.get("updated_at")
+        ]
+
         feishu_app_ready = all(
             (
                 self.settings.feishu_app_id,
@@ -370,6 +547,7 @@ class RuntimeConfiguration:
             and (not self.settings.smtp_username or self.settings.smtp_password)
         )
         return RuntimeConfigView(
+            revision=self.db.get_runtime_config_revision(),
             ai=AIConfigView(
                 llm_base_url=self.settings.llm_base_url,
                 llm_model=self.settings.llm_model,
@@ -381,12 +559,57 @@ class RuntimeConfiguration:
                 retrieval_query_budget_per_source=(self.settings.retrieval_query_budget_per_source),
                 retrieval_semantic_review=self.settings.retrieval_semantic_review,
                 retrieval_semantic_threshold=self.settings.retrieval_semantic_threshold,
+                retrieval_semantic_candidate_limit=(
+                    self.settings.retrieval_semantic_candidate_limit
+                ),
+                record_summary_mode=self.settings.record_summary_mode,
+                record_summary_max_records=self.settings.record_summary_max_records,
+                record_summary_concurrency=self.settings.record_summary_concurrency,
+                record_summary_max_chars=self.settings.record_summary_max_chars,
                 intelligence_brief_mode=self.settings.intelligence_brief_mode,
                 intelligence_brief_max_records=self.settings.intelligence_brief_max_records,
                 decision_assessment_mode=self.settings.decision_assessment_mode,
                 decision_assessment_max_records=self.settings.decision_assessment_max_records,
                 llm_api_key=secret("llm_api_key"),
                 ready=bool(self.settings.llm_base_url and self.settings.llm_model),
+            ),
+            retrieval=RetrievalConfigView(
+                request_timeout=self.settings.request_timeout,
+                request_interval=self.settings.request_interval,
+                max_results_per_source=self.settings.max_results_per_source,
+                ccgp_max_pages=self.settings.ccgp_max_pages,
+            ),
+            worker=WorkerConfigView(
+                poll_interval=self.settings.worker_poll_interval,
+                lease_seconds=self.settings.worker_lease_seconds,
+                heartbeat_ttl=self.settings.worker_heartbeat_ttl,
+            ),
+            network=NetworkConfigView(
+                access_mode=self.settings.network_access_mode,
+                access_policy=self.settings.lan_access_policy,
+                trusted_networks=self.settings.lan_trusted_networks,
+                port=self.settings.port,
+                bind_host_after_restart=(
+                    "0.0.0.0" if self.settings.network_access_mode == "lan" else "127.0.0.1"
+                ),
+                effective_access_mode=self.effective_restart_value("network_access_mode"),
+                effective_access_policy=self.effective_restart_value("lan_access_policy"),
+                effective_trusted_networks=self.effective_restart_value("lan_trusted_networks"),
+                effective_port=self.effective_restart_value("port"),
+                effective_bind_host=(
+                    "0.0.0.0"
+                    if self.effective_restart_value("network_access_mode") == "lan"
+                    else "127.0.0.1"
+                ),
+                lan_admin_token=secret("lan_admin_token"),
+                effective_lan_admin_token=SecretState(
+                    configured=bool(self.effective_restart_value("lan_admin_token"))
+                ),
+                restart_required=True,
+                pending_restart=any(
+                    getattr(self.settings, field) != self.effective_restart_value(field)
+                    for field in RESTART_REQUIRED_FIELDS
+                ),
             ),
             feishu=FeishuConfigView(
                 webhook_url=secret("feishu_webhook_url"),
@@ -425,16 +648,22 @@ class RuntimeConfiguration:
                 timeout=self.settings.delivery_webhook_timeout,
                 ready=bool(self.settings.generic_webhook_url),
             ),
+            field_metadata=metadata,
+            updated_at=max(updated_values, default=None),
             security_notice=(
                 "敏感值使用本机密钥加密保存且仅显示“已配置”；留空表示保持原值，"
                 "清除必须显式勾选。"
-                "默认服务只监听本机，公网部署必须增加 TLS、身份认证与访问审计。"
+                "默认服务只监听本机；主动开启局域网模式后，其他设备的写操作必须携带"
+                "独立管理员令牌，或明确选择仅对可信私有网段免令牌。网络配置统一在"
+                "重启后生效；局域网 HTTP 不加密，也不等于公网安全方案。"
             ),
         )
 
     def update(self, payload: RuntimeConfigUpdate) -> RuntimeConfigView:
         submitted = payload.model_dump(exclude_unset=True)
+        expected_revision = int(submitted.pop("revision"))
         clear_secrets = set(submitted.pop("clear_secrets", []))
+        reset_fields = set(submitted.pop("reset_fields", []))
         changes: dict[str, object] = {}
         for field, value in submitted.items():
             if field not in RUNTIME_FIELDS or value is None:
@@ -446,24 +675,40 @@ class RuntimeConfiguration:
             elif isinstance(value, str):
                 value = value.strip()
             changes[field] = value
+        conflicts = (set(changes) & clear_secrets) | (set(changes) & reset_fields)
+        if conflicts:
+            raise RuntimeConfigError(
+                f"同一字段不能同时填写、清除或恢复来源值：{', '.join(sorted(conflicts))}"
+            )
         for field in clear_secrets:
             if field in SECRET_FIELDS:
                 changes[field] = ""
-
-        if changes:
-            candidate = Settings.model_validate({**self.settings.model_dump(), **changes})
-            serialized = {
-                field: (
-                    self.vault.encrypt(json.dumps(getattr(candidate, field), ensure_ascii=False))
-                    if field in SECRET_FIELDS
-                    else json.dumps(getattr(candidate, field), ensure_ascii=False),
-                    field in SECRET_FIELDS,
-                )
-                for field in changes
-            }
-            self.db.set_runtime_config(serialized)
-            for field in changes:
-                setattr(self.settings, field, getattr(candidate, field))
+        restored = {field: self.base_values[field] for field in reset_fields}
+        try:
+            candidate = Settings.model_validate(
+                {**self.settings.model_dump(), **restored, **changes}
+            )
+        except ValidationError as exc:
+            message = str(exc.errors()[0].get("msg") or "配置值未通过校验")
+            raise RuntimeConfigError(message.removeprefix("Value error, ")) from exc
+        serialized = {
+            field: (
+                self.vault.encrypt(json.dumps(getattr(candidate, field), ensure_ascii=False))
+                if field in SECRET_FIELDS
+                else json.dumps(getattr(candidate, field), ensure_ascii=False),
+                field in SECRET_FIELDS,
+            )
+            for field in changes
+        }
+        revision = self.db.set_runtime_config(
+            serialized,
+            delete_fields=reset_fields,
+            expected_revision=expected_revision,
+        )
+        if revision is None:
+            raise RuntimeConfigConflict(self.db.get_runtime_config_revision())
+        for field in set(changes) | reset_fields:
+            setattr(self.settings, field, getattr(candidate, field))
         return self.snapshot()
 
     async def test_model(self) -> ConnectionTestResult:

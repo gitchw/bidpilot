@@ -2,8 +2,10 @@ import asyncio
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
+import httpx
 from docx import Document
 from fastapi.testclient import TestClient
 
@@ -881,7 +883,10 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
 
         denied = client.put(
             "/api/v1/config",
-            json={"llm_base_url": "http://127.0.0.1:8045/v1"},
+            json={
+                "revision": initial.json()["revision"],
+                "llm_base_url": "http://127.0.0.1:8045/v1",
+            },
         )
         assert denied.status_code == 403
 
@@ -893,6 +898,7 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
             "/api/v1/config",
             headers=headers,
             json={
+                "revision": initial.json()["revision"],
                 "llm_base_url": "http://127.0.0.1:8045/v1",
                 "llm_model": "compatible-test-model",
                 "llm_api_key": secret_value,
@@ -914,14 +920,14 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
         preserved = client.put(
             "/api/v1/config",
             headers=headers,
-            json={"llm_api_key": ""},
+            json={"revision": saved.json()["revision"], "llm_api_key": ""},
         )
         assert preserved.json()["ai"]["llm_api_key"] == {"configured": True}
 
         rejected = client.put(
             "/api/v1/config",
             headers=headers,
-            json={"unknown_setting": "unsafe"},
+            json={"revision": preserved.json()["revision"], "unknown_setting": "unsafe"},
         )
         assert rejected.status_code == 422
 
@@ -951,9 +957,277 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
         cleared = client.put(
             "/api/v1/config",
             headers={"X-BidPilot-Config-Token": token},
-            json={"clear_secrets": ["llm_api_key"]},
+            json={
+                "revision": client.get("/api/v1/config").json()["revision"],
+                "clear_secrets": ["llm_api_key"],
+            },
         )
         assert cleared.json()["ai"]["llm_api_key"] == {"configured": False}
+
+
+def test_runtime_config_revision_metadata_and_reset_are_atomic(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    app = create_app(settings, sources=[FakeSource()])
+    with TestClient(app) as client:
+        initial = client.get("/api/v1/config").json()
+        token = client.post("/api/v1/config/edit-token").json()["edit_token"]
+        headers = {"X-BidPilot-Config-Token": token}
+        saved = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": initial["revision"],
+                "request_timeout": 44,
+                "request_interval": 1.2,
+                "max_results_per_source": 37,
+                "ccgp_max_pages": 4,
+                "retrieval_semantic_candidate_limit": 17,
+                "record_summary_mode": "off",
+                "record_summary_max_records": 6,
+                "record_summary_concurrency": 2,
+                "record_summary_max_chars": 3600,
+                "worker_poll_interval": 4.5,
+                "worker_lease_seconds": 600,
+                "worker_heartbeat_ttl": 45,
+            },
+        )
+        assert saved.status_code == 200
+        body = saved.json()
+        assert body["revision"] == initial["revision"] + 1
+        assert body["retrieval"] == {
+            "request_timeout": 44.0,
+            "request_interval": 1.2,
+            "max_results_per_source": 37,
+            "ccgp_max_pages": 4,
+        }
+        assert body["ai"]["retrieval_semantic_candidate_limit"] == 17
+        assert body["ai"]["record_summary_mode"] == "off"
+        assert body["worker"]["lease_seconds"] == 600
+        assert body["field_metadata"]["request_timeout"]["source"] == "web"
+        assert body["field_metadata"]["request_timeout"]["updated_at"]
+
+        stale = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={"revision": initial["revision"], "request_timeout": 55},
+        )
+        assert stale.status_code == 409
+        assert "revision" in stale.json()["detail"]
+        assert client.get("/api/v1/config").json()["retrieval"]["request_timeout"] == 44
+
+        reset = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": body["revision"],
+                "reset_fields": ["request_timeout"],
+            },
+        )
+        assert reset.status_code == 200
+        assert reset.json()["retrieval"]["request_timeout"] == 20
+        assert reset.json()["field_metadata"]["request_timeout"]["source"] == "default"
+        assert reset.json()["field_metadata"]["request_timeout"]["updated_at"] is None
+
+        unknown_reset = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": reset.json()["revision"],
+                "reset_fields": ["database_path"],
+            },
+        )
+        assert unknown_reset.status_code == 422
+
+
+def test_lan_mode_requires_strong_secret_and_marks_restart_fields(tmp_path: Path):
+    app = create_app(make_settings(tmp_path), sources=[FakeSource()])
+    with TestClient(app) as client:
+        initial = client.get("/api/v1/config").json()
+        token = client.post("/api/v1/config/edit-token").json()["edit_token"]
+        headers = {"X-BidPilot-Config-Token": token}
+        weak = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": initial["revision"],
+                "network_access_mode": "lan",
+                "lan_admin_token": "short",
+            },
+        )
+        assert weak.status_code == 422
+
+        public_network = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": initial["revision"],
+                "network_access_mode": "lan",
+                "lan_access_policy": "trusted_lan",
+                "lan_trusted_networks": "0.0.0.0/0",
+            },
+        )
+        assert public_network.status_code == 422
+        assert "可信网段" in public_network.json()["detail"]
+
+        enabled = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": initial["revision"],
+                "network_access_mode": "lan",
+                "lan_admin_token": "lan-admin-token-at-least-16",
+                "port": 8000,
+            },
+        )
+        assert enabled.status_code == 200
+        body = enabled.json()
+        assert body["network"]["access_mode"] == "lan"
+        assert body["network"]["access_policy"] == "admin_token"
+        assert body["network"]["bind_host_after_restart"] == "0.0.0.0"
+        assert body["network"]["effective_access_mode"] == "local"
+        assert body["network"]["effective_bind_host"] == "127.0.0.1"
+        assert body["network"]["pending_restart"] is True
+        assert body["network"]["lan_admin_token"] == {"configured": True}
+        assert body["field_metadata"]["network_access_mode"]["restart_required"] is True
+        assert "lan-admin-token-at-least-16" not in enabled.text
+
+        impossible_clear = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": body["revision"],
+                "clear_secrets": ["lan_admin_token"],
+            },
+        )
+        assert impossible_clear.status_code == 422
+
+        trusted_without_token = client.put(
+            "/api/v1/config",
+            headers=headers,
+            json={
+                "revision": body["revision"],
+                "lan_access_policy": "trusted_lan",
+                "clear_secrets": ["lan_admin_token"],
+            },
+        )
+        assert trusted_without_token.status_code == 200
+        assert trusted_without_token.json()["network"]["lan_admin_token"] == {"configured": False}
+
+
+async def test_remote_lan_writes_require_admin_token(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.network_access_mode = "lan"
+    settings.lan_admin_token = "remote-admin-token-12345"
+    app = create_app(settings, sources=[FakeSource()])
+    transport = httpx.ASGITransport(app=app, client=("192.168.1.20", 43123))
+    async with httpx.AsyncClient(transport=transport, base_url="http://bidpilot.lan") as client:
+        assert (await client.get("/api/v1/config")).status_code == 200
+        denied = await client.post("/api/v1/config/edit-token")
+        assert denied.status_code == 403
+        assert "管理员令牌" in denied.json()["detail"]
+        wrong = await client.post(
+            "/api/v1/config/edit-token",
+            headers={"X-BidPilot-Admin-Token": "wrong"},
+        )
+        assert wrong.status_code == 403
+        allowed = await client.post(
+            "/api/v1/config/edit-token",
+            headers={"X-BidPilot-Admin-Token": settings.lan_admin_token},
+        )
+        assert allowed.status_code == 200
+        assert allowed.json()["edit_token"]
+
+
+async def test_trusted_lan_can_manage_source_login_without_admin_token(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.network_access_mode = "lan"
+    settings.lan_access_policy = "trusted_lan"
+    settings.lan_trusted_networks = "auto"
+    app = create_app(settings, sources=[FakeSource()])
+    now = datetime.now()
+    app.state.service.source_auth.start = AsyncMock(
+        return_value={
+            "session_id": "remote-visible-browser-session",
+            "source_id": "cecbid",
+            "source_name": "中国招标投标网",
+            "status": "authorizing",
+            "started_at": now,
+            "expires_at": now + timedelta(minutes=15),
+            "login_url": "https://www.cecbid.org.cn/login",
+            "message": "登录窗口已在服务主机打开",
+        }
+    )
+    transport = httpx.ASGITransport(app=app, client=("192.168.10.25", 43123))
+    async with httpx.AsyncClient(transport=transport, base_url="http://bidpilot.lan") as client:
+        token_response = await client.post("/api/v1/config/edit-token")
+        assert token_response.status_code == 200
+        started = await client.post(
+            "/api/v1/sources/cecbid/auth/start",
+            headers={"X-BidPilot-Config-Token": token_response.json()["edit_token"]},
+        )
+        assert started.status_code == 200
+        assert started.json()["session_id"] == "remote-visible-browser-session"
+        assert "服务主机" in started.json()["message"]
+
+    public_transport = httpx.ASGITransport(app=app, client=("8.8.8.8", 43123))
+    async with httpx.AsyncClient(
+        transport=public_transport,
+        base_url="http://bidpilot.example",
+    ) as client:
+        denied = await client.post(
+            "/api/v1/config/edit-token",
+            headers={"X-Forwarded-For": "192.168.10.25"},
+        )
+        assert denied.status_code == 403
+        assert "可信局域网" in denied.json()["detail"]
+
+
+async def test_network_policy_changes_only_after_service_restart(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.network_access_mode = "lan"
+    settings.lan_access_policy = "admin_token"
+    settings.lan_admin_token = "old-admin-token-at-least-16"
+    app = create_app(settings, sources=[FakeSource()])
+    transport = httpx.ASGITransport(app=app, client=("192.168.1.20", 43123))
+    admin_headers = {"X-BidPilot-Admin-Token": settings.lan_admin_token}
+    async with httpx.AsyncClient(transport=transport, base_url="http://bidpilot.lan") as client:
+        edit = await client.post("/api/v1/config/edit-token", headers=admin_headers)
+        current = (await client.get("/api/v1/config")).json()
+        saved = await client.put(
+            "/api/v1/config",
+            headers={
+                **admin_headers,
+                "X-BidPilot-Config-Token": edit.json()["edit_token"],
+            },
+            json={
+                "revision": current["revision"],
+                "lan_access_policy": "trusted_lan",
+            },
+        )
+        assert saved.status_code == 200
+        assert saved.json()["network"]["access_policy"] == "trusted_lan"
+        assert saved.json()["network"]["effective_access_policy"] == "admin_token"
+        assert saved.json()["network"]["pending_restart"] is True
+        assert (await client.post("/api/v1/config/edit-token")).status_code == 403
+        assert (
+            await client.post("/api/v1/config/edit-token", headers=admin_headers)
+        ).status_code == 200
+
+    restarted_settings = make_settings(tmp_path)
+    restarted_settings.network_access_mode = "lan"
+    restarted = create_app(restarted_settings, sources=[FakeSource()])
+    restarted_transport = httpx.ASGITransport(
+        app=restarted,
+        client=("192.168.1.20", 43123),
+    )
+    async with httpx.AsyncClient(
+        transport=restarted_transport,
+        base_url="http://bidpilot.lan",
+    ) as client:
+        assert (await client.post("/api/v1/config/edit-token")).status_code == 200
+        body = (await client.get("/api/v1/config")).json()
+        assert body["network"]["effective_access_policy"] == "trusted_lan"
+        assert body["network"]["pending_restart"] is False
 
 
 def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: Path):
@@ -1007,7 +1281,12 @@ async def test_standalone_worker_reloads_web_runtime_config_before_run(tmp_path:
     worker_service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
     assert worker_service.settings.delivery_webhook_timeout == 20
 
-    web_service.runtime_config.update(RuntimeConfigUpdate(delivery_webhook_timeout=47))
+    web_service.runtime_config.update(
+        RuntimeConfigUpdate(
+            revision=web_service.runtime_config.snapshot().revision,
+            delivery_webhook_timeout=47,
+        )
+    )
     await worker_service.run_query("最近1个月安徽服务器招标信息")
 
     assert worker_service.settings.delivery_webhook_timeout == 47

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
@@ -9,7 +10,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,9 +40,11 @@ from bidpilot.models import (
     TenderQuerySpec,
     TenderRecord,
 )
+from bidpilot.network_access import client_in_trusted_networks
 from bidpilot.runtime_config import (
     ConfigEditTokenManager,
     ConnectionTestResult,
+    RuntimeConfigConflict,
     RuntimeConfigError,
     RuntimeConfigUpdate,
     RuntimeConfigView,
@@ -84,7 +87,7 @@ class ResumeRequest(BaseModel):
 
 
 class ConfigEditTokenResponse(BaseModel):
-    edit_token: str = Field(description="仅用于本机配置写入的短期令牌")
+    edit_token: str = Field(description="用于同源配置和来源授权写入的短期防跨站令牌")
     expires_in: int = Field(description="令牌剩余有效秒数")
 
 
@@ -163,6 +166,13 @@ def create_app(
     config_tokens = ConfigEditTokenManager()
     control_plane = ControlPlane(settings)
 
+    def is_loopback_request(request: Request) -> bool:
+        client_host = request.client.host if request.client else ""
+        try:
+            return ipaddress.ip_address(client_host).is_loopback
+        except ValueError:
+            return client_host == "testclient"
+
     def require_config_token(
         x_bidpilot_config_token: Annotated[
             str | None,
@@ -172,17 +182,7 @@ def create_app(
         if not config_tokens.validate(x_bidpilot_config_token):
             raise HTTPException(status_code=403, detail="配置编辑令牌缺失、无效或已过期")
 
-    def require_loopback_config_token(
-        request: Request,
-        token: str | None,
-    ) -> None:
-        client_host = request.client.host if request.client else ""
-        try:
-            is_loopback = ipaddress.ip_address(client_host).is_loopback
-        except ValueError:
-            is_loopback = client_host == "testclient"
-        if not is_loopback:
-            raise HTTPException(status_code=403, detail="来源授权只允许从运行服务的本机操作")
+    def require_management_config_token(token: str | None) -> None:
         require_config_token(token)
 
     @asynccontextmanager
@@ -210,6 +210,42 @@ def create_app(
         openapi_tags=OPENAPI_TAGS,
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def guard_lan_mutations(request: Request, call_next):
+        if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and not is_loopback_request(
+            request
+        ):
+            supplied = request.headers.get("X-BidPilot-Admin-Token", "")
+            effective_mode = service.runtime_config.effective_restart_value("network_access_mode")
+            effective_policy = service.runtime_config.effective_restart_value("lan_access_policy")
+            effective_token = str(service.runtime_config.effective_restart_value("lan_admin_token"))
+            effective_networks = str(
+                service.runtime_config.effective_restart_value("lan_trusted_networks")
+            )
+            trusted_client = effective_policy == "trusted_lan" and client_in_trusted_networks(
+                request.client.host if request.client else "",
+                effective_networks,
+            )
+            valid_admin = (
+                effective_policy == "admin_token"
+                and bool(effective_token)
+                and secrets.compare_digest(supplied, effective_token)
+            )
+            allowed = effective_mode == "lan" and (trusted_client or valid_admin)
+            if not allowed:
+                if effective_mode != "lan":
+                    detail = "当前服务没有开放局域网写操作；请在服务主机配置并重启"
+                elif effective_policy == "trusted_lan":
+                    detail = "当前设备地址不在可信局域网范围；请在服务主机检查可信网段配置"
+                else:
+                    detail = "局域网写操作需要有效的管理员令牌；请输入服务主机配置的令牌"
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": detail},
+                )
+        return await call_next(request)
+
     app.state.service = service
     app.state.config_tokens = config_tokens
     app.state.control_plane = control_plane
@@ -1188,13 +1224,16 @@ def create_app(
         **_api_docs(
             tag="来源授权",
             summary="开始可见浏览器授权",
-            purpose="在本机打开独立可见 Chromium，让用户本人登录、扫码、输入验证码或按原站要求使用 CA。",
-            parameters="路径 source_id 当前支持 qianlima、cecbid；请求头必须含 X-BidPilot-Config-Token；无请求体。",
+            purpose="在运行 BidPilot 服务的电脑上打开独立可见 Chromium，让用户本人登录、扫码、输入验证码或按原站要求使用 CA。局域网设备可以发起和管理流程，但浏览器窗口不会出现在手机上。",
+            parameters="路径 source_id 当前支持 cecbid；请求头必须含 X-BidPilot-Config-Token。局域网请求还遵循已生效的管理员令牌或可信网段策略；无请求体。",
             returns="HTTP 200；返回一次性会话 ID、15 分钟截止时间和操作提示。",
-            side_effects="【本机副作用】启动一个可见浏览器进程并打开官方登录页；不会自动输入账号、密码、验证码或点击提交。",
-            errors="403：非回环请求或编辑令牌无效；409：来源不支持安全复用授权、浏览器组件缺失或 Chromium 无法启动。",
-            example="POST /api/v1/sources/qianlima/auth/start\nX-BidPilot-Config-Token: <token>",
-            responses={403: "必须从本机并携带短期令牌。", 409: "来源不支持或浏览器组件不可用。"},
+            side_effects="【服务主机副作用】启动一个可见浏览器进程并打开官方登录页；不会自动输入账号、密码、验证码或点击提交。",
+            errors="403：短期编辑令牌无效，或局域网访问策略未通过；409：来源不支持安全复用授权、浏览器组件缺失或 Chromium 无法启动。",
+            example="POST /api/v1/sources/cecbid/auth/start\nX-BidPilot-Config-Token: <token>",
+            responses={
+                403: "编辑令牌或局域网访问策略未通过。",
+                409: "来源不支持或浏览器组件不可用。",
+            },
         ),
     )
     async def start_source_authorization(
@@ -1205,7 +1244,7 @@ def create_app(
             Header(alias="X-BidPilot-Config-Token"),
         ] = None,
     ):
-        require_loopback_config_token(request, x_bidpilot_config_token)
+        require_management_config_token(x_bidpilot_config_token)
         try:
             return await service.source_auth.start(source_id)
         except SourceAuthError as exc:
@@ -1242,9 +1281,9 @@ def create_app(
             parameters="路径 session_id；请求头必须含短期编辑令牌；无请求体。",
             returns="HTTP 200；返回 completed 或 failed 及脱敏原因。不会返回 Cookie 名称和值。",
             side_effects="【敏感写入】仅保存允许域名的会话 Cookie，使用本机 Fernet 密钥加密；不保存账号、密码、验证码或 CA。",
-            errors="403：非回环请求或令牌无效；404：会话不存在；409：未检测到允许域名会话。",
+            errors="403：编辑令牌无效或局域网访问策略未通过；404：会话不存在；409：未检测到允许域名会话。",
             example="POST /api/v1/sources/auth/sessions/<session_id>/complete\nX-BidPilot-Config-Token: <token>",
-            responses={403: "必须从本机并携带短期令牌。", 404: "会话不存在。"},
+            responses={403: "编辑令牌或局域网访问策略未通过。", 404: "会话不存在。"},
         ),
     )
     async def complete_source_authorization(
@@ -1255,7 +1294,7 @@ def create_app(
             Header(alias="X-BidPilot-Config-Token"),
         ] = None,
     ):
-        require_loopback_config_token(request, x_bidpilot_config_token)
+        require_management_config_token(x_bidpilot_config_token)
         try:
             result = await service.source_auth.complete(session_id)
         except SourceAuthError as exc:
@@ -1274,10 +1313,10 @@ def create_app(
             parameters="路径 source_id；请求头必须含短期编辑令牌；无请求体。",
             returns="HTTP 200；返回 passed/failed、耗时和脱敏诊断，不返回请求 Cookie。",
             side_effects="【外部调用】会访问来源的服务器关键词检索；遵守全局限速和重试上限，不下载付费文件。",
-            errors="403：非回环请求或令牌无效；409：尚未授权或来源不支持；502：授权测试失败。",
+            errors="403：编辑令牌无效或局域网访问策略未通过；409：尚未授权或来源不支持；502：授权测试失败。",
             example="POST /api/v1/sources/cecbid/auth/test\nX-BidPilot-Config-Token: <token>",
             responses={
-                403: "必须从本机并携带短期令牌。",
+                403: "编辑令牌或局域网访问策略未通过。",
                 409: "尚未授权。",
                 502: "真实测试未证明授权有效。",
             },
@@ -1291,7 +1330,7 @@ def create_app(
             Header(alias="X-BidPilot-Config-Token"),
         ] = None,
     ):
-        require_loopback_config_token(request, x_bidpilot_config_token)
+        require_management_config_token(x_bidpilot_config_token)
         try:
             result = await service.source_auth.test(source_id)
         except SourceAuthError as exc:
@@ -1310,9 +1349,9 @@ def create_app(
             parameters="路径 source_id；请求头必须含短期编辑令牌；无请求体。",
             returns="HTTP 200；返回 not_authorized 脱敏状态。",
             side_effects="【删除副作用】永久删除本机保存的该来源加密会话；不会注销原网站账号，也不会修改账号密码。",
-            errors="403：非回环请求或令牌无效；409：该来源没有受管授权。",
-            example="DELETE /api/v1/sources/qianlima/auth\nX-BidPilot-Config-Token: <token>",
-            responses={403: "必须从本机并携带短期令牌。", 409: "来源没有受管授权。"},
+            errors="403：编辑令牌无效或局域网访问策略未通过；409：该来源没有受管授权。",
+            example="DELETE /api/v1/sources/cecbid/auth\nX-BidPilot-Config-Token: <token>",
+            responses={403: "编辑令牌或局域网访问策略未通过。", 409: "来源没有受管授权。"},
         ),
     )
     async def clear_source_authorization(
@@ -1323,7 +1362,7 @@ def create_app(
             Header(alias="X-BidPilot-Config-Token"),
         ] = None,
     ):
-        require_loopback_config_token(request, x_bidpilot_config_token)
+        require_management_config_token(x_bidpilot_config_token)
         try:
             return await service.source_auth.clear(source_id)
         except SourceAuthError as exc:
@@ -1335,9 +1374,9 @@ def create_app(
         **_api_docs(
             tag="配置中心",
             summary="读取脱敏后的运行时配置",
-            purpose="为网页配置中心读取混合意图模式、置信阈值、模型、飞书、SMTP、钉钉、企业微信和通用 Webhook 的非敏感字段与就绪状态。",
+            purpose="为网页配置中心读取 AI、检索、worker、网络访问、飞书、SMTP、钉钉、企业微信和通用 Webhook 的非敏感字段、来源、版本与就绪状态。",
             parameters="无请求体、无查询参数。",
-            returns="HTTP 200；敏感字段仅返回 `{configured:true/false}`，永不返回 API Key、密码、Webhook 完整地址、签名密钥或 Bearer Token。",
+            returns="HTTP 200；返回 revision、字段来源和当前/重启后网络状态；敏感字段仅返回 `{configured:true/false}`，永不返回管理员令牌、API Key、密码、Cookie、Webhook 完整地址、签名密钥或 Bearer Token。",
             side_effects="无，只读 SQLite 与当前内存设置。",
             errors="通常无业务错误；数据库不可用时返回 500。",
             example="GET /api/v1/config",
@@ -1371,24 +1410,39 @@ def create_app(
         **_api_docs(
             tag="配置中心",
             summary="保存白名单运行时配置",
-            purpose="在网页中保存模型和推送通道设置。仅接受 schema 明列字段；保存后当前进程立即生效，重启后从 SQLite 恢复。",
-            parameters="请求头必须含短期编辑令牌。JSON 可局部提交 `intent_llm_mode`（off/auto/always）、`intent_llm_confidence_threshold`（0.50～0.99）及模型/渠道字段；敏感字段留空表示保持原值，清除时放入 `clear_secrets`。",
-            returns="HTTP 200；返回脱敏后的最新 RuntimeConfigView。",
-            side_effects="【有副作用】写入 runtime_config 表并更新共享 Settings。未知字段被拒绝；响应和日志不回显敏感原文。",
-            errors="403：编辑令牌缺失/过期；422：未知字段、URL、端口、超时或枚举值非法。",
-            example='PUT /api/v1/config\nX-BidPilot-Config-Token: <token>\n{"llm_base_url":"http://127.0.0.1:8045/v1","llm_model":"my-model","llm_api_key":"<仅写入不回显>"}',
-            responses={403: "编辑令牌无效或过期。", 422: "字段不在白名单或值未通过校验。"},
+            purpose="在网页中按字段保存 AI、检索、worker、网络和推送通道设置。仅接受 schema 明列字段；普通字段立即生效，网络字段在重启后一次性生效，避免保存瞬间改变当前连接权限。",
+            parameters="请求头必须含短期编辑令牌。JSON 必须携带读取时得到的 `revision`，可局部提交任意白名单字段；`network_access_mode` 为 local/lan，`lan_access_policy` 为 admin_token/trusted_lan，`lan_trusted_networks` 可用 auto。敏感字段留空表示保持原值，清除放入 `clear_secrets`，普通字段恢复环境变量/默认值放入 `reset_fields`。",
+            returns="HTTP 200；返回脱敏后的最新 RuntimeConfigView、递增 revision，以及网络配置当前生效值和重启后值。",
+            side_effects="【有副作用】原子写入 runtime_config 表并更新共享 Settings。未知字段被拒绝；网络监听和 LAN 权限在重启前保持不变；响应和日志不回显敏感原文。",
+            errors="403：编辑令牌或局域网策略未通过；409：revision 已过期；422：未知字段、网段、令牌强度、URL、端口、超时或枚举值非法。",
+            example='PUT /api/v1/config\nX-BidPilot-Config-Token: <token>\n{"revision":3,"network_access_mode":"lan","lan_access_policy":"trusted_lan","lan_trusted_networks":"auto"}',
+            responses={
+                403: "编辑令牌或局域网访问策略未通过。",
+                409: "配置版本冲突。",
+                422: "字段不在白名单或值未通过校验。",
+            },
         ),
     )
     async def update_runtime_config(
-        request: RuntimeConfigUpdate,
+        payload: RuntimeConfigUpdate,
         x_bidpilot_config_token: Annotated[
             str | None,
             Header(alias="X-BidPilot-Config-Token"),
         ] = None,
     ):
         require_config_token(x_bidpilot_config_token)
-        return service.runtime_config.update(request)
+        try:
+            return service.runtime_config.update(payload)
+        except RuntimeConfigConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"配置版本冲突：服务器当前 revision={exc.current_revision}，"
+                    "请重新读取配置并确认未保存草稿"
+                ),
+            ) from exc
+        except RuntimeConfigError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post(
         "/api/v1/config/model/test",

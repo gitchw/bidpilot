@@ -6,7 +6,7 @@
 
 - 默认地址：`http://127.0.0.1:8000`。
 - 默认业务数据位于 `data/bidpilot.db`，报告位于 `outputs/reports`，生命周期控制记录位于 `data/runtime` 与 `data/secrets/control.token`。控制目录与可选业务数据目录解耦，避免迁移数据库后普通 `status/stop` 找不到服务。
-- 默认只监听本机，不内置多用户登录。公网发布必须在前置网关增加 TLS、身份认证、限流和审计。
+- 默认只监听本机。网页或环境变量可选择 LAN：`admin_token` 要求远端写操作提供管理员令牌；`trusted_lan` 只对直连私网免令牌。两种 LAN 模式都不是公网账号系统；公网发布必须在前置网关增加 TLS、身份认证、限流和审计。
 - JSON 请求应使用 `Content-Type: application/json`。
 - 日期使用 ISO 8601；调度时区默认是 `Asia/Shanghai`。
 - `400/422` 表示输入问题，`403` 表示配置编辑令牌无效，`404` 表示资源不存在，`409` 表示订阅正在执行，`502` 表示真实来源、模型或投递链路失败。
@@ -70,13 +70,13 @@
 
 ### `POST /api/v1/sources/{source_id}/auth/start` — 开始可见浏览器授权
 
-- 用途：在运行 BidPilot 的同一台电脑上打开独立可见 Chromium。用户必须亲自登录、扫码、输入验证码，或在原站支持时按自己的权限使用 CA。
-- 路径参数：`source_id` 当前支持 `qianlima` 与 `cecbid`。其他来源只有在适配器真实消费会话并能增强检索后才会加入，不能因为原站有“登录”按钮就伪装为支持。
-- 请求头：必须包含 10 分钟短期 `X-BidPilot-Config-Token`，且请求必须来自 `127.0.0.1`、`::1` 或同源本机网页。
+- 用途：在运行 BidPilot 服务的电脑上打开独立可见 Chromium。用户必须亲自登录、扫码、输入验证码，或在原站支持时按自己的权限使用 CA。局域网设备可以发起和管理流程，但窗口仍显示在服务主机，不会显示在手机上。
+- 路径参数：`source_id` 当前受管授权只支持 `cecbid`。千里马当前使用公开分类列表并提供“打开原站工作台”，不会保存或后台重放会员 Cookie。
+- 请求头：必须包含 10 分钟短期 `X-BidPilot-Config-Token`。非本机请求还必须符合当前生效的 `admin_token` 或 `trusted_lan` 策略。
 - 返回：`session_id`、来源、`authorizing` 状态、开始时间、15 分钟过期时间、官方登录地址和下一步提示。
 - 副作用：启动一个本机可见浏览器进程并导航到官方登录页；不会自动填写或提交账号、密码、手机、验证码，不会识别验证码，不会绕过付费墙、角色权限、访问控制或频率限制。
-- 错误：403 表示不是回环请求或编辑令牌无效；409 表示来源不支持、未安装 `.[auth]`、未安装 Chromium 或浏览器无法启动。
-- 示例：先调用 `POST /api/v1/config/edit-token`，再发送 `POST /api/v1/sources/qianlima/auth/start` 并携带返回令牌。
+- 错误：403 表示编辑令牌无效或局域网访问策略未通过；409 表示来源不支持、未安装 `.[auth]`、未安装 Chromium 或浏览器无法启动。
+- 示例：先调用 `POST /api/v1/config/edit-token`，再发送 `POST /api/v1/sources/cecbid/auth/start` 并携带返回令牌。
 
 ### `GET /api/v1/sources/auth/sessions/{session_id}` — 查看授权窗口状态
 
@@ -90,16 +90,16 @@
 ### `POST /api/v1/sources/auth/sessions/{session_id}/complete` — 完成并加密保存授权
 
 - 用途：只在用户明确确认登录完成后，从临时浏览器上下文读取允许域名的 Cookie，使用本机 Fernet 密钥加密写入 SQLite，然后关闭浏览器。
-- 路径参数：`session_id`；请求头必须含短期编辑令牌，并且只允许回环请求；无请求体。
+- 路径参数：`session_id`；请求头必须含短期编辑令牌；远端请求还要符合当前 LAN 策略；无请求体。
 - 返回：`completed` 或 `failed` 状态和脱敏说明。即使成功也不返回 Cookie 名称或值。
-- 副作用：写入 `source_authorizations` 表及 `data/secrets/source_auth.key`；旧版本千里马明文 Cookie 文件首次读取后会迁移到加密表并删除明文文件。不会保存账号、密码、验证码、短信、二维码内容或 CA 私钥。
+- 副作用：写入 `source_authorizations` 表及 `data/secrets/source_auth.key`；旧版千里马会员 Cookie 会被清理且不再重放。不会保存账号、密码、验证码、短信、二维码内容或 CA 私钥。
 - 错误：403 表示请求来源/令牌不符合要求；404 表示会话不存在；409 表示没有检测到允许域名的会话 Cookie，通常意味着尚未登录成功。
 - 示例：`POST /api/v1/sources/auth/sessions/<session_id>/complete`，请求头同开始接口。
 
 ### `POST /api/v1/sources/{source_id}/auth/test` — 真实测试授权
 
 - 用途：携带已加密保存的会话执行一次关键词为“服务器”的有界真实搜索，验证原站不再要求登录，并且确实读取到会员可见内容，而不是只检查“数据库里有 Cookie”。
-- 路径参数：`source_id`；必须从本机携带短期编辑令牌；无请求体。
+- 路径参数：`source_id`；必须携带短期编辑令牌；远端请求还要符合当前 LAN 策略；无请求体。
 - 返回：`source_id`、`success`、`passed/failed`、脱敏诊断和耗时。测试结果会写回授权状态供网页展示。
 - 副作用：会访问来源网站，可能消耗少量免费账号查询次数；遵守全局限速和有界重试，不下载付费文件、不执行投标操作。
 - 错误：403 表示请求来源/令牌问题；409 表示未保存授权或来源不支持；502 表示站点仍要求登录、没有证明详情解锁或网络/站点结构变化。
@@ -108,11 +108,11 @@
 ### `DELETE /api/v1/sources/{source_id}/auth` — 清除来源授权
 
 - 用途：关闭该来源仍在进行的授权窗口，永久删除本机 SQLite 中的加密 Cookie，并让后续检索立即恢复公开/未授权模式。
-- 路径参数：`source_id`；必须从本机携带短期编辑令牌；无请求体。
+- 路径参数：`source_id`；必须携带短期编辑令牌；远端请求还要符合当前 LAN 策略；无请求体。
 - 返回：该来源最新的 `not_authorized` 脱敏状态。
 - 副作用：删除本机授权数据；不会注销或删除原网站账号，不修改原网站密码，也不会影响其他来源。
 - 错误：403 表示请求来源/令牌问题；409 表示来源没有受管授权流程。
-- 示例：`DELETE /api/v1/sources/qianlima/auth`，请求头 `X-BidPilot-Config-Token: <token>`。
+- 示例：`DELETE /api/v1/sources/cecbid/auth`，请求头 `X-BidPilot-Config-Token: <token>`。
 
 ## 3. 意图解析与即时运行
 
@@ -515,34 +515,35 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 
 ### `GET /api/v1/config` — 读取脱敏配置
 
-- 用途：读取模型和六类通道的非敏感字段与就绪状态。
-- 参数：无请求体、无查询参数，也不需要编辑令牌；该只读接口只接受本机服务当前可见配置。
-- 返回：`RuntimeConfigView`；敏感字段只有 `configured`。
+- 用途：读取 AI、检索、worker、局域网和六类通道的非敏感字段、来源、版本与就绪状态。
+- 参数：无请求体、无查询参数，也不需要短期编辑令牌。
+- 返回：`RuntimeConfigView`；敏感字段只有 `configured`。`network` 同时返回当前实际生效值、重启后配置值和 `pending_restart`，不会回显管理员令牌。
 - 副作用：无。
 - 错误：数据库不可用时 500。
 - 示例：`curl http://127.0.0.1:8000/api/v1/config`。返回中的 `llm_api_key.configured=true` 只表示已保存，不会回显密钥。
 
 ### `POST /api/v1/config/edit-token` — 获取编辑令牌
 
-- 用途：同源网页在写配置前取得 10 分钟短期令牌。
-- 参数：无。
+- 用途：同源网页在写配置或管理来源授权前取得 10 分钟短期防跨站令牌。它不是用户账号密码。
+- 参数：无。远端设备在 `admin_token` 模式还需 `X-BidPilot-Admin-Token`；`trusted_lan` 的可信地址无需输入管理员令牌。
 - 返回：`edit_token`、`expires_in`；响应禁止缓存。
 - 副作用：只在当前进程内登记令牌，重启即失效。
 - 错误：通常无业务错误。
-- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/config/edit-token`。只应在本机使用返回令牌，且不要写入日志或仓库。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/config/edit-token`。不要把返回令牌写入日志或仓库。
 
 ### `PUT /api/v1/config` — 保存配置
 
-- 用途：局部保存白名单字段，立即生效并持久化。
+- 用途：按脏字段局部保存白名单配置并持久化；普通运行参数立即生效，网络范围、策略、可信网段、管理员令牌和端口统一在重启后生效。
 - 请求头：`X-BidPilot-Config-Token`。
-- 请求：敏感字段留空/省略表示保持；清除必须使用 `clear_secrets`。
-- 返回：脱敏后的最新配置。
+- 请求：必须带读取时取得的 `revision`。敏感字段留空/省略表示保持；清除使用 `clear_secrets`；普通字段恢复环境变量或默认值使用 `reset_fields`。`network_access_mode` 为 `local/lan`，`lan_access_policy` 为 `admin_token/trusted_lan`，可信网段可填 `auto`。
+- 返回：脱敏后的最新配置和递增 revision；网络部分明确区分当前与重启后状态。
 - 副作用：写 `runtime_config`；敏感值用本机 Fernet 密钥加密后存入 SQLite。
-- 错误：403 令牌无效；422 未知字段、URL、端口、超时或枚举非法。
+- 错误：403 令牌或 LAN 策略未通过；409 revision 冲突；422 未知字段、URL、私网 CIDR、管理员令牌强度、端口、超时或枚举非法。
 - 示例：先获取编辑令牌，再将下方 JSON 发送到 `PUT /api/v1/config` 并设置请求头 `X-BidPilot-Config-Token: <token>`。
 
 ```json
 {
+  "revision": 3,
   "llm_base_url": "http://127.0.0.1:8045/v1",
   "llm_model": "your-compatible-model",
   "llm_api_key": "<仅写入，不回显>",

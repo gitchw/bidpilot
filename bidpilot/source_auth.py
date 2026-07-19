@@ -45,13 +45,13 @@ class SourceAuthView(BaseModel):
     last_test_status: Literal["not_tested", "passed", "failed"] = "not_tested"
     active_session_id: str = Field(
         default="",
-        description="仅在本机授权窗口进行中时返回的一次性会话 ID",
+        description="仅在服务主机授权窗口进行中时返回的一次性会话 ID",
     )
     message: str = ""
 
 
 class SourceAuthSessionView(BaseModel):
-    session_id: str = Field(description="一次性本机授权会话 ID")
+    session_id: str = Field(description="一次性服务主机授权会话 ID")
     source_id: str
     source_name: str
     status: Literal["authorizing", "completed", "failed", "expired"]
@@ -109,7 +109,10 @@ class _LiveSession:
     browser: _Browser
     context: _BrowserContext
     status: Literal["authorizing", "completed", "failed", "expired"] = "authorizing"
-    message: str = "浏览器已打开，请由你本人完成登录后回到来源中心点击“完成授权”。"
+    message: str = (
+        "可见浏览器已在运行 BidPilot 服务的电脑上打开。请在那台电脑亲自完成登录，"
+        "再回到当前来源中心点击“完成授权”。"
+    )
 
 
 class SourceAuthManager:

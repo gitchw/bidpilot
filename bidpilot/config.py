@@ -4,9 +4,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bidpilot.network_access import parse_trusted_networks
 from bidpilot.private_files import harden_private_path
 
 
@@ -22,7 +23,11 @@ class Settings(BaseSettings):
 
     env: str = "development"
     host: str = "127.0.0.1"
-    port: int = 8000
+    port: int = Field(default=8000, ge=1, le=65535)
+    network_access_mode: Literal["local", "lan"] = "local"
+    lan_access_policy: Literal["admin_token", "trusted_lan"] = "admin_token"
+    lan_trusted_networks: str = "auto"
+    lan_admin_token: str = ""
     timezone: str = "Asia/Shanghai"
     embedded_worker: bool = True
     worker_poll_interval: float = Field(default=3.0, ge=0.2, le=300)
@@ -92,6 +97,23 @@ class Settings(BaseSettings):
     generic_webhook_url: str = ""
     generic_webhook_bearer_token: str = ""
     delivery_webhook_timeout: float = Field(default=20.0, ge=3, le=120)
+
+    @field_validator("lan_trusted_networks")
+    @classmethod
+    def validate_lan_trusted_networks(cls, value: str) -> str:
+        cleaned = value.strip()
+        parse_trusted_networks(cleaned)
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_lan_access(self) -> Settings:
+        if (
+            self.network_access_mode == "lan"
+            and self.lan_access_policy == "admin_token"
+            and len(self.lan_admin_token.strip()) < 16
+        ):
+            raise ValueError("开启局域网管理前必须设置至少 16 个字符的管理员令牌")
+        return self
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
