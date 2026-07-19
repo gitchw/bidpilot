@@ -167,11 +167,103 @@ async def test_intelligence_brief_repairs_one_rejected_model_response(sample_spe
     assert calls == 2
 
 
+async def test_intelligence_brief_rejects_numbers_borrowed_from_another_evidence(sample_spec):
+    settings = Settings(
+        llm_base_url="https://model.example/v1",
+        llm_model="test-model",
+        intelligence_brief_mode="auto",
+    )
+    generator = IntelligenceBriefGenerator(settings)
+    first = tender_record()
+    first.opportunity_score = 99
+    first.summary = "项目甲预算金额 100 万元。"
+    first.body_excerpt = "项目甲预算金额 100 万元。"
+    first.evidence[0].text = "项目甲预算金额 100 万元。"
+    second = tender_record().model_copy(deep=True)
+    second.canonical_id = "notice-2"
+    second.project_key = "project-2"
+    second.version_hash = "version-2"
+    second.title = "安徽大学项目乙服务器采购公告"
+    second.opportunity_score = 80
+    second.summary = "项目乙预算金额 200 万元。"
+    second.body_excerpt = "项目乙预算金额 200 万元。"
+    second.evidence[0].text = "项目乙预算金额 200 万元。"
+    second.source_urls = ["https://example.com/notices/2"]
+
+    async def fake_request(_payload):
+        return json.dumps(
+            {
+                "overview": "两条服务器采购机会需要分别核验。",
+                "buyer_needs": [],
+                "priorities": [
+                    {
+                        "evidence_id": "E01",
+                        "reason": "项目甲预算金额 200 万元。",
+                        "recommended_action": "核验资格条件。",
+                    }
+                ],
+                "risks": [],
+                "actions": [
+                    {"priority": "P0", "text": "打开项目甲原文。", "evidence_ids": ["E01"]}
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    generator._request = fake_request
+    brief = await generator.generate(sample_spec, [first, second])
+
+    assert brief.status == "invalid_response"
+    assert brief.mode == "deterministic"
+
+
+async def test_intelligence_brief_rejects_substring_and_action_number_hallucinations(
+    sample_spec,
+):
+    settings = Settings(
+        llm_base_url="https://model.example/v1",
+        llm_model="test-model",
+        intelligence_brief_mode="auto",
+    )
+    generator = IntelligenceBriefGenerator(settings)
+
+    async def fake_request(_payload):
+        return json.dumps(
+            {
+                "overview": "GPU 服务器采购机会需要核验。",
+                "buyer_needs": [],
+                "priorities": [
+                    {
+                        "evidence_id": "E01",
+                        "reason": "预算金额 12 万元。",
+                        "recommended_action": "投入 999 人天完成投标。",
+                    }
+                ],
+                "risks": [],
+                "actions": [
+                    {
+                        "priority": "P0",
+                        "text": "准备 888 亿元资金。",
+                        "evidence_ids": ["E01"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    generator._request = fake_request
+    brief = await generator.generate(sample_spec, [tender_record()])
+
+    assert brief.status == "invalid_response"
+    assert brief.mode == "deterministic"
+
+
 async def test_service_reuses_only_grounded_intelligence_cache(sample_spec, tmp_path: Path):
     settings = Settings(
         data_dir=tmp_path / "data",
         report_dir=tmp_path / "reports",
         database_path=tmp_path / "data" / "test.db",
+        qianlima_cookie_path=tmp_path / "data" / "secrets" / "qianlima_cookie.txt",
         llm_base_url="https://model.example/v1",
         llm_model="test-model",
         intelligence_brief_mode="auto",

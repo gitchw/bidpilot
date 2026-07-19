@@ -383,18 +383,27 @@ class IntelligenceBriefGenerator:
                 raise InvalidIntelligenceResponse("模型引用了不存在的证据编号")
             return unique
 
-        factual_texts = [proposal.overview]
+        overview_evidence = " ".join(
+            f"{item.title} {item.buyer or ''} {item.event_type} {item.excerpt}" for item in catalog
+        )
+        if not self._numbers_are_grounded(proposal.overview, overview_evidence):
+            raise InvalidIntelligenceResponse("概览使用了证据目录中不存在的完整数字")
         buyer_needs = []
         for item in proposal.buyer_needs:
             evidence_ids = validate_ids(item.evidence_ids)
+            self._validate_numbers_for_ids(item.text, evidence_ids, by_id)
             buyer_needs.append(BriefClaim(text=item.text, evidence_ids=evidence_ids))
-            factual_texts.append(item.text)
 
         priorities = []
         for item in proposal.priorities:
             evidence = by_id.get(item.evidence_id)
             if evidence is None:
                 raise InvalidIntelligenceResponse("优先机会引用了不存在的证据编号")
+            self._validate_numbers_for_ids(
+                f"{item.reason} {item.recommended_action}",
+                [item.evidence_id],
+                by_id,
+            )
             priorities.append(
                 BriefPriority(
                     evidence_id=evidence.evidence_id,
@@ -408,25 +417,24 @@ class IntelligenceBriefGenerator:
                     source_url=evidence.source_url,
                 )
             )
-            factual_texts.append(item.reason)
 
         risks = []
         for item in proposal.risks:
             evidence_ids = validate_ids(item.evidence_ids)
+            self._validate_numbers_for_ids(item.text, evidence_ids, by_id)
             risks.append(BriefRisk(level=item.level, text=item.text, evidence_ids=evidence_ids))
-            factual_texts.append(item.text)
 
-        actions = [
-            BriefAction(
-                priority=item.priority,
-                text=item.text,
-                evidence_ids=validate_ids(item.evidence_ids),
+        actions = []
+        for item in proposal.actions:
+            evidence_ids = validate_ids(item.evidence_ids)
+            self._validate_numbers_for_ids(item.text, evidence_ids, by_id)
+            actions.append(
+                BriefAction(
+                    priority=item.priority,
+                    text=item.text,
+                    evidence_ids=evidence_ids,
+                )
             )
-            for item in proposal.actions
-        ]
-        allowed_numbers = json.dumps(request_input, ensure_ascii=False)
-        if any(not self._numbers_are_grounded(text, allowed_numbers) for text in factual_texts):
-            raise InvalidIntelligenceResponse("模型生成了输入证据中不存在的数字")
 
         return IntelligenceBrief(
             mode="llm_grounded",
@@ -443,5 +451,21 @@ class IntelligenceBriefGenerator:
 
     @staticmethod
     def _numbers_are_grounded(text: str, evidence: str) -> bool:
-        numbers = re.findall(r"\d+(?:[.,]\d+)*(?:%|％)?", text)
-        return all(number in evidence for number in numbers)
+        numbers = set(re.findall(r"(?<![\d.])\d+(?:[.,]\d+)*(?:%|％)?(?![\d.])", text))
+        evidence_numbers = set(re.findall(r"(?<![\d.])\d+(?:[.,]\d+)*(?:%|％)?(?![\d.])", evidence))
+        return numbers <= evidence_numbers
+
+    @classmethod
+    def _validate_numbers_for_ids(
+        cls,
+        text: str,
+        evidence_ids: list[str],
+        by_id: dict[str, BriefEvidence],
+    ) -> None:
+        evidence = " ".join(
+            f"{by_id[evidence_id].title} {by_id[evidence_id].buyer or ''} "
+            f"{by_id[evidence_id].event_type} {by_id[evidence_id].excerpt}"
+            for evidence_id in evidence_ids
+        )
+        if not cls._numbers_are_grounded(text, evidence):
+            raise InvalidIntelligenceResponse("模型文本使用了所引用证据中不存在的完整数字")

@@ -32,7 +32,7 @@ const OPPORTUNITY_STAGES = {
 const FILTER_REASON_LABELS = {
   outside_time: "超出时间范围", region_mismatch: "地域不匹配",
   event_type_mismatch: "公告类型不匹配", excluded_keyword: "命中排除词",
-  buyer_mismatch: "采购单位不匹配", keyword_mismatch: "主题/同义词未命中", low_relevance: "相关度不足",
+  buyer_mismatch: "采购单位不匹配", keyword_mismatch: "主题/同义词未命中", semantic_review_budget: "超出语义复核预算", low_relevance: "相关度不足",
 };
 const SOURCE_STATUS_LABELS = {
   ok: "正常完成", partial: "覆盖不完整",

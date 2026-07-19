@@ -164,6 +164,7 @@ async def evaluate_item(
     summarizer: EvidenceSummarizer,
     *,
     semantic_confidence: float | None = None,
+    allow_llm_summary: bool = True,
 ) -> tuple[TenderRecord | None, str | None]:
     """Return both the record and a stable reason when strict filtering rejects it."""
     hard_reason = hard_filter_reason(item, spec)
@@ -177,7 +178,7 @@ async def evaluate_item(
         relevance = max(relevance, 45 + (semantic_confidence * 35))
     if relevance < 45:
         return None, "low_relevance"
-    summary = await summarizer.summarize(item)
+    summary = await summarizer.summarize(item, allow_llm=allow_llm_summary)
     project_key = _project_key(item)
     return TenderRecord(
         canonical_id=_canonical_id(item),
@@ -190,6 +191,7 @@ async def evaluate_item(
         event_type=item.event_type,
         project_id=item.project_id,
         summary=summary.summary,
+        summary_mode=summary.mode,
         body_excerpt=normalize_space(item.body)[:800],
         attachments=item.attachments,
         evidence=summary.evidence,

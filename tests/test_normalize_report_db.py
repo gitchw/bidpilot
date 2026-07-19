@@ -166,3 +166,27 @@ def test_extractive_summary_does_not_leak_masked_member_values():
     assert "公开摘要存在脱敏字段" in result.summary
     assert "需授权后核验" in result.summary
     assert len(result.summary) <= 260
+
+
+def test_summary_numeric_grounding_uses_complete_number_tokens():
+    assert EvidenceSummarizer._numbers_are_grounded("预算 120 万元", "预算 120 万元")
+    assert not EvidenceSummarizer._numbers_are_grounded("预算 12 万元", "预算 120 万元")
+
+
+async def test_record_summary_off_uses_extractive_mode_without_model_call():
+    settings = Settings(
+        llm_base_url="https://model.invalid/v1",
+        llm_model="fixture-model",
+        record_summary_mode="off",
+    )
+    item = raw_tender(
+        "测试来源",
+        "https://example.com/summary-off",
+        "安徽大学服务器采购公告",
+        "安徽大学采购服务器 12 台。",
+    )
+
+    result = await EvidenceSummarizer(settings).summarize(item)
+
+    assert result.mode == "extractive"
+    assert "服务器采购公告" in result.summary

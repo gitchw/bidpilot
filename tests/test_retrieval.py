@@ -104,6 +104,36 @@ class BoundarySource(SourceAdapter):
         )
 
 
+class DiscoveryOnlySource(SourceAdapter):
+    source_id = "discovery_fixture"
+    name = "发现词隔离测试源"
+    supports_query_variants = True
+
+    def __init__(self):
+        self.queries: list[str] = []
+
+    async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+        self.queries.append(spec.topic)
+        items = []
+        if spec.topic == "办公家具":
+            items.append(
+                RawTender(
+                    source=self.name,
+                    source_url="https://example.com/unrelated-furniture",
+                    title="北京市办公家具采购项目",
+                    published_at=NOW,
+                    region="北京",
+                    body="采购桌椅和文件柜。",
+                )
+            )
+        return SourceSearchResult(
+            source=self.name,
+            status=SourceStatus.OK,
+            items=items,
+            scanned_count=len(items),
+        )
+
+
 async def test_deterministic_plan_and_bounded_second_round(tmp_path: Path):
     settings = make_settings(tmp_path)
     query_source = QueryAwareSource()
@@ -207,6 +237,74 @@ async def test_invalid_llm_plan_falls_back_without_failing(tmp_path: Path):
     assert "充电桩" in {term.text for term in plan.terms}
 
 
+async def test_query_variant_without_a_validated_term_is_rejected(tmp_path: Path):
+    settings = make_settings(
+        tmp_path,
+        retrieval_llm_mode="auto",
+        llm_base_url="https://model.invalid/v1",
+        llm_model="fixture-model",
+    )
+
+    async def requester(_payload):
+        return json.dumps(
+            {
+                "terms": [],
+                "query_variants": ["办公家具"],
+                "source_priorities": [],
+                "rationale": "错误的无关变体",
+            },
+            ensure_ascii=False,
+        )
+
+    planner = RetrievalPlanner(settings, [], requester=requester)
+    spec = IntentParser().parse("最近1个月北京医疗设备采购信息", now=NOW)
+    plan = await planner.plan(spec)
+
+    assert plan.mode == "deterministic"
+    assert plan.llm_status == "rejected"
+    assert all(query.text != "办公家具" for query in plan.queries)
+
+
+async def test_unrelated_llm_term_can_recall_but_cannot_directly_match(tmp_path: Path):
+    settings = make_settings(
+        tmp_path,
+        retrieval_llm_mode="auto",
+        retrieval_semantic_review=False,
+        llm_base_url="https://model.invalid/v1",
+        llm_model="fixture-model",
+    )
+
+    async def requester(_payload):
+        return json.dumps(
+            {
+                "terms": [
+                    {
+                        "text": "办公家具",
+                        "kind": "industry",
+                        "confidence": 0.99,
+                        "reason": "模型错误扩词",
+                    }
+                ],
+                "query_variants": [],
+                "source_priorities": [],
+                "rationale": "构造错误扩词反例",
+            },
+            ensure_ascii=False,
+        )
+
+    source = DiscoveryOnlySource()
+    planner = RetrievalPlanner(settings, [source], requester=requester)
+    pipeline = TenderPipeline(settings, [source], planner=planner)
+    spec = IntentParser().parse("最近1个月北京医疗设备采购信息", now=NOW)
+    result = await pipeline.run(spec)
+
+    llm_term = next(term for term in result.retrieval.plan.terms if term.text == "办公家具")
+    assert llm_term.trusted_for_match is False
+    assert "办公家具" in source.queries
+    assert result.records == []
+    assert result.diagnostics[0].rejection_reasons["keyword_mismatch"] == 1
+
+
 async def test_semantic_review_can_accept_hard_filter_safe_boundary_candidate(tmp_path: Path):
     pipeline_settings = make_settings(tmp_path)
     planner_settings = make_settings(
@@ -239,6 +337,7 @@ async def test_semantic_review_can_accept_hard_filter_safe_boundary_candidate(tm
                         "relevant": True,
                         "confidence": 0.94,
                         "matched_concepts": ["诊疗设备"],
+                        "evidence_quote": "用于临床影像诊断的64排螺旋CT扫描仪",
                         "reason": "CT扫描仪属于临床诊疗设备",
                     }
                 ]
@@ -294,6 +393,53 @@ async def test_semantic_review_never_overrides_region_hard_filter(tmp_path: Path
     assert len(calls) == 1
     assert result.retrieval.semantic_review_status == "not_needed"
     assert result.diagnostics[0].rejection_reasons["region_mismatch"] == 1
+
+
+async def test_semantic_review_rejects_a_fabricated_evidence_quote(tmp_path: Path):
+    settings = make_settings(
+        tmp_path,
+        retrieval_llm_mode="auto",
+        retrieval_max_rounds=1,
+        llm_base_url="https://model.invalid/v1",
+        llm_model="fixture-model",
+    )
+
+    async def requester(payload):
+        if "检索规划器" in payload["messages"][0]["content"]:
+            return json.dumps(
+                {
+                    "terms": [],
+                    "query_variants": [],
+                    "source_priorities": [],
+                    "rationale": "不扩展",
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "decisions": [
+                    {
+                        "candidate_id": "c001",
+                        "relevant": True,
+                        "confidence": 0.99,
+                        "matched_concepts": ["医疗设备"],
+                        "evidence_quote": "原文不存在的核磁共振采购证据",
+                        "reason": "伪造引句反例",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    source = BoundarySource()
+    planner = RetrievalPlanner(settings, [source], requester=requester)
+    result = await TenderPipeline(settings, [source], planner=planner).run(
+        IntentParser().parse("最近1个月北京医疗设备采购信息", now=NOW)
+    )
+
+    assert result.records == []
+    assert result.retrieval.semantic_decisions[0].outcome == "rejected"
+    assert "未逐字出现" in result.retrieval.semantic_decisions[0].reason
 
 
 def test_retrieval_benchmark_classifies_access_limits_without_calling_them_broken():

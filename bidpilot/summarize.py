@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ class EvidenceSummarizer:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._llm_semaphore = asyncio.Semaphore(settings.record_summary_concurrency)
 
     @staticmethod
     def extractive(item: RawTender) -> SummaryResult:
@@ -76,13 +78,21 @@ class EvidenceSummarizer:
         ]
         return SummaryResult(summary=summary, evidence=evidence, mode="extractive")
 
-    async def summarize(self, item: RawTender) -> SummaryResult:
+    async def summarize(self, item: RawTender, *, allow_llm: bool = True) -> SummaryResult:
         fallback = self.extractive(item)
-        if not (self.settings.llm_base_url and self.settings.llm_model and item.body):
+        if not (
+            allow_llm
+            and self.settings.record_summary_mode == "auto"
+            and self.settings.llm_base_url
+            and self.settings.llm_model
+            and item.body
+        ):
             return fallback
 
-        evidence = normalize_space(item.body)[:7000]
-        endpoint = self.settings.llm_base_url.rstrip("/") + "/chat/completions"
+        evidence = normalize_space(item.body)[: self.settings.record_summary_max_chars]
+        endpoint = self.settings.llm_base_url.rstrip("/")
+        if not endpoint.endswith("/chat/completions"):
+            endpoint += "/chat/completions"
         prompt = (
             "你是招投标情报分析员。只能根据【证据】生成不超过180字的中文摘要，"
             "不得补充证据中没有的数字、日期、机构或结论。输出严格 JSON："
@@ -92,20 +102,21 @@ class EvidenceSummarizer:
             headers = {"Content-Type": "application/json"}
             if self.settings.llm_api_key:
                 headers["Authorization"] = f"Bearer {self.settings.llm_api_key}"
-            async with httpx.AsyncClient(timeout=self.settings.llm_timeout) as client:
-                response = await client.post(
-                    endpoint,
-                    headers=headers,
-                    json={
-                        "model": self.settings.llm_model,
-                        "temperature": 0,
-                        "response_format": {"type": "json_object"},
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                )
-                response.raise_for_status()
-                content = response.json()["choices"][0]["message"]["content"]
-                summary = normalize_space(json.loads(content)["summary"])
+            async with self._llm_semaphore:
+                async with httpx.AsyncClient(timeout=self.settings.llm_timeout) as client:
+                    response = await client.post(
+                        endpoint,
+                        headers=headers,
+                        json={
+                            "model": self.settings.llm_model,
+                            "temperature": 0,
+                            "response_format": {"type": "json_object"},
+                            "messages": [{"role": "user", "content": prompt}],
+                        },
+                    )
+                    response.raise_for_status()
+                    content = response.json()["choices"][0]["message"]["content"]
+                    summary = normalize_space(json.loads(content)["summary"])
             if not summary or not self._numbers_are_grounded(summary, evidence):
                 return fallback
             return SummaryResult(summary=summary, evidence=fallback.evidence, mode="llm_grounded")
@@ -114,5 +125,6 @@ class EvidenceSummarizer:
 
     @staticmethod
     def _numbers_are_grounded(summary: str, evidence: str) -> bool:
-        numbers = re.findall(r"\d+(?:\.\d+)?", summary)
-        return all(number in evidence for number in numbers)
+        numbers = set(re.findall(r"(?<![\d.])\d+(?:[.,]\d+)*(?:%|％)?(?![\d.])", summary))
+        evidence_numbers = set(re.findall(r"(?<![\d.])\d+(?:[.,]\d+)*(?:%|％)?(?![\d.])", evidence))
+        return numbers <= evidence_numbers

@@ -88,7 +88,8 @@ class _ProposedDecision(BaseModel):
     candidate_id: str = Field(min_length=1, max_length=40)
     relevant: bool
     confidence: float = Field(ge=0, le=1)
-    matched_concepts: list[str] = Field(default_factory=list, max_length=8)
+    matched_concepts: list[str] = Field(min_length=1, max_length=8)
+    evidence_quote: str = Field(min_length=2, max_length=240)
     reason: str = Field(min_length=1, max_length=240)
 
 
@@ -184,6 +185,7 @@ class RetrievalPlanner:
                     kind=proposed.kind,
                     origin="llm",
                     reason=proposed.reason,
+                    trusted_for_match=False,
                 )
             )
             seen.add(folded)
@@ -193,12 +195,18 @@ class RetrievalPlanner:
         priorities = list(
             dict.fromkeys(item for item in proposal.source_priorities if item in source_ids)
         )
+        valid_variants = self._validated_query_variants(
+            proposal.query_variants,
+            [term.text for term in accepted],
+            spec.region,
+        )
+        model_applied = len(accepted) > len(base_terms) or bool(valid_variants)
         plan = self._finish_plan(
             accepted,
             region=spec.region,
             buyer_keywords=spec.buyer_keywords,
-            llm_status="applied" if len(accepted) > len(base_terms) else "rejected",
-            mode="hybrid" if len(accepted) > len(base_terms) else "deterministic",
+            llm_status="applied" if model_applied else "rejected",
+            mode="hybrid" if model_applied else "deterministic",
             latency_ms=round((time.perf_counter() - started) * 1000),
             summary=(
                 f"模型提出检索扩展，经本地校验接受 {len(accepted) - len(base_terms)} 个词；"
@@ -206,7 +214,7 @@ class RetrievalPlanner:
             ),
             rejected_terms=rejected,
             source_priorities=priorities,
-            proposed_queries=proposal.query_variants,
+            proposed_queries=valid_variants,
         )
         return plan
 
@@ -221,18 +229,29 @@ class RetrievalPlanner:
         if self.settings.retrieval_llm_mode == "off" or not self.settings.retrieval_semantic_review:
             return "disabled", [], {}
 
-        limited = list(candidates[: self.settings.retrieval_semantic_candidate_limit])
+        indexed = list(enumerate(candidates, start=1))
+        limit = self.settings.retrieval_semantic_candidate_limit
+        limited = indexed[:limit]
+        overflow = [
+            self._unreviewed(
+                index,
+                item,
+                f"超出本轮语义复核预算 {limit} 条，按保守策略不纳入结果",
+            )
+            for index, item in indexed[limit:]
+        ]
         if not (self.settings.llm_base_url and self.settings.llm_model):
             return (
                 "not_configured",
                 [
                     self._unreviewed(index, item, "模型未配置，边界候选按保守策略不纳入结果")
-                    for index, item in enumerate(limited, start=1)
-                ],
+                    for index, item in limited
+                ]
+                + overflow,
                 {},
             )
 
-        candidate_map = {f"c{index:03d}": item for index, item in enumerate(limited, start=1)}
+        candidate_map = {f"c{index:03d}": item for index, item in limited}
         payload = self._review_payload(spec, terms, candidate_map)
         try:
             content = await (self.requester(payload) if self.requester else self._request(payload))
@@ -245,7 +264,8 @@ class RetrievalPlanner:
                         candidate_id, item, "not_reviewed", 0, "模型返回格式无效，已保守拒绝"
                     )
                     for candidate_id, item in candidate_map.items()
-                ],
+                ]
+                + overflow,
                 {},
             )
         except Exception:
@@ -254,7 +274,8 @@ class RetrievalPlanner:
                 [
                     self._decision(candidate_id, item, "not_reviewed", 0, "模型不可用，已保守拒绝")
                     for candidate_id, item in candidate_map.items()
-                ],
+                ]
+                + overflow,
                 {},
             )
 
@@ -264,6 +285,9 @@ class RetrievalPlanner:
                 by_id[proposed.candidate_id] = proposed
         accepted: dict[str, float] = {}
         decisions: list[CandidateDecision] = []
+        trusted_concepts = {
+            self._fold(term.text): term.text for term in terms if term.trusted_for_match
+        }
         threshold = self.settings.retrieval_semantic_threshold
         for candidate_id, item in candidate_map.items():
             proposed = by_id.get(candidate_id)
@@ -274,17 +298,46 @@ class RetrievalPlanner:
                     )
                 )
                 continue
-            allowed = proposed.relevant and proposed.confidence >= threshold
+            selected_concepts = list(
+                dict.fromkeys(
+                    trusted_concepts[self._fold(value)]
+                    for value in proposed.matched_concepts
+                    if self._fold(value) in trusted_concepts
+                )
+            )
+            normalized_quote = normalize_space(proposed.evidence_quote)
+            candidate_text = normalize_space(
+                " ".join((item.title, item.buyer or "", item.body or ""))
+            )
+            quote_grounded = bool(normalized_quote and normalized_quote in candidate_text)
+            allowed = (
+                proposed.relevant
+                and proposed.confidence >= threshold
+                and bool(selected_concepts)
+                and quote_grounded
+            )
             outcome: Literal["accepted", "rejected"] = "accepted" if allowed else "rejected"
             reason = proposed.reason
             if proposed.relevant and proposed.confidence < threshold:
                 reason = f"模型认为可能相关，但置信度低于 {threshold:.2f}；{reason}"
+            elif proposed.relevant and not selected_concepts:
+                reason = "模型没有引用本地可信概念，已保守拒绝"
+            elif proposed.relevant and not quote_grounded:
+                reason = "模型证据引句未逐字出现在该候选中，已保守拒绝"
             decisions.append(
-                self._decision(candidate_id, item, outcome, proposed.confidence, reason)
+                self._decision(
+                    candidate_id,
+                    item,
+                    outcome,
+                    proposed.confidence,
+                    reason,
+                    evidence_quote=normalized_quote if quote_grounded else "",
+                    matched_concepts=selected_concepts,
+                )
             )
             if allowed:
                 accepted[item.source_url] = proposed.confidence
-        return "applied", decisions, accepted
+        return "applied", [*decisions, *overflow], accepted
 
     def _deterministic_terms(self, spec: TenderQuerySpec) -> list[RetrievalTerm]:
         terms: list[RetrievalTerm] = []
@@ -299,7 +352,13 @@ class RetrievalPlanner:
                 return
             seen.add(folded)
             terms.append(
-                RetrievalTerm(text=text, kind=kind, origin=origin, reason=reason)  # type: ignore[arg-type]
+                RetrievalTerm(  # type: ignore[arg-type]
+                    text=text,
+                    kind=kind,
+                    origin=origin,
+                    reason=reason,
+                    trusted_for_match=True,
+                )
             )
 
         add(spec.topic, "topic", "query", "用户问题中识别出的核心业务主题")
@@ -488,7 +547,9 @@ class RetrievalPlanner:
                     "content": (
                         "你是招投标候选相关性复核器。只能依据给出的标题和证据片段判断与用户主题的"
                         "业务相关性；不得补充事实，不得输出 URL，不得放宽日期、地域、公告类型或排除词。"
-                        "只输出严格 JSON 对象，禁止 Markdown、额外字段和解释前后缀。"
+                        "每个决定必须选择至少一个 validated_concepts 中的概念，并逐字复制一段"
+                        "evidence_excerpt 或 title 中真实存在的 evidence_quote。只输出严格 JSON 对象，"
+                        "禁止 Markdown、额外字段和解释前后缀。"
                     ),
                 },
                 {
@@ -573,12 +634,34 @@ class RetrievalPlanner:
     ) -> bool:
         if region and region in query:
             return False
-        if cls._term_rejection(query, 1) is None:
-            return True
         folded = cls._fold(query)
         if not 2 <= len(folded) <= 60 or _DATE_OR_URL.search(query) or _CONTROL_WORDS.search(query):
             return False
-        return any(cls._fold(term) in folded for term in accepted_terms)
+        return any(
+            (term_folded := cls._fold(term)) and (term_folded in folded or folded in term_folded)
+            for term in accepted_terms
+        )
+
+    @classmethod
+    def _validated_query_variants(
+        cls,
+        values: Sequence[str],
+        accepted_terms: Sequence[str],
+        region: str | None,
+    ) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = normalize_space(value)
+            folded = cls._fold(normalized)
+            if (
+                folded
+                and folded not in seen
+                and cls._valid_query(normalized, accepted_terms, region)
+            ):
+                result.append(normalized)
+                seen.add(folded)
+        return result
 
     @staticmethod
     def _evidence_excerpt(item: RawTender) -> str:
@@ -592,6 +675,9 @@ class RetrievalPlanner:
         outcome: Literal["accepted", "rejected", "not_reviewed"],
         confidence: float,
         reason: str,
+        *,
+        evidence_quote: str = "",
+        matched_concepts: list[str] | None = None,
     ) -> CandidateDecision:
         return CandidateDecision(
             candidate_id=candidate_id,
@@ -601,6 +687,8 @@ class RetrievalPlanner:
             confidence=confidence,
             reason=reason,
             evidence_excerpt=cls._evidence_excerpt(item),
+            evidence_quote=evidence_quote,
+            matched_concepts=matched_concepts or [],
         )
 
     @classmethod

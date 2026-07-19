@@ -66,6 +66,15 @@ class TenderPipeline:
         effective_spec.keywords = list(
             dict.fromkeys([*spec.keywords, *(term.text for term in plan.terms)])
         )
+        trusted_spec = spec.model_copy(deep=True)
+        trusted_spec.keywords = list(
+            dict.fromkeys(
+                [
+                    *spec.keywords,
+                    *(term.text for term in plan.terms if term.trusted_for_match),
+                ]
+            )
+        )
         primary = next(query for query in plan.queries if query.round == 1)
         all_calls: list[_SourceCall] = []
         rounds: list[SearchRoundDiagnostic] = []
@@ -122,11 +131,11 @@ class TenderPipeline:
         boundary_items = []
         rejected_by_source: dict[str, Counter[str]] = defaultdict(Counter)
         for item in raw_items:
-            reason = hard_filter_reason(item, effective_spec)
+            reason = hard_filter_reason(item, trusted_spec)
             if reason:
                 rejected_by_source[item.source][reason] += 1
                 continue
-            hits, exact_title = keyword_hits(item, effective_spec)
+            hits, exact_title = keyword_hits(item, trusted_spec)
             if hits or exact_title:
                 lexical_items.append(item)
             else:
@@ -136,13 +145,17 @@ class TenderPipeline:
             review_status,
             semantic_decisions,
             semantic_acceptance,
-        ) = await self.planner.review_candidates(effective_spec, plan.terms, boundary_items)
+        ) = await self.planner.review_candidates(trusted_spec, plan.terms, boundary_items)
         evaluation_items = [*lexical_items]
         semantic_scores: list[float | None] = [None] * len(lexical_items)
-        for item in boundary_items:
+        semantic_budget = self.settings.retrieval_semantic_candidate_limit
+        for index, item in enumerate(boundary_items):
             confidence = semantic_acceptance.get(item.source_url)
             if confidence is None:
-                rejected_by_source[item.source]["keyword_mismatch"] += 1
+                reason = (
+                    "semantic_review_budget" if index >= semantic_budget else "keyword_mismatch"
+                )
+                rejected_by_source[item.source][reason] += 1
                 continue
             evaluation_items.append(item)
             semantic_scores.append(confidence)
@@ -151,11 +164,14 @@ class TenderPipeline:
             *(
                 evaluate_item(
                     item,
-                    effective_spec,
+                    trusted_spec,
                     self.summarizer,
                     semantic_confidence=semantic_confidence,
+                    allow_llm_summary=(index < self.settings.record_summary_max_records),
                 )
-                for item, semantic_confidence in zip(evaluation_items, semantic_scores, strict=True)
+                for index, (item, semantic_confidence) in enumerate(
+                    zip(evaluation_items, semantic_scores, strict=True)
+                )
             )
         )
         records = deduplicate_records(
@@ -481,6 +497,7 @@ class TenderPipeline:
                 "event_type_mismatch": "公告类型不匹配",
                 "excluded_keyword": "命中排除词",
                 "keyword_mismatch": "主题或同义词未命中",
+                "semantic_review_budget": "超出语义复核预算",
                 "low_relevance": "综合相关度不足",
             }
             top_text = (

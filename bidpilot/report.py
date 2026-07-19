@@ -281,6 +281,7 @@ def generate_report(
             "event_type_mismatch": "类型不符",
             "excluded_keyword": "命中排除词",
             "keyword_mismatch": "主题未命中",
+            "semantic_review_budget": "超出语义复核预算",
             "low_relevance": "相关度不足",
         }
         rejection = "；".join(

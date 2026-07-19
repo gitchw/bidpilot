@@ -45,6 +45,10 @@ class RetrievalTerm(BaseModel):
     )
     origin: Literal["query", "rules", "lexicon", "llm"] = Field(description="词条的可审计来源")
     reason: str = Field(max_length=240, description="使用该词的中文理由")
+    trusted_for_match: bool = Field(
+        default=True,
+        description="是否可直接参与最终字面匹配；模型发现词固定为 false，只能扩大候选召回",
+    )
 
 
 class RetrievalQuery(BaseModel):
@@ -113,6 +117,16 @@ class CandidateDecision(BaseModel):
     confidence: float = Field(default=0, ge=0, le=1)
     reason: str = Field(max_length=300)
     evidence_excerpt: str = Field(default="", max_length=500)
+    evidence_quote: str = Field(
+        default="",
+        max_length=240,
+        description="模型提议且已由本地确认逐字存在于该候选的证据引句",
+    )
+    matched_concepts: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="模型选择且通过本地可信概念白名单校验的主题概念",
+    )
 
 
 class RetrievalTrace(BaseModel):
@@ -582,6 +596,7 @@ class TenderRecord(BaseModel):
     event_type: EventType
     project_id: str | None = None
     summary: str
+    summary_mode: Literal["extractive", "llm_grounded"] = "extractive"
     body_excerpt: str
     attachments: list[Attachment] = Field(default_factory=list)
     evidence: list[EvidenceSpan] = Field(default_factory=list)
