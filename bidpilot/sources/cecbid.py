@@ -148,7 +148,12 @@ class CECBidSource(SourceAdapter):
                 detailed: list[RawTender] = []
                 for item in items:
                     try:
-                        detail = await fetcher.get(item.source_url, headers=headers, retries=1)
+                        detail = await fetcher.get(
+                            item.source_url,
+                            headers=headers,
+                            retries=1,
+                            authorized_hosts=("www.cecbid.org.cn", "cecbid.org.cn"),
+                        )
                         detailed.append(self._parse_detail(detail.text, item))
                     except FetchError:
                         detailed.append(item)

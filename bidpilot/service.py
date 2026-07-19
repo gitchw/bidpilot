@@ -1197,9 +1197,7 @@ class BidPilotService:
         for source in self.sources:
             capabilities = source.capabilities()
             authorization = self.source_auth.status(source.source_id)
-            configured = (
-                authorization.state == "authorized" if isinstance(source, QianlimaSource) else True
-            )
+            configured = True
             rows.append(
                 {
                     **capabilities,
@@ -1209,13 +1207,11 @@ class BidPilotService:
                     "member_enhanced": (
                         authorization.state == "authorized"
                         if isinstance(source, CECBidSource)
-                        else authorization.state == "authorized"
-                        if isinstance(source, QianlimaSource)
                         else False
                     ),
                     "mode": (
-                        "授权免费会员"
-                        if source.requires_auth
+                        "公开分类 + 原站辅助"
+                        if isinstance(source, QianlimaSource)
                         else "公开 + 会员增强"
                         if isinstance(source, CECBidSource)
                         else "公开"

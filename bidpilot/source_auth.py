@@ -130,19 +130,11 @@ class SourceAuthManager:
         self.specs = self._build_specs()
         self._sessions: dict[str, _LiveSession] = {}
         self._lock = asyncio.Lock()
-        self._migrate_legacy_qianlima_cookie()
+        self._disable_legacy_qianlima_replay()
         self.load_persisted()
 
     def _build_specs(self) -> dict[str, SourceAuthSpec]:
         configured = (
-            SourceAuthSpec(
-                source_id="qianlima",
-                source_name="千里马招标网",
-                login_url="https://wap.qianlima.com/login.jsp",
-                allowed_domains=("wap.qianlima.com", "www.qianlima.com"),
-                setting_field="qianlima_cookie",
-                authorization_scope="使用用户免费会员账号原本可见的站内搜索与详情，不包含付费内容。",
-            ),
             SourceAuthSpec(
                 source_id="cecbid",
                 source_name="中国招标投标网",
@@ -168,24 +160,13 @@ class SourceAuthManager:
         parsed = datetime.fromisoformat(value)
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
-    def _migrate_legacy_qianlima_cookie(self) -> None:
+    def _disable_legacy_qianlima_replay(self) -> None:
+        """Remove obsolete member sessions that background jobs must never replay."""
+
         path: Path = self.settings.qianlima_cookie_path
-        if self.db.get_source_authorization("qianlima") or not path.exists():
-            return
-        with suppress(OSError, UnicodeError):
-            cookie = path.read_text(encoding="utf-8").strip()
-            if not cookie:
-                return
-            now = self._now()
-            self.db.set_source_authorization(
-                source_id="qianlima",
-                encrypted_cookie=self.vault.encrypt(cookie),
-                cookie_names=self._cookie_names_from_header(cookie),
-                domains=["wap.qianlima.com", "www.qianlima.com"],
-                authorized_at=now.isoformat(),
-                expires_at=None,
-                message="旧版本机会话已迁移到 SQLite 加密存储；建议在来源中心执行一次连接测试。",
-            )
+        self.db.delete_source_authorization("qianlima")
+        self.settings.qianlima_cookie = ""
+        with suppress(OSError):
             path.unlink(missing_ok=True)
 
     def load_persisted(self) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from math import ceil
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -18,6 +19,7 @@ from bidpilot.config import Settings
 from bidpilot.fetch import FetchError, HttpFetcher
 from bidpilot.models import (
     Attachment,
+    EventType,
     EvidenceSpan,
     RawTender,
     SourceSearchResult,
@@ -30,15 +32,27 @@ from bidpilot.sources.base import SourceAdapter
 class QianlimaSource(SourceAdapter):
     source_id = "qianlima"
     name = "千里马招标网"
-    requires_auth = True
+    requires_auth = False
     base_url = "https://wap.qianlima.com"
     homepage = "https://www.qianlima.com"
-    access_mode = "user_authorized_member"
-    query_mode = "keyword_search"
-    supports_query_variants = True
+    access_mode = "public_user_assisted"
+    query_mode = "public_category_feed"
+    supports_query_variants = False
+    supports_pagination = True
+    supports_detail = False
     authorization_supported = True
-    authorization_url = f"{base_url}/login.jsp"
-    coverage_note = "仅在用户主动授权后读取其免费会员账号本来可见的搜索结果。"
+    authorization_url = "https://search.vip.qianlima.com/"
+    coverage_note = (
+        "自动任务只读取无需登录的公开分类列表，并在本地执行主题、地域和日期硬校验；"
+        "不保存或重放千里马会员 Cookie，不自动读取付费详情。需要完整站内能力时请主动打开原站。"
+    )
+
+    _EVENT_FEEDS = {
+        EventType.TENDER: "/zbgg/",
+        EventType.INTENTION: "/zbyg/",
+        EventType.AWARD: "/zbjg/",
+        EventType.CHANGE: "/zbbg/",
+    }
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -46,26 +60,36 @@ class QianlimaSource(SourceAdapter):
     @classmethod
     def parse_search_page(cls, html: str, limit: int = 20) -> list[RawTender]:
         soup = BeautifulSoup(html, "lxml")
-        containers = soup.select(".search-list li,.result-list li,ul.list li,.search_result li")
-        if not containers:
-            containers = [
-                anchor.parent
-                for anchor in soup.select('a[href*="qianlima.com"],a[href*="/zb/"]')
-                if anchor.parent is not None
-            ]
+        anchors = soup.select(
+            '.list-con a[href*="/zb/detail/"],.search-list li a[href],'
+            ".result-list li a[href],ul.list li a[href],.search_result li a[href]"
+        )
+        if not anchors:
+            anchors = soup.select('a[href*="qianlima.com/zb/detail/"],a[href*="/zb/detail/"]')
         items: list[RawTender] = []
         seen: set[str] = set()
-        for row in containers:
-            anchor = row.select_one("a[href]")
-            if anchor is None:
-                continue
-            title = normalize_space(anchor.get("title", "") or anchor.get_text(" ", strip=True))
+        for anchor in anchors:
+            row = anchor.parent or anchor
+            title_node = anchor.select_one(".title")
+            title = normalize_space(
+                title_node.get_text(" ", strip=True)
+                if title_node is not None
+                else anchor.get("title", "") or anchor.get_text(" ", strip=True)
+            )
             href = urljoin(cls.base_url, anchor.get("href", ""))
             if not title or href in seen or any(word in title for word in ("注册", "登录", "首页")):
                 continue
-            row_text = normalize_space(row.get_text(" ", strip=True))
+            row_text = normalize_space(
+                anchor.get_text(" ", strip=True)
+                if title_node is not None
+                else row.get_text(" ", strip=True)
+            )
             date_match = re.search(r"20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}", row_text)
             published = parse_datetime(date_match.group(0) if date_match else "")
+            region_nodes = anchor.select(".second-line span")
+            region = (
+                normalize_space(region_nodes[0].get_text(" ", strip=True)) if region_nodes else None
+            )
             items.append(
                 RawTender(
                     source=cls.name,
@@ -73,10 +97,12 @@ class QianlimaSource(SourceAdapter):
                     title=title,
                     published_at=published,
                     body=row_text,
+                    region=region,
                     event_type=detect_event_type(title),
                     project_id=extract_project_id(row_text),
                     evidence=[EvidenceSpan(text=row_text[:360], source_url=href)],
-                    auth_level="free_member",
+                    auth_level="public_snippet",
+                    source_metadata={"coverage": "public_category_feed"},
                 )
             )
             seen.add(href)
@@ -104,52 +130,58 @@ class QianlimaSource(SourceAdapter):
 
     async def search(self, spec: TenderQuerySpec, fetcher: HttpFetcher) -> SourceSearchResult:
         started = time.perf_counter()
-        cookie = self.settings.load_qianlima_cookie()
-        if not cookie:
-            return SourceSearchResult(
-                source=self.name,
-                status=SourceStatus.AUTH_REQUIRED,
-                message="需要用户授权的免费会员登录态；请在来源中心点击“打开浏览器授权”。",
-                latency_ms=0,
-            )
-        headers = {"Cookie": cookie, "Referer": f"{self.base_url}/"}
         try:
-            page = await fetcher.get(
-                f"{self.base_url}/search.jsp",
-                params={"q": spec.topic},
-                headers=headers,
-                encoding="gb18030",
-                retries=1,
-            )
-            lowered = page.final_url.lower()
-            page_text = normalize_space(BeautifulSoup(page.text, "lxml").get_text(" ", strip=True))
-            if (
-                "register" in lowered
-                or "login" in lowered
-                or "免费 注册 查询 最新 招投标信息" in page_text
-            ):
+            requested_events = list(dict.fromkeys(spec.event_types)) or list(self._EVENT_FEEDS)
+            feeds = [
+                (event_type, self._EVENT_FEEDS[event_type])
+                for event_type in requested_events
+                if event_type in self._EVENT_FEEDS
+            ]
+            if not feeds:
                 return SourceSearchResult(
                     source=self.name,
-                    status=SourceStatus.AUTH_REQUIRED,
-                    message="登录态已过期，请重新授权免费会员会话。",
-                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    status=SourceStatus.SKIPPED,
+                    message="公开分类列表不覆盖本次指定的公告类型，已诚实跳过。",
+                    latency_ms=0,
                 )
-            items = self.parse_search_page(page.text, self.settings.max_results_per_source)
-            detailed: list[RawTender] = []
-            for item in items:
-                try:
-                    detail = await fetcher.get(
-                        item.source_url, headers=headers, encoding="gb18030", retries=1
+            limit = self.settings.max_results_per_source
+            per_feed_limit = max(1, ceil(limit / len(feeds)))
+            items: list[RawTender] = []
+            seen: set[str] = set()
+            scanned = 0
+            max_pages = 2 if len(feeds) == 1 else 1
+            for event_type, path in feeds:
+                feed_items: list[RawTender] = []
+                for page_number in range(1, max_pages + 1):
+                    page_path = path if page_number == 1 else f"{path.rstrip('/')}/p{page_number}"
+                    page = await fetcher.get(
+                        urljoin(self.base_url, page_path),
+                        encoding="utf-8",
+                        retries=1,
                     )
-                    detailed.append(self.parse_detail_page(detail.text, item))
-                except FetchError:
-                    detailed.append(item)
+                    parsed = self.parse_search_page(page.text, per_feed_limit)
+                    scanned += len(parsed)
+                    for item in parsed:
+                        if item.event_type == EventType.OTHER:
+                            item.event_type = event_type
+                        if item.source_url not in seen:
+                            feed_items.append(item)
+                            seen.add(item.source_url)
+                        if len(feed_items) >= per_feed_limit:
+                            break
+                    if len(feed_items) >= per_feed_limit or not parsed:
+                        break
+                items.extend(feed_items)
+            items = items[:limit]
             return SourceSearchResult(
                 source=self.name,
-                status=SourceStatus.OK,
-                items=detailed,
-                scanned_count=len(items),
-                message="免费会员授权源抓取完成。",
+                status=SourceStatus.PARTIAL,
+                items=items,
+                scanned_count=scanned,
+                message=(
+                    "已读取无需登录的公开分类列表；主题、地域和日期由本地硬校验。"
+                    "自动任务不会保存或重放会员 Cookie，也不会绕过付费详情。"
+                ),
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
         except FetchError as exc:

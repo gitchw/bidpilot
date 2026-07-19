@@ -786,10 +786,16 @@ async function setOpportunityWorkspaceView(view) {
 }
 
 async function loadSources() {
-  const [statusRows, health] = await Promise.all([
+  const [statusResult, healthResult] = await Promise.allSettled([
     api("/api/v1/sources/status"),
     api("/api/v1/sources/health?window=20"),
   ]);
+  if (statusResult.status !== "fulfilled") throw statusResult.reason;
+  const statusRows = statusResult.value;
+  const health = healthResult.status === "fulfilled" ? healthResult.value : { sources: [] };
+  if (healthResult.status !== "fulfilled") {
+    toast("来源列表已加载；健康趋势暂时不可用，稍后可重试。", 5000);
+  }
   const healthById = new Map((health.sources || []).map((row) => [row.id, row]));
   const rows = statusRows.map((row) => ({ ...row, health: healthById.get(row.id) || null }));
   state.sources = rows;
@@ -829,6 +835,7 @@ function renderSourceHealth(row) {
 }
 
 function authStateLabel(auth) {
+  if (auth?.state === "authorized" && auth?.last_test_status === "failed") return "会话已保存，但验证失败";
   const labels = {
     not_supported: "无需/不可复用授权", not_authorized: "尚未授权",
     authorizing: "等待你完成登录", authorized: "授权已保存",
@@ -883,33 +890,37 @@ function renderSourceCenter(rows) {
 }
 
 async function startSourceAuth(sourceId, button) {
+  const originalLabel = button.textContent;
   button.disabled = true; button.textContent = "正在打开浏览器…";
   try {
     await configApi(`/api/v1/sources/${encodeURIComponent(sourceId)}/auth/start`, { method: "POST" });
     toast("授权浏览器已打开。请在里面亲自完成登录，再回到这里点击“我已登录，完成授权”。", 7000);
     await loadSources();
   } catch (error) { toast(error.message, 7000); }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; button.textContent = originalLabel; }
 }
 
 async function completeSourceAuth(sessionId, button) {
   if (!sessionId) return toast("授权会话已失效，请重新开始", 5000);
+  const originalLabel = button.textContent;
   button.disabled = true; button.textContent = "正在加密保存…";
   try {
-    await configApi(`/api/v1/sources/auth/sessions/${encodeURIComponent(sessionId)}/complete`, { method: "POST" });
-    toast("授权已加密保存。现在可以点击“测试授权”验证真实检索。", 6000);
+    const result = await configApi(`/api/v1/sources/auth/sessions/${encodeURIComponent(sessionId)}/complete`, { method: "POST" });
+    if (result.status !== "completed") throw new Error(result.message || "授权没有完成，请继续登录或重新开始");
+    toast(result.message || "授权已加密保存。现在可以点击“测试授权”验证真实检索。", 6000);
     await loadSources();
   } catch (error) { toast(error.message, 7000); await loadSources(); }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; button.textContent = originalLabel; }
 }
 
 async function testSourceAuth(sourceId, button) {
+  const originalLabel = button.textContent;
   button.disabled = true; button.textContent = "真实测试中…";
   try {
     const result = await configApi(`/api/v1/sources/${encodeURIComponent(sourceId)}/auth/test`, { method: "POST" });
     toast(result.message, 7000); await loadSources();
   } catch (error) { toast(error.message, 7000); await loadSources(); }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; button.textContent = originalLabel; }
 }
 
 async function clearSourceAuth(sourceId, button) {

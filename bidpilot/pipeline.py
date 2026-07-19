@@ -373,12 +373,20 @@ class TenderPipeline:
             statuses = [result.status for result in results]
             if not statuses:
                 status = SourceStatus.FAILED
+            elif all(item == SourceStatus.SKIPPED for item in statuses):
+                status = SourceStatus.SKIPPED
             elif all(item == SourceStatus.AUTH_REQUIRED for item in statuses):
                 status = SourceStatus.AUTH_REQUIRED
             elif all(item == SourceStatus.FAILED for item in statuses):
                 status = SourceStatus.FAILED
             elif any(
-                item in {SourceStatus.PARTIAL, SourceStatus.AUTH_REQUIRED, SourceStatus.FAILED}
+                item
+                in {
+                    SourceStatus.PARTIAL,
+                    SourceStatus.AUTH_REQUIRED,
+                    SourceStatus.FAILED,
+                    SourceStatus.SKIPPED,
+                }
                 for item in statuses
             ):
                 status = SourceStatus.PARTIAL

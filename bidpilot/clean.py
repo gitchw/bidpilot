@@ -14,6 +14,10 @@ PROJECT_ID_PATTERNS = [
     r"\b([A-Z]{2,8}[-_/]\d{4,}[-_/A-Z0-9]*)\b",
 ]
 
+# A deliberately old, deterministic sentinel.  Missing or malformed source dates must never be
+# represented as "today", because that would let stale notices pass a recent-date hard filter.
+UNKNOWN_PUBLISHED_AT = datetime(1970, 1, 1)
+
 
 def normalize_space(value: str) -> str:
     value = unicodedata.normalize("NFKC", value or "")
@@ -73,7 +77,7 @@ def parse_datetime(value: str, fallback: datetime | None = None) -> datetime:
     match = re.search(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})", value)
     if match:
         return datetime(*map(int, match.groups()))
-    return fallback or datetime.now()
+    return fallback if fallback is not None else UNKNOWN_PUBLISHED_AT
 
 
 def find_attachments(root: BeautifulSoup, base_url: str) -> list[tuple[str, str]]:

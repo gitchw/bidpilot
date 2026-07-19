@@ -3,9 +3,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from bidpilot.clean import parse_datetime
 from bidpilot.config import Settings
+from bidpilot.fetch import FetchedPage
 from bidpilot.intent import IntentParser
-from bidpilot.models import EventType
+from bidpilot.models import EventType, SourceSearchResult, SourceStatus
+from bidpilot.pipeline import TenderPipeline
+from bidpilot.sources.base import SourceAdapter
 from bidpilot.sources.ccgp import CCGPSource
 from bidpilot.sources.cebpubservice import CEBPubServiceSource
 from bidpilot.sources.cecbid import CECBidSource
@@ -49,12 +53,66 @@ def test_ccgp_list_and_detail_parser_extract_required_fields():
     assert first.evidence
 
 
-def test_qianlima_member_parser_is_structured():
+def test_qianlima_public_feed_parser_is_structured():
     items = QianlimaSource.parse_search_page(fixture("qianlima_search.html"))
     assert len(items) == 1
-    assert items[0].auth_level == "free_member"
+    assert items[0].auth_level == "public_snippet"
     assert items[0].project_id == "QLM-2026-9"
     assert items[0].source_url == "https://wap.qianlima.com/zb/detail/QLM001.html"
+
+
+async def test_qianlima_public_search_never_replays_member_cookie(sample_spec):
+    settings = Settings(max_results_per_source=1, qianlima_cookie="member=must-not-send")
+    source = QianlimaSource(settings)
+    sample_spec.event_types = [EventType.TENDER]
+
+    class PublicFetcher:
+        calls: list[tuple[str, dict]] = []
+
+        async def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            assert "headers" not in kwargs
+            return FetchedPage(
+                requested_url=url,
+                final_url=url,
+                status_code=200,
+                text=fixture("qianlima_search.html"),
+                elapsed_ms=1,
+                content_type="text/html",
+            )
+
+    fetcher = PublicFetcher()
+    result = await source.search(sample_spec, fetcher)
+
+    assert result.status == SourceStatus.PARTIAL
+    assert len(result.items) == 1
+    assert result.items[0].auth_level == "public_snippet"
+    assert fetcher.calls[0][0] == "https://wap.qianlima.com/zbgg/"
+    assert "不会保存或重放会员 Cookie" in result.message
+
+
+def test_malformed_source_date_uses_old_sentinel_instead_of_today():
+    assert parse_datetime("网页没有发布日期") == datetime(1970, 1, 1)
+
+
+async def test_pipeline_preserves_all_skipped_status(sample_spec):
+    class SkippedSource(SourceAdapter):
+        source_id = "skipped_fixture"
+        name = "地域跳过来源"
+
+        async def search(self, spec, fetcher):
+            return SourceSearchResult(
+                source=self.name,
+                status=SourceStatus.SKIPPED,
+                message="本轮地域不适用",
+            )
+
+    result = await TenderPipeline(
+        Settings(retrieval_llm_mode="off", request_interval=0.1),
+        [SkippedSource()],
+    ).run(sample_spec)
+
+    assert result.diagnostics[0].status == SourceStatus.SKIPPED
 
 
 def test_ccgp_prefilter_respects_region_topic_and_date(sample_spec):
