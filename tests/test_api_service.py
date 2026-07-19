@@ -103,6 +103,7 @@ class SequencedLifecycleSource(SourceAdapter):
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
+        control_dir=tmp_path / "control",
         report_dir=tmp_path / "reports",
         database_path=tmp_path / "data" / "test.db",
         request_interval=0.1,
@@ -976,7 +977,25 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
     assert len(operations) == 50
     for method, path, operation in operations:
         description = operation.get("description", "")
-        assert path in api_reference, f"{method} {path} 未写入独立 API 参考"
+        documented_operation = f"`{method} {path}`"
+        assert documented_operation in api_reference, (
+            f"{method} {path} 未写入独立 API 参考，或请求方法与路径不匹配"
+        )
+        heading = f"### {documented_operation}"
+        section_start = api_reference.index(heading)
+        section_boundaries = [
+            boundary
+            for marker in ("\n### `", "\n## ")
+            if (boundary := api_reference.find(marker, section_start + len(heading))) >= 0
+        ]
+        section_end = min(section_boundaries, default=len(api_reference))
+        reference_section = api_reference[section_start:section_end]
+        for label in ("- 用途：", "- 返回：", "- 副作用：", "- 错误：", "- 示例："):
+            assert label in reference_section, f"{method} {path} 的 API 参考缺少 {label}"
+        assert any(
+            label in reference_section
+            for label in ("- 参数：", "- 请求：", "- 路径参数：", "- 请求头：")
+        ), f"{method} {path} 的 API 参考缺少参数或请求体说明"
         assert operation.get("summary"), f"{method} {path} 缺少中文摘要"
         assert operation.get("tags"), f"{method} {path} 缺少中文分组"
         for section in required_sections:

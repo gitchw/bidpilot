@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
+import sys
 import time
 from pathlib import Path
 from typing import Annotated
@@ -26,6 +28,16 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _python_module_command(command: str) -> str:
+    """Return a copyable command using the interpreter that runs BidPilot now."""
+    executable = str(Path(sys.executable).resolve())
+    if sys.platform == "win32":
+        launcher = f'& "{executable}"' if any(char.isspace() for char in executable) else executable
+    else:
+        launcher = shlex.quote(executable)
+    return f"{launcher} -m bidpilot {command}"
 
 
 @app.command("parse")
@@ -85,8 +97,13 @@ def _serve(settings, host: str, port: int) -> None:
     state = control.write_state(host=host, port=port, version=__version__)
     url = local_control_url(host, port)
     console.print(f"[bold green]标擎服务正在启动[/bold green]：{url}")
+    console.print(f"版本：v{__version__} · 数据库：{settings.database_path.resolve()}")
     console.print(
-        "停止方法：在本窗口按 [bold]Ctrl+C[/bold]，或在另一个终端运行 `python -m bidpilot stop`。"
+        f"报告目录：{settings.report_dir.resolve()} · 控制目录：{settings.control_dir.resolve()}"
+    )
+    console.print(
+        "停止方法：在本窗口按 [bold]Ctrl+C[/bold]，或在同一项目的另一个终端运行 "
+        f"`{_python_module_command('stop')}`。"
     )
     try:
         server.run()
@@ -120,10 +137,10 @@ def status_command() -> None:
         if state:
             console.print(
                 f"发现旧运行记录（PID {state.get('pid')}），但健康检查失败；"
-                "它可能刚退出或端口已改变。可重新运行 `python -m bidpilot serve`。"
+                f"它可能刚退出或端口已改变。可重新运行 `{_python_module_command('serve')}`。"
             )
         else:
-            console.print("下一步：在项目目录运行 `python -m bidpilot serve`。")
+            console.print(f"下一步：在项目目录运行 `{_python_module_command('serve')}`。")
         raise typer.Exit(code=1) from None
 
     table = Table("项目", "当前状态")
@@ -135,6 +152,9 @@ def status_command() -> None:
     )
     table.add_row("正在执行", str(data.get("running_subscription_count", 0)))
     table.add_row("等待领取", str(data.get("due_count", 0)))
+    table.add_row("数据库", str(settings.database_path.resolve()))
+    table.add_row("报告目录", str(settings.report_dir.resolve()))
+    table.add_row("控制目录", str(settings.control_dir.resolve()))
     intent = data.get("intent_engine", {})
     table.add_row(
         "混合意图",
@@ -161,8 +181,9 @@ def _stop_service(settings, wait_seconds: float, *, quiet_if_stopped: bool = Fal
         return True
     if not token:
         console.print(
-            "[red]服务在线，但本机控制令牌不存在。[/red]请回到启动服务的终端按 Ctrl+C；"
-            "系统不会冒险按 PID 强制结束进程。"
+            "[red]服务在线，但当前控制目录没有本机控制令牌。[/red]"
+            f"当前控制目录：{settings.control_dir.resolve()}。请确认 status/stop 与 serve 在同一项目目录运行，"
+            "或回到启动服务的终端按 Ctrl+C；系统不会冒险按 PID 强制结束进程。"
         )
         return False
     try:
@@ -174,7 +195,10 @@ def _stop_service(settings, wait_seconds: float, *, quiet_if_stopped: bool = Fal
         if response.status_code != 202:
             detail = response.json().get("detail", "当前启动方式不支持")
             console.print(f"[red]无法通过管理接口停止：{detail}[/red]")
-            console.print("请回到启动服务的终端按 Ctrl+C。不会强制结束未知 PID。")
+            console.print(
+                f"当前控制目录：{settings.control_dir.resolve()}。请确认与 serve 使用同一项目目录，"
+                "或回到启动终端按 Ctrl+C；不会强制结束未知 PID。"
+            )
             return False
     except (httpx.HTTPError, ValueError):
         console.print("[red]停止请求发送失败。[/red]请检查服务地址，或在启动终端按 Ctrl+C。")

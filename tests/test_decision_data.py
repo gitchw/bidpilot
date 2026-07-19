@@ -19,6 +19,7 @@ from bidpilot.service import BidPilotService
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
+        control_dir=tmp_path / "control",
         report_dir=tmp_path / "reports",
         database_path=tmp_path / "data" / "decision.db",
         request_interval=0.1,

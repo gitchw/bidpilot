@@ -5,6 +5,7 @@ import time
 from fastapi.testclient import TestClient
 
 from bidpilot.api import create_app
+from bidpilot.cli import _python_module_command
 from bidpilot.config import Settings
 from bidpilot.control import ControlPlane
 
@@ -12,6 +13,7 @@ from bidpilot.control import ControlPlane
 def make_settings(tmp_path):
     return Settings(
         data_dir=tmp_path / "data",
+        control_dir=tmp_path / "control",
         report_dir=tmp_path / "reports",
         database_path=tmp_path / "data" / "test.db",
         embedded_worker=False,
@@ -24,16 +26,28 @@ def test_control_token_and_runtime_state_are_separate(tmp_path):
     token = control.ensure_token()
     assert len(token) >= 48
     assert control.ensure_token() == token
-    state = control.write_state(host="127.0.0.1", port=8123, version="0.5.0")
+    state = control.write_state(host="127.0.0.1", port=8123, version="0.7.0")
     assert state["pid"] > 0
     assert control.read_state()["port"] == 8123
     assert token not in control.state_path.read_text(encoding="utf-8")
+    assert control.token_path.parent == settings.control_dir / "secrets"
+    assert control.state_path.parent == settings.control_dir / "runtime"
     assert control.verify(token)
     assert not control.verify("wrong-token")
     control.clear_state(pid=state["pid"] + 1)
     assert control.state_path.exists()
     control.clear_state(pid=state["pid"])
     assert not control.state_path.exists()
+
+
+def test_python_module_command_is_copyable_in_powershell(monkeypatch, tmp_path):
+    executable = tmp_path / "Python Runtime" / "python.exe"
+    monkeypatch.setattr("bidpilot.cli.sys.executable", str(executable))
+    monkeypatch.setattr("bidpilot.cli.sys.platform", "win32")
+
+    command = _python_module_command("stop")
+
+    assert command == f'& "{executable.resolve()}" -m bidpilot stop'
 
 
 def test_shutdown_endpoint_requires_local_token_and_controller(tmp_path):

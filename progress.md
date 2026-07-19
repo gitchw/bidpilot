@@ -69,7 +69,7 @@
 
 ## 当前约束
 
-- 仓库没有 Git remote；可以创建本地原子提交，但无法满足 `push` 要求。
+- Git 远端已配置为 `https://github.com/gitchw/bidpilot.git`；v0.7.0 发布必须同步 `main`、全部本地分支和全部标签，并以远端引用复核为准。
 - 本机没有 Docker；需要在有 Docker 的环境实际执行 `docker compose up -d --build`。
 - 飞书真实投递需要用户提供 Webhook 或应用凭据；SMTP 真实投递需要应用专用密码。
 - 千里马真实链路需要用户主动完成免费会员登录，Cookie 不得提交仓库。
@@ -218,7 +218,7 @@
 
 - 决策中心完成网页企业画像读取、编辑、保存、重新读取和适配刷新；画像读取完成前字段保持禁用，避免网络慢时用空表单覆盖旧数据。每条结果展示建议参与/持续观察/暂不投入、适配分账本、风险、下一步、个性化影响和可点击证据。
 - 反馈记忆完成相关/无关/观察/已联系的持久化、原因修改、撤销和全部清空；写入反馈与重新计算适配分拆开处理，重算失败不会误报“反馈未保存”。旧响应受 sequence 与运行 ID 约束，不能覆盖新运行或新反馈状态。
-- 证据追问升级为 `run-qa-v2`：模型对结构化事实只能选择 `E 编号 + field`，采购人、标题、地域、日期、阶段和项目编号由本地固定快照回填；只有 excerpt 允许逐字摘录。真实复测“这批项目分别有哪些采购人”“分别来自哪些地区”“明确项目编号”均可回答。
+- 证据追问升级为 `run-qa-v3`：模型对结构化事实只能选择 `E 编号 + field`，采购人、标题、地域、日期、阶段和项目编号由本地固定快照回填；只有 excerpt 允许逐字摘录。真实复测“这批项目分别有哪些采购人”“分别来自哪些地区”“明确项目编号”均可回答。
 - 修复多字段追问边界：“E01 的采购人和发布日期是什么”在采购人缺失但日期存在时，不再把整题误报为证据不足；系统返回已有日期并明确写出“采购人未在固定快照中识别”。确定性回退会区分未配置、模型不可用和模型选择未通过证据校验，不再误写“模型未参与”。
 - 机会工作台新增面向零基础用户的“加入 → 分工 → 推进 → 收尾”说明和六个阶段解释；顶部拆成“我的机会”和“买方雷达”两个明确入口。卡片提供归档保留、恢复到待评估和二次确认删除，并在删除前逐项说明影响范围。
 - `DELETE /api/v1/opportunities/{id}` 只删除 `opportunities` 工作台行。真实 API/浏览器验收确认：第一次点击不删除，第二次才执行；原始标讯、run_items、报告和反馈保持不变；同一真实标讯可重新加入并获得新 ID，人工字段从默认值重新开始。
@@ -235,3 +235,13 @@
 - 手动立即运行在竞争中发现订阅已删除时返回 404，发现其他 worker 已领取时返回 409；订阅创建和重复创建路径不再以断言处理可恢复的跨进程状态变化。
 - 新增 4 个确定性竞争回归场景，最终 167 项 Pytest、Ruff lint/format、JavaScript 语法、`compileall`、JSON/YAML、敏感密钥扫描、wheel 安装导入与 `git diff --check` 全部通过。
 - 重新构建 `dist/bidpilot-0.7.0-py3-none-any.whl`（241,473 bytes，SHA-256 `29b12a3e7bb81ba474bf30887ae10d5011ae32bd53825cb4f87eb11b039b070e`）；包内共 48 个文件，确认包含最新租约保护、买方雷达与网页资源，不包含数据库、运行目录或 secrets。
+
+## 2026-07-19 — v0.7.0 最终发布复核
+
+- 默认服务端口固定复核为 `8000`；真实执行 `serve -> status -> restart -> status -> stop -> serve`，旧 PID 可优雅退出，新 PID 在 `http://127.0.0.1:8000` 恢复，`/health` 返回 200，`/openapi.json` 返回 50 个操作。
+- 同步修复历史报告路径：`runs.report_path` 与 `reports.path` 统一到 `outputs/reports`，`delivery_attempts.message` 不再引用旧 `tmp/ui-v07`；数据库 `integrity_check=ok`，外键检查 0，34 条报告记录全部有文件，报告目录无孤立 DOCX。
+- 私密文件权限加固落地：`data/secrets/control.token`、`runtime_config.key`、`source_auth.key` 在 Windows 上仅当前用户可读写；跨平台路径由 `bidpilot/private_files.py` 统一处理，权限无法收紧时失败而不静默降级。
+- 零基础 Word 手册更新为 `outputs/manuals/标擎BidPilot零基础操作说明书_v0.7.0.docx`：46 页、8 张真实截图；通过 DocxToolkit 业务规则、a11y 审计 0 问题、Word 原生 PDF 导出与 46 页 PNG 视觉复核。
+- 清理旧版交付物：移除 v0.5 手册、候选渲染目录、旧零结果截图、孤立报告、`tmp/`、`.pytest_cache/`、`.ruff_cache/` 和工作区 `__pycache__`；保留真实数据库、密钥、34 份数据库引用报告和最终 v0.7.0 手册。
+- 最终工程门禁：`pytest` 172 passed、Ruff lint/format、Node `--check`、`compileall`、32 个 JSON、1 个 YAML、`pip check`、`git diff --check`、敏感密钥扫描、数据库/报告一致性检查全部通过。
+- 重新构建 `dist/bidpilot-0.7.0-py3-none-any.whl`（243,597 bytes，SHA-256 `7afba6acdb4045ca427900a38a09652c1dc8a81955ea890df5b2f488500f739a`）；隔离安装后确认 `bidpilot.__version__ == 0.7.0`、OpenAPI 操作数 50、静态前端资源存在，wheel 不包含数据库、报告或 secrets。

@@ -31,6 +31,8 @@ Windows：
 .venv\Scripts\python.exe -m bidpilot serve
 ```
 
+如果 Windows 项目路径含空格，PowerShell 需要在带引号的解释器路径前加调用符号 `&`，例如 `& "C:\我的项目\.venv\Scripts\python.exe" -m bidpilot serve`。最稳妥的做法是直接复制启动画面打印的完整命令，不要自行删掉 `&` 或引号。
+
 macOS 或 Linux：
 
 ```text
@@ -68,7 +70,11 @@ macOS 或 Linux：
 也可以在另一个终端输入：
 
 ```text
-python -m bidpilot stop
+# Windows
+.venv\Scripts\python.exe -m bidpilot stop
+
+# macOS / Linux
+.venv/bin/python -m bidpilot stop
 ```
 
 看到“服务已优雅停止”才算结束。停止不会删除数据库、订阅、机会或报告。
@@ -262,7 +268,9 @@ macOS/Linux：
 
 ```text
 标擎服务正在启动：http://127.0.0.1:8000
-停止方法：在本窗口按 Ctrl+C，或在另一个终端运行 python -m bidpilot stop。
+版本：v0.7.0 · 数据库：<项目目录>/data/bidpilot.db
+报告目录：<项目目录>/outputs/reports · 控制目录：<项目目录>/data
+停止方法：在本窗口按 Ctrl+C，或在另一个终端运行启动画面给出的完整 .venv 停止命令。
 ```
 
 ### 4.2 打开网页
@@ -284,15 +292,20 @@ http://127.0.0.1:8000/docs
 另开一个终端，进入同一项目目录，运行：
 
 ```text
-python -m bidpilot status
+# Windows
+.venv\Scripts\python.exe -m bidpilot status
+
+# macOS / Linux
+.venv/bin/python -m bidpilot status
 ```
 
-如果没有激活虚拟环境，请使用平台对应的 `.venv` Python。状态表会显示：
+状态表会显示：
 
 - Web 服务是否在线；
 - 当前版本和地址；
 - 长期任务 worker 是否在线；
 - 订阅总数、启用数、执行中和待领取数；
+- 实际数据库、报告目录和控制目录；
 - 混合意图模式与阈值。
 
 “服务未运行或无法访问”表示健康检查失败，不代表数据丢失。
@@ -311,10 +324,14 @@ python -m bidpilot status
 在另一个终端、同一项目目录运行：
 
 ```text
-python -m bidpilot stop
+# Windows
+.venv\Scripts\python.exe -m bidpilot stop
+
+# macOS / Linux
+.venv/bin/python -m bidpilot stop
 ```
 
-原理：`serve` 启动时在 `data/secrets/control.token` 创建本机控制令牌，并记录端口；`stop` 使用该令牌向回环控制接口发送优雅退出请求。它不会看见或打印令牌，也不会按 PID 盲目结束进程。
+原理：`serve` 启动时在 `data/secrets/control.token` 创建本机控制令牌，并记录端口；`stop` 使用该令牌向回环控制接口发送优雅退出请求。它不会看见或打印令牌，也不会按 PID 盲目结束进程。Windows 会把 `data/secrets` 的 ACL 收紧到当前用户，macOS/Linux 会使用目录 `0700`、密钥文件 `0600`；权限无法安全收紧时，程序会拒绝悄悄创建私密文件。
 
 可能看到的结果：
 
@@ -326,7 +343,11 @@ python -m bidpilot stop
 ### 4.6 重启
 
 ```text
-python -m bidpilot restart
+# Windows
+.venv\Scripts\python.exe -m bidpilot restart
+
+# macOS / Linux
+.venv/bin/python -m bidpilot restart
 ```
 
 它会先优雅停止旧服务，再在当前终端前台启动新服务。因此运行后命令提示符不会立即回来，这是正常的。停止重启后的服务仍按 `Ctrl+C`。
@@ -336,7 +357,11 @@ python -m bidpilot restart
 8000 被占用时：
 
 ```text
-python -m bidpilot serve --port 8010
+# Windows
+.venv\Scripts\python.exe -m bidpilot serve --port 8010
+
+# macOS / Linux
+.venv/bin/python -m bidpilot serve --port 8010
 ```
 
 网页地址随之变为 `http://127.0.0.1:8010`。`status` 和 `stop` 会优先读取本次可管理服务记录。
@@ -359,10 +384,10 @@ python -m bidpilot serve --port 8010
 普通本机 `serve` 默认自带 worker，不需要再开 `worker`。只有生产拆分部署才运行：
 
 ```text
-python -m bidpilot worker
+{PY} -m bidpilot worker
 ```
 
-独立 worker 是另一个前台进程，要在它自己的终端按 `Ctrl+C`。`bidpilot stop` 只停止可管理 Web 进程及其内嵌 worker，不会盲目结束另一个独立 worker。
+这里的 `{PY}` 与命令速查表相同，必须替换为当前项目 `.venv` 的 Python。独立 worker 是另一个前台进程，要在它自己的终端按 `Ctrl+C`。`bidpilot stop` 只停止可管理 Web 进程及其内嵌 worker，不会盲目结束另一个独立 worker。
 
 ---
 
@@ -438,7 +463,7 @@ docker compose down -v
 
 ---
 
-## 6. 网页六个区域
+## 6. 网页七个区域
 
 ### 6.1 情报检索
 
@@ -463,6 +488,10 @@ docker compose down -v
 ### 6.6 报告历史
 
 下载系统真实生成并登记的 Word 报告。
+
+### 6.7 决策中心
+
+维护企业画像，对本轮真实证据生成逐条适配判断，查看 AI 情报简报，用反馈纠正排序，并只根据本轮固定证据追问。模型不可用时仍提供本地结果。
 
 ---
 
@@ -610,6 +639,36 @@ LLM 只输出严格 JSON 提议
 
 如果模型 API 是云服务，原句会离开本机。不要在查询中输入身份证、密码、商业机密或不应交给模型提供商的内容；必要时把意图模式设为“关闭”。
 
+### 8.8 AI 检索规划和二轮补搜
+
+意图解析只回答“你想查什么”；检索规划继续回答“应该用哪些受控词、优先访问哪些来源、是否需要补搜”。流程如下：
+
+```text
+本地主题与同义词基线
+  ↓
+可选 LLM 严格 JSON 查询词建议
+  ↓
+按来源能力和每来源预算执行首轮
+  ↓
+计算授权、地域、扫描、候选和保留缺口
+  ↓（仅有缺口且最多轮次为 2）
+执行一次有界补搜，并跳过已经访问的 URL
+```
+
+模型只能建议词条和来源优先级，不能生成公告、URL、采购人或日期。网页结果页会显示规划状态、每轮查询词、来源调用、扫描/候选/去重/保留数量以及触发补搜的缺口。
+
+### 8.9 AI 语义边界复核
+
+候选必须先通过日期、地域、公告类型和排除词硬过滤。只有“字面主题没有直接命中、但证据可能语义相关”的边界候选才允许模型复核。模型必须逐条返回严格决定；遗漏 E 编号、未知编号、非法 JSON、超时或证据不一致时保守拒绝，不能把广州项目改成深圳、把过期公告改成有效或突破排除词。
+
+### 8.10 AI 情报简报、企业适配和证据追问
+
+- 情报简报：从本轮可信 E 编号归纳买方需求、优先机会、风险和行动；未知引用会让整份模型结果回退。
+- 企业适配：模型只识别企业画像词与逐字证据；基础分、反馈调整、最终建议和硬风险由本地计算。
+- 证据追问：只读取指定运行持久化的固定快照；采购人、日期、地域、阶段、编号和链接由本地回填，正文只能逐字引用。
+
+这三类能力都不是聊天机器人自由发挥。未配置、超时或校验失败时，页面会明确显示回退原因并继续提供确定性结果。
+
 ---
 
 ## 9. 网页配置模型：逐字段解释
@@ -641,6 +700,30 @@ http://127.0.0.1:8045/v1
 ### 置信阈值
 
 0.50～0.99，建议保持 0.85。输入 `85` 是错误的，必须输入小数 `0.85`。
+
+### AI 检索规划
+
+“自动规划”允许模型建议受控扩词和来源优先级；“关闭”只用本地词典。普通用户推荐自动。无论选择哪种模式，模型都不能生成公告事实。
+
+### 最多检索轮次
+
+可选 1 或 2。推荐 2：先执行首轮，只有系统检测到覆盖缺口才补搜一轮；不是每次固定抓两遍。
+
+### 每来源查询预算
+
+范围 1～5，建议 2。它限制每个支持关键词检索的来源最多执行几个查询变体，防止模型无边界扩词、请求过多或触发站点限速。
+
+### AI 边界复核和语义阈值
+
+开关只控制主题边界候选的模型复核。阈值范围 0.50～0.99，建议 0.82；不会放宽日期、地域、公告类型或排除词。
+
+### AI 情报简报和证据上限
+
+“自动生成”会把按机会分排序后的有限真实证据发送给模型；“关闭”只用本地简报。证据上限范围 3～25，建议 12，只影响模型上下文，不会删除页面结果。
+
+### 企业适配 AI 复核和证据上限
+
+“自动复核”允许模型识别画像语义关联；“关闭”仍执行本地计分。证据上限范围 3～25，建议 15；窗口外结果继续使用本地规则逐条判断。
 
 ### API 密钥
 
@@ -742,7 +825,7 @@ http://127.0.0.1:8045/v1
 
 ---
 
-## 12. 机会工作台
+## 12. 机会工作台、买方雷达与决策中心
 
 ### 12.1 加入机会
 
@@ -805,6 +888,36 @@ http://127.0.0.1:8045/v1
 
 采购单位来自本地真实公告并被锁定到 `buyer_keywords`。客户端不能在请求中伪造其他买方；后续编辑订阅规则也不会丢失这个锁定条件。雷达本身只读本地数据，不联网补数、不调用模型猜联系人、不生成采购预测。
 
+### 12.7 第一次使用决策中心
+
+1. 先在“情报检索”完成一轮真实任务；没有固定运行证据时，决策中心不会生成演示项目。
+2. 打开“决策中心”，在顶部选择刚完成的运行。
+3. 等待企业画像读取完成；表单可编辑后再填写并保存。
+4. 点击“生成/刷新适配判断”，查看每条结果的建议、分数账本、风险、下一步和证据。
+5. 阅读本轮 AI 情报简报；任何结论都应带 E 编号，没有证据的内容不会当成可信结论。
+
+### 12.8 企业画像填写方法
+
+- 产品与服务：填写真正能交付的品类，例如“AI 服务器、算力集群集成、五年维保”。
+- 优势能力：填写可被公告证据关联的能力，例如“国产处理器适配、液冷、全国交付”。
+- 目标地域：用于适配偏好，不会伪造公告地域。
+- 排除条件：填写明确不参与的范围；它影响本地判断，但不会改写原公告。
+- 决策偏好：用于解释风险容忍和建议，不替代资质、预算或法务核验。
+
+保存画像后立即写入 SQLite，重启仍保留，不需要修改 `.env` 或配置文件。
+
+### 12.9 如何读适配判断
+
+每条结果显示“建议参与 / 持续观察 / 暂不投入”、本地基础分、反馈调整、最终分、画像命中、风险和下一步。模型不能提交分数或最终建议；标题、采购人、日期、地域、阶段和 URL 也由本地固定证据回填。模型失败时会显示安全回退，但结果不会消失。
+
+### 12.10 如何用反馈学习
+
+选择“相关、无关、观察、已联系”并可填写原因。反馈可以修改、撤销或全部清空。历史反馈只产生 -12～+12 的透明有限调整，不能突破日期、地域、公告类型和排除词；当前公告的直接反馈优先于相似历史。
+
+### 12.11 如何做本轮证据追问
+
+可以问“E01 的采购人和发布日期是什么”“这批项目分别来自哪些地区”“E02 的项目编号是什么”。系统只读取当前运行的固定证据，不访问外网，也不会把后来抓取的新公告混入旧运行。某字段没有识别时会明确写出缺口；未知 E 编号、索要密钥/系统提示或要求执行代码会被拒绝。
+
 ---
 
 ## 13. 来源中心与授权边界
@@ -819,10 +932,18 @@ http://127.0.0.1:8045/v1
 - `failed`：网络、结构或平台响应失败；
 - `skipped`：按配置跳过。
 
-千里马授权命令：
+推荐在网页完成来源授权：
+
+1. 在来源卡片点击“开始登录”，系统打开可见本机浏览器；
+2. 用户自己输入账号、完成验证码或站点要求的操作；
+3. 回到来源中心点击“完成并保存”，系统只加密保存限定域名的会话 Cookie；
+4. 点击“测试授权”确认仍有效；
+5. 不再使用时点击“清除授权”。
+
+兼容 CLI 命令：
 
 ```text
-python -m bidpilot auth qianlima
+{PY} -m bidpilot auth qianlima
 ```
 
 浏览器会打开登录页。验证码必须由用户自己完成。系统只保存会话 Cookie，不保存密码，不绕过免费会员边界或付费内容。
@@ -874,7 +995,7 @@ Swagger 页面操作：
 - `POST /api/v1/intent/parse`；
 - `POST /api/v1/intent/compare`。
 
-看到“真实抓取”“真实推送”“删除”“停止进程”等副作用说明时，不要在不理解后果时点击执行。完整 31 条接口说明见 `docs/API_REFERENCE.md`。
+看到“真实抓取”“真实推送”“删除”“停止进程”等副作用说明时，不要在不理解后果时点击执行。完整 50 条接口说明见 `docs/API_REFERENCE.md`。
 
 ---
 
@@ -882,10 +1003,10 @@ Swagger 页面操作：
 
 ### 16.1 最稳妥的备份方法
 
-1. 运行 `python -m bidpilot stop`，确认服务已停止。
+1. 运行启动画面打印的准确 `.venv ... -m bidpilot stop` 命令，确认服务已停止。
 2. 用文件管理器复制整个 `data` 文件夹到安全位置。
 3. 复制 `outputs/reports`（如果需要保留历史 Word）。
-4. 给备份文件夹加日期，例如 `bidpilot-backup-2026-07-18`。
+4. 给备份文件夹加日期，例如 `bidpilot-backup-2026-07-19`。
 5. 不要把备份提交到 Git 或公开网盘。
 
 整个 `data` 文件夹包含：
@@ -893,7 +1014,8 @@ Swagger 页面操作：
 ```text
 data/bidpilot.db                  订阅、运行、结果、机会、配置
 data/secrets/runtime_config.key  解密敏感配置的本机密钥
-data/secrets/control.token       本机停服控制令牌，可重新生成
+data/secrets/source_auth.key     解密来源授权会话的本机密钥
+data/secrets/control.token       本机停服控制令牌，停服后可重新生成
 data/secrets/...                 可选授权会话
 ```
 
@@ -997,7 +1119,9 @@ worker 离线时订阅不会丢，但到期任务暂时无人执行。
 ### 17.9 stop 失败
 
 - 确认在同一项目目录运行；
-- 确认服务是通过 `python -m bidpilot serve` 启动；
+- 不要把启动时的 `.venv` Python 换成系统裸 `python`；直接复制启动画面打印的完整停止命令；
+- 运行 `status`，核对显示的数据库、报告目录、控制目录、版本和端口；
+- 确认服务是通过 `bidpilot serve` 启动，而不是原始 `uvicorn`；
 - 若用原始 `uvicorn ...`，回到该终端按 `Ctrl+C`；
 - 若用 Docker，运行 `docker compose down`；
 - 不要根据旧 `server.json` 手动强杀 PID，因为 PID 可能已被其他进程复用。
@@ -1007,7 +1131,7 @@ worker 离线时订阅不会丢，但到期任务暂时无人执行。
 停止旧服务，或改用：
 
 ```text
-python -m bidpilot serve --port 8010
+{PY} -m bidpilot serve --port 8010
 ```
 
 如果你不知道占用者是什么，不要随意结束系统进程。
@@ -1123,23 +1247,23 @@ python -m bidpilot serve --port 8010
 
 ## 23. 命令速查表
 
-以下命令都应在项目目录运行。若没有激活虚拟环境，把 `python` 换成 Windows 的 `.venv\Scripts\python.exe` 或 macOS/Linux 的 `.venv/bin/python`。
+以下命令都应在项目目录运行。表中的 `{PY}` 必须替换为：Windows 的 `.venv\Scripts\python.exe`，或 macOS/Linux 的 `.venv/bin/python`。如果 Windows 解释器完整路径含空格，在 PowerShell 中应写成 `& "C:\...\.venv\Scripts\python.exe"`。这样启动、状态、停止和重启一定使用同一套程序，不会误调用系统旧版 Python。
 
 | 目的 | 命令 |
 |---|---|
 | 第一次安装 | `python bootstrap.py` |
-| 查看帮助 | `python -m bidpilot --help` |
-| 启动 Web + 内嵌 worker | `python -m bidpilot serve` |
-| 指定端口启动 | `python -m bidpilot serve --port 8010` |
-| 查看状态 | `python -m bidpilot status` |
-| 优雅停止 | `python -m bidpilot stop` |
-| 重启 | `python -m bidpilot restart` |
-| 命令行解析 | `python -m bidpilot parse "最近1个月深圳服务器"` |
-| 命令行执行 | `python -m bidpilot run "最近1个月深圳服务器"` |
-| 查看来源 | `python -m bidpilot sources` |
-| 独立 worker | `python -m bidpilot worker` |
-| 授权千里马 | `python -m bidpilot auth qianlima` |
-| 导出 OpenAPI | `python -m bidpilot openapi` |
+| 查看帮助 | `{PY} -m bidpilot --help` |
+| 启动 Web + 内嵌 worker | `{PY} -m bidpilot serve` |
+| 指定端口启动 | `{PY} -m bidpilot serve --port 8010` |
+| 查看状态 | `{PY} -m bidpilot status` |
+| 优雅停止 | `{PY} -m bidpilot stop` |
+| 重启 | `{PY} -m bidpilot restart` |
+| 命令行解析 | `{PY} -m bidpilot parse "最近1个月深圳服务器"` |
+| 命令行执行 | `{PY} -m bidpilot run "最近1个月深圳服务器"` |
+| 查看来源 | `{PY} -m bidpilot sources` |
+| 独立 worker | `{PY} -m bidpilot worker` |
+| 授权千里马 | `{PY} -m bidpilot auth qianlima` |
+| 导出 OpenAPI | `{PY} -m bidpilot openapi` |
 | Docker 后台启动 | `docker compose up -d --build` |
 | Docker 状态 | `docker compose ps` |
 | Docker 日志 | `docker compose logs -f` |

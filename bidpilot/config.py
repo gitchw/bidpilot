@@ -7,6 +7,8 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bidpilot.private_files import harden_private_path
+
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from BIDPILOT_* environment variables."""
@@ -28,6 +30,7 @@ class Settings(BaseSettings):
     worker_heartbeat_ttl: int = Field(default=30, ge=5, le=600)
 
     data_dir: Path = Path("data")
+    control_dir: Path = Path("data")
     report_dir: Path = Path("outputs/reports")
     database_path: Path = Path("data/bidpilot.db")
 
@@ -88,9 +91,11 @@ class Settings(BaseSettings):
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.control_dir.mkdir(parents=True, exist_ok=True)
         self.report_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.qianlima_cookie_path.parent.mkdir(parents=True, exist_ok=True)
+        harden_private_path(self.qianlima_cookie_path.parent, directory=True)
 
     def load_qianlima_cookie(self) -> str:
         if self.qianlima_cookie.strip():

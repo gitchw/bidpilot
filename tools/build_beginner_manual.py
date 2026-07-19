@@ -39,10 +39,10 @@ class ScreenshotSpec:
 
 
 SCREENSHOTS = {
-    "6. 网页六个区域": ScreenshotSpec(
+    "6. 网页七个区域": ScreenshotSpec(
         "01-home.png",
-        "图 1  情报检索首页：输入自然语言、选择交付方式，再解析或执行",
-        "标擎 BidPilot 情报检索首页",
+        "图 1  v0.7.0 情报检索首页：七个业务入口、自然语言任务和系统在线状态",
+        "标擎 BidPilot v0.7.0 情报检索首页与七个业务入口",
     ),
     "9. 网页配置模型：逐字段解释": ScreenshotSpec(
         "02-config.png",
@@ -54,9 +54,29 @@ SCREENSHOTS = {
         "图 3  订阅中心：查看 worker、下次执行、最近运行和管理操作",
         "标擎 BidPilot 订阅中心",
     ),
+    "12. 机会工作台、买方雷达与决策中心": ScreenshotSpec(
+        "04-opportunities.png",
+        "图 4  我的机会：按项目管理阶段、负责人、下一步、归档和删除",
+        "标擎 BidPilot 我的机会项目工作台",
+    ),
+    "12.6 买方雷达：从已有证据找到值得长期关注的单位": ScreenshotSpec(
+        "05-buyers.png",
+        "图 5  买方雷达：只聚合本机真实公告并创建采购单位锁定监控",
+        "标擎 BidPilot 买方雷达与真实采购单位证据",
+    ),
+    "12.7 第一次使用决策中心": ScreenshotSpec(
+        "06-decision.png",
+        "图 6  决策中心：企业画像、证据约束适配判断、反馈和本轮追问",
+        "标擎 BidPilot 决策中心企业画像与证据智能",
+    ),
+    "13. 来源中心与授权边界": ScreenshotSpec(
+        "07-sources.png",
+        "图 7  来源中心：能力、健康趋势和用户可见授权生命周期",
+        "标擎 BidPilot 来源健康与网页授权中心",
+    ),
     "17.8 抓取结果为 0": ScreenshotSpec(
-        "04-zero-results.png",
-        "图 4  零结果诊断：扫描、候选、排除原因、覆盖缺口和安全建议",
+        "08-zero-results.png",
+        "图 8  零结果诊断：扫描、候选、排除原因、覆盖缺口和安全建议",
         "标擎 BidPilot 零结果原因诊断页面",
     ),
 }

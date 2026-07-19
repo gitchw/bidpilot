@@ -7,31 +7,35 @@ from datetime import UTC, datetime
 from typing import Any
 
 from bidpilot.config import Settings
+from bidpilot.private_files import harden_private_path
 
 
 class ControlPlane:
     """Local token and runtime state used for safe cross-platform lifecycle commands."""
 
     def __init__(self, settings: Settings):
-        self.token_path = settings.data_dir / "secrets" / "control.token"
-        self.state_path = settings.data_dir / "runtime" / "server.json"
+        self.token_path = settings.control_dir / "secrets" / "control.token"
+        self.state_path = settings.control_dir / "runtime" / "server.json"
 
     def ensure_token(self) -> str:
-        if self.token_path.exists():
-            return self.token_path.read_text(encoding="utf-8").strip()
         self.token_path.parent.mkdir(parents=True, exist_ok=True)
+        harden_private_path(self.token_path.parent, directory=True)
+        if self.token_path.exists():
+            harden_private_path(self.token_path, directory=False)
+            return self.token_path.read_text(encoding="utf-8").strip()
         token = secrets.token_urlsafe(48)
         try:
             with self.token_path.open("x", encoding="utf-8") as handle:
                 handle.write(token)
-            self.token_path.chmod(0o600)
         except FileExistsError:
             token = self.token_path.read_text(encoding="utf-8").strip()
+        harden_private_path(self.token_path, directory=False)
         return token
 
     def read_token(self) -> str | None:
         if not self.token_path.exists():
             return None
+        harden_private_path(self.token_path, directory=False)
         token = self.token_path.read_text(encoding="utf-8").strip()
         return token or None
 

@@ -43,6 +43,7 @@ class FakeContext:
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
+        control_dir=tmp_path / "control",
         database_path=tmp_path / "data" / "bidpilot.db",
         report_dir=tmp_path / "reports",
         embedded_worker=False,

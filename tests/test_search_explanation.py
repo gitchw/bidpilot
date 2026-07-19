@@ -52,6 +52,7 @@ class RejectionFixtureSource(SourceAdapter):
 def make_settings(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
+        control_dir=tmp_path / "control",
         report_dir=tmp_path / "reports",
         database_path=tmp_path / "data" / "test.db",
         request_interval=0.1,

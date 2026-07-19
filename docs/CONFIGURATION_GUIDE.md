@@ -1,5 +1,9 @@
 # 标擎 BidPilot 配置中心指南
 
+版本：v0.7.0
+
+更新时间：2026-07-19
+
 ## 1. 推荐方式：网页配置
 
 启动服务后打开 `http://127.0.0.1:8000`，进入“配置中心”。所有模型和推送通道都可直接在网页填写，点击“保存全部配置”后立即生效，不需要编辑 `.env`，也不需要重启服务。
@@ -25,7 +29,7 @@
 - 企业微信 Webhook；
 - 通用 Webhook 与 Bearer Token。
 
-首次保存敏感值时，系统在 `data/secrets/runtime_config.key` 生成本机 Fernet 密钥，以仅当前用户可读为目标设置文件权限，再把密文写入 SQLite。API 和网页只返回“已配置/未配置”，不会回显原文。
+首次保存敏感值时，系统在 `data/secrets/runtime_config.key` 生成本机 Fernet 密钥，再把密文写入 SQLite。Windows 会移除 `Everyone`、`Authenticated Users` 和内置普通用户组的继承读取权限，只保留当前用户；macOS/Linux 使用目录 `0700`、密钥文件 `0600`。权限无法安全收紧时程序会明确失败，不会悄悄留下可被其他本机用户读取的密钥。API 和网页只返回“已配置/未配置”，不会回显原文。
 
 备份时必须同时备份数据库和密钥文件，否则恢复后无法解密已有凭据：
 
@@ -71,6 +75,15 @@ data/secrets/runtime_config.key
 - 超时：3～120 秒，默认 30 秒。
 - 意图辅助模式：`auto`（推荐，只在低置信/缺失/冲突时调用）、`off`（完全关闭意图模型）、`always`（每次复核，但高置信规则字段仍锁定）。
 - 意图置信阈值：0.50～0.99，默认 0.85。阈值越高越容易触发模型，调用次数与费用也可能增加；阈值不会放宽本地校验。
+- AI 检索规划：`auto` 允许模型建议受控扩词和来源优先级；`off` 只用本地词典。模型不能生成公告。
+- 最多检索轮次：1～2；推荐 2，即首轮后仅在存在可测覆盖缺口时补搜一轮。
+- 每来源查询预算：1～5，推荐 2；控制支持关键词来源最多执行几个查询变体，避免无界调用。
+- AI 边界复核：只复核已经通过日期、地域、公告类型和排除词硬过滤的主题边界候选；关闭后字面未命中项保守拒绝。
+- 语义接受阈值：0.50～0.99，默认 0.82；只影响边界主题判定，不能放宽硬过滤。
+- AI 情报简报：`auto/off`；关闭或失败时仍生成确定性摘要和建议。
+- 简报证据上限：3～25，默认 12；只决定送给模型的最高优先证据数量，不删除其余结果。
+- 企业适配 AI 复核：`auto/off`；本地画像计分和推荐始终执行。
+- 适配复核证据上限：3～25，默认 15；超出窗口的结果继续使用本地规则逐条判断。
 
 系统会在基础地址后调用 `/chat/completions`；如果用户直接填了以 `/chat/completions` 结尾的完整端点，则不会重复拼接。请求主体使用标准 `model`、`messages`、`temperature` 和 `max_tokens` 字段，响应需至少包含 `choices[0].message.content`。可参考 [OpenAI Chat Completions API](https://developers.openai.com/api/reference/resources/chat)。
 
@@ -87,7 +100,20 @@ data/secrets/runtime_config.key
 
 意图模型只收到自然语言原句、规则基线、当前时间、允许修复字段和 schema；不会收到抓取到的标讯正文、机会备注、订阅历史、API Key 或 Webhook。若模型服务位于云端，原句会离开本机，请先确认其隐私政策；敏感查询可把模式设为 `off`。
 
-模型还有独立的“证据约束摘要”用途：它只在任务抓取阶段对证据生成摘要，并受事实回指门控。意图解析成功不代表摘要一定使用模型，反之亦然。
+### 检索规划、二轮补搜与语义复核
+
+1. 本地规划器先生成主题、同义词、来源能力和查询预算；模型只能提交 schema 允许的查询词与来源优先级。
+2. 首轮结束后，系统根据来源是否支持关键词、是否授权、扫描/候选/保留数量和区域能力计算缺口；只有缺口存在且最多轮次为 2 才补搜。
+3. 两轮共享已访问 URL 集合，避免重复抓取；网页展示每轮查询词、来源调用和数量变化。
+4. 日期、地域、公告类型与排除词永远先由本地硬过滤。模型只能对主题相关性边界作接受/拒绝建议，并必须引用当前候选证据。
+5. 模型超时、批量 JSON 不完整、未知候选或解释不合规时，边界候选保守回退，本轮其他来源继续。
+
+### 情报简报、企业适配与证据追问
+
+- 情报简报只使用本轮可信 E 编号，未知引用会让整份模型简报失效；标题、采购人、日期、地域、阶段与链接由本地回填。
+- 企业适配只允许模型识别画像语义命中与逐字证据；本地计算基础分、反馈调整、最终建议和硬风险。
+- 证据追问仅在用户点击回答后发送问题与本轮有界固定证据；结构化字段由本地快照回填，只有正文片段允许模型逐字选择。
+- 不发送订阅历史、机会负责人/备注、渠道地址、API Key、Cookie 或模型原始响应。
 
 ### 模型失败时的行为
 
@@ -97,6 +123,9 @@ data/secrets/runtime_config.key
 - 模型超时、HTTP 错误或格式异常：自动回退到证据抽取；
 - 模型摘要出现证据中不存在的数字：拒绝该摘要并回退；
 - 模型配置保存后：后续运行立即使用，无需重启。
+- 检索规划失败：继续使用本地规划；二轮补搜仍受既定预算控制。
+- 语义复核失败：边界候选保守拒绝，已通过确定性过滤的结果不受影响。
+- 情报简报或适配复核失败：返回明确回退状态和本地结果，不把失败伪装成模型结论。
 
 ## 4. 飞书配置
 
@@ -191,16 +220,28 @@ BIDPILOT_LLM_API_KEY=
 BIDPILOT_LLM_MODEL=
 BIDPILOT_INTENT_LLM_MODE=auto
 BIDPILOT_INTENT_LLM_CONFIDENCE_THRESHOLD=0.85
+BIDPILOT_RETRIEVAL_LLM_MODE=auto
+BIDPILOT_RETRIEVAL_MAX_ROUNDS=2
+BIDPILOT_RETRIEVAL_QUERY_BUDGET_PER_SOURCE=2
+BIDPILOT_RETRIEVAL_SEMANTIC_REVIEW=true
+BIDPILOT_RETRIEVAL_SEMANTIC_THRESHOLD=0.82
+BIDPILOT_RETRIEVAL_SEMANTIC_CANDIDATE_LIMIT=12
+BIDPILOT_INTELLIGENCE_BRIEF_MODE=auto
+BIDPILOT_INTELLIGENCE_BRIEF_MAX_RECORDS=12
+BIDPILOT_DECISION_ASSESSMENT_MODE=auto
+BIDPILOT_DECISION_ASSESSMENT_MAX_RECORDS=15
+BIDPILOT_CONTROL_DIR=data
 BIDPILOT_FEISHU_WEBHOOK_URL=
 BIDPILOT_SMTP_HOST=
 ...
 ```
 
-使用纯 Python 启动，Windows、macOS、Linux 命令一致：
+使用纯 Python 启动；未激活虚拟环境时必须使用项目 `.venv` 中的解释器。`BIDPILOT_CONTROL_DIR` 默认保持为项目 `data`，即使业务数据库迁移到别处，普通 `status/stop/restart` 也能发现服务：
 
 ```bash
 python bootstrap.py
-python -m bidpilot serve
+.venv\Scripts\python.exe -m bidpilot serve        # Windows
+.venv/bin/python -m bidpilot serve                 # macOS / Linux
 ```
 
 ## 10. 故障排查

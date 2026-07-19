@@ -1,5 +1,7 @@
 # 标擎 BidPilot
 
+当前稳定版本：**v0.7.0** · 默认本机地址：<http://127.0.0.1:8000>
+
 标擎是一个证据优先的招投标情报 Agent：把中文自然语言编译成可审计的检索或长期订阅任务，并从真实来源采集、筛选、去重、生成 Word 报告，再按用户选择的渠道投递。
 
 项目面向 2026 AI 先锋未来人才大赛超聚变“招投标信息聚合工具”命题，但按可长期运行的真实工程建设，不依赖 Windows 计划任务或 PowerShell 服务脚本。
@@ -67,22 +69,34 @@ python bootstrap.py --dev
 
 打开 <http://127.0.0.1:8000>，API 文档位于 <http://127.0.0.1:8000/docs>。
 
-常用命令：
+下面用 `{PY}` 表示当前项目解释器：Windows 为 `.venv\Scripts\python.exe`，macOS/Linux 为 `.venv/bin/python`。常用命令：
 
 ```text
-python -m bidpilot parse "最近1个月江苏服务器招标信息，每天9点发送"
-python -m bidpilot run "最近1个月江苏服务器招标信息"
-python -m bidpilot status
-python -m bidpilot stop
-python -m bidpilot restart
-python -m bidpilot sources
-python -m bidpilot worker
-python -m bidpilot openapi
+{PY} -m bidpilot parse "最近1个月江苏服务器招标信息，每天9点发送"
+{PY} -m bidpilot run "最近1个月江苏服务器招标信息"
+{PY} -m bidpilot status
+{PY} -m bidpilot stop
+{PY} -m bidpilot restart
+{PY} -m bidpilot sources
+{PY} -m bidpilot worker
+{PY} -m bidpilot openapi
 ```
 
-如未激活虚拟环境，请把命令中的 `python` 换成上面的平台对应解释器路径。
+如未激活虚拟环境，生命周期命令必须和启动使用同一个 `.venv` 解释器：
 
-`serve` 是前台服务：启动它的终端窗口需要保持打开。停止时可在该窗口按 `Ctrl+C`，也可在另一个终端运行 `python -m bidpilot stop`。`stop` 使用本机控制令牌请求优雅退出，不按 PID 强杀进程；`restart` 会先停止旧服务，再在当前终端前台启动。完整到逐点击级别的说明见 [零基础操作说明书](docs/BEGINNER_MANUAL.md)。
+```text
+# Windows
+.venv\Scripts\python.exe -m bidpilot status
+.venv\Scripts\python.exe -m bidpilot stop
+.venv\Scripts\python.exe -m bidpilot restart
+
+# macOS / Linux
+.venv/bin/python -m bidpilot status
+.venv/bin/python -m bidpilot stop
+.venv/bin/python -m bidpilot restart
+```
+
+`serve` 是前台服务：启动它的终端窗口需要保持打开。停止时可在该窗口按 `Ctrl+C`，也可在另一个终端运行启动画面打印的准确 `stop` 命令。服务会显示版本、数据库、报告目录和控制目录；`stop` 使用控制目录中的本机令牌优雅退出，不按 PID 强杀进程。业务数据库可迁移到其他目录，但控制记录默认固定在项目的 `data/`，所以正常情况下无需重复设置临时环境变量。完整到逐点击级别的说明见 [零基础操作说明书](docs/BEGINNER_MANUAL.md)。
 
 ## Docker Compose
 
@@ -158,7 +172,7 @@ python -m playwright install chromium
 python -m bidpilot auth qianlima
 ```
 
-登录会话仅保存到 `data/secrets/`，该目录已被 Git 忽略。
+登录会话仅保存到 `data/secrets/`，该目录已被 Git 忽略；Windows ACL 会收紧到当前用户，macOS/Linux 使用目录 `0700`、密钥文件 `0600`。
 
 ## 网页配置中心
 
@@ -166,6 +180,9 @@ python -m bidpilot auth qianlima
 
 - OpenAI-compatible API 地址、模型名、API Key 和超时；
 - 混合意图模式（关闭/自动/每次复核）和置信阈值；
+- AI 检索规划模式、最多检索轮次、每来源查询预算、语义复核开关与阈值；
+- AI 情报简报模式与单轮处理上限；
+- 企业适配判断模式与单轮处理上限；
 - 飞书群机器人与签名、飞书应用与接收 ID；
 - SMTP SSL/STARTTLS、发件人与多收件人；
 - 钉钉群机器人与加签；
@@ -198,7 +215,7 @@ node --check bidpilot/static/app.js
 
 - [零基础操作说明书](docs/BEGINNER_MANUAL.md)
 - [用户操作手册](docs/USER_GUIDE.md)
-- [API 参考：31 个操作逐条说明](docs/API_REFERENCE.md)
+- [API 参考：50 个操作逐条说明](docs/API_REFERENCE.md)
 - [配置中心指南](docs/CONFIGURATION_GUIDE.md)
 - [投递渠道与成功语义](docs/DELIVERY_CHANNELS.md)
 - [产品与验收范围](SPEC.md)

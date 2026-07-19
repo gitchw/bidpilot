@@ -5,6 +5,7 @@
 ## 1. 调用约定
 
 - 默认地址：`http://127.0.0.1:8000`。
+- 默认业务数据位于 `data/bidpilot.db`，报告位于 `outputs/reports`，生命周期控制记录位于 `data/runtime` 与 `data/secrets/control.token`。控制目录与可选业务数据目录解耦，避免迁移数据库后普通 `status/stop` 找不到服务。
 - 默认只监听本机，不内置多用户登录。公网发布必须在前置网关增加 TLS、身份认证、限流和审计。
 - JSON 请求应使用 `Content-Type: application/json`。
 - 日期使用 ISO 8601；调度时区默认是 `Asia/Shanghai`。
@@ -33,12 +34,12 @@
 
 ### `POST /api/v1/system/shutdown` — 优雅停止本机服务
 
-- 用途：只供跨平台命令 `python -m bidpilot stop` 调用，让当前可管理 Uvicorn 先停止接收新请求，再执行内嵌 worker 和数据库生命周期清理。
+- 用途：只供跨平台 `bidpilot stop` 命令调用，让当前可管理 Uvicorn 先停止接收新请求，再执行内嵌 worker 和数据库生命周期清理。未激活虚拟环境时，应使用启动画面打印的完整 `.venv` Python 命令。
 - 参数：无 JSON 请求体；必须从 `127.0.0.1`/`::1` 发起，并提供请求头 `X-BidPilot-Control-Token`。令牌位于本机 `data/secrets/control.token`，不应复制到网页、脚本仓库或远程主机。
 - 返回：HTTP 202 和 `{"accepted":true,"message":"已接收停止请求，正在完成清理"}`；返回后连接会在数秒内不可用，这是成功现象。
 - 副作用：停止 Web 进程及其内嵌长期任务 worker；不会删除 SQLite、报告、订阅、机会、投递账本或配置。
 - 错误：403 表示不是回环请求或控制令牌错误；409 表示服务由普通 `uvicorn ...` 启动、没有可控退出回调，此时必须在启动终端按 `Ctrl+C`。
-- 示例：日常用户不要手写令牌请求，直接运行 `python -m bidpilot stop`。系统不会在失败后按 PID 强杀未知进程。
+- 示例：日常用户不要手写令牌请求；在同一项目目录运行启动画面打印的准确命令，例如 Windows 的 `.venv\Scripts\python.exe -m bidpilot stop`。系统不会在失败后按 PID 强杀未知进程。
 
 ### `GET /api/v1/sources/status` — 来源运行状态
 
@@ -122,6 +123,7 @@
 - 返回：`TenderQuerySpec`、字段置信度、警告、`parser_version` 和 `resolution`。`resolution` 解释调用原因、模型状态、字段级接受/拒绝/锁定决定和耗时，不包含 API Key、端点或模型原文。
 - 副作用：不抓取、不生成报告、不创建订阅；`auto/always` 模式满足条件时，会把原问题、规则基线和当前时间发送给用户配置的模型服务。不会发送标讯正文、机会备注、订阅历史或密钥。
 - 错误：422 表示问题过短、规则日期/计划非法或 JSON 格式错误。模型超时、HTTP 错误、Markdown 包裹、额外字段或非法 JSON 不返回 502，而是在 `resolution.llm_status` 中披露并安全回退。
+- 示例：见下方 `curl`。它只解析意图，不会开始检索或创建长期任务。
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/intent/parse \
@@ -187,6 +189,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：`RunResult`，包含运行 ID、意图、记录、来源诊断、`search_explanation`、新增数、报告路径和投递回执。
 - 副作用：会真实访问公开/已授权来源、写数据库、可能生成 DOCX，并可能向外部通道发送。
 - 错误：422 请求非法；502 抓取、报告或投递失败。失败运行仍保存诊断。
+- 示例：请求体见下方 JSON；发送到 `POST /api/v1/runs` 后会立即执行一次真实任务。
 
 `diagnostics` 中每个来源都有三个容易混淆的数字：
 
@@ -359,6 +362,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：订阅 ID、解析规则、启用状态、下一次时间和最近状态。
 - 副作用：写订阅表；立即模式把首轮置为到期，由持久 worker 领取。
 - 错误：422，无法形成计划、通道未配置或字段非法。
+- 示例：将下方 JSON 发送到 `POST /api/v1/subscriptions`；`local` 表示只在本机报告中心保存结果。
 
 ```json
 {
@@ -395,6 +399,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：更新后的订阅。
 - 副作用：更新订阅和计划时间，不立即执行。
 - 错误：404 不存在；409 正在执行；422 规则或通道非法。
+- 示例：`curl -X PATCH http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id> -H "Content-Type: application/json" -d '{"name":"深圳充电桩工作日报","delivery_policy":"on_change"}'`。
 
 ### `POST /api/v1/subscriptions/{subscription_id}/run` — 手动运行订阅
 
@@ -403,6 +408,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：本轮 `RunResult`。
 - 副作用：真实抓取、写运行/标讯/报告，并可能外发；成功投递后才记账。
 - 错误：404 不存在；409 正在执行；502 本轮失败。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/run`。收到 409 时等待当前任务结束，不要并发重试。
 
 ### `POST /api/v1/subscriptions/{subscription_id}/pause` — 暂停
 
@@ -411,6 +417,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：`enabled=false` 的订阅。
 - 副作用：持久化修改启用状态。
 - 错误：404 不存在；409 正在执行。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/pause`。暂停不会删除历史报告或投递账本。
 
 ### `POST /api/v1/subscriptions/{subscription_id}/resume` — 恢复
 
@@ -419,6 +426,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：恢复后的订阅。
 - 副作用：修改启用状态和下一次时间。
 - 错误：404 不存在；409 正在执行；422 计划非法。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/resume -H "Content-Type: application/json" -d '{"run_immediately":false}'`。
 
 ### `DELETE /api/v1/subscriptions/{subscription_id}` — 删除
 
@@ -427,6 +435,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：`{"deleted": true}`。
 - 副作用：不可逆；重建同规则后可能再次推送历史版本。网页端要求二次点击。
 - 错误：404 不存在；409 正在执行。
+- 示例：`curl -X DELETE http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>`。删除前应先导出或查看运行日志与投递回执。
 
 ### `GET /api/v1/subscriptions/{subscription_id}/runs` — 运行日志
 
@@ -435,6 +444,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：按时间倒序的运行记录。
 - 副作用：无。
 - 错误：404 不存在；422 limit 非法。
+- 示例：`curl "http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/runs?limit=20"`。
 
 ### `GET /api/v1/subscriptions/{subscription_id}/deliveries` — 投递回执
 
@@ -443,6 +453,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：投递尝试列表，绝不包含凭据。
 - 副作用：无。
 - 错误：404 不存在。
+- 示例：`curl http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/deliveries`。
 
 ## 8. 机会工作台
 
@@ -453,6 +464,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：机会和当前最新项目记录。
 - 副作用：写机会表，但不覆盖已有人工跟进字段。
 - 错误：404，指定标讯版本不存在。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/opportunities -H "Content-Type: application/json" -d '{"canonical_id":"<canonical_id>","version_hash":"<version_hash>"}'`。两个值必须来自真实检索结果。
 
 ### `GET /api/v1/opportunities` — 筛选机会
 
@@ -461,6 +473,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：匹配机会及最新项目快照。
 - 副作用：无。
 - 错误：422，stage 非法。
+- 示例：`curl "http://127.0.0.1:8000/api/v1/opportunities?stage=following&search=充电桩"`。不传参数则列出全部机会。
 
 ### `GET /api/v1/opportunities/{opportunity_id}` — 机会详情
 
@@ -469,13 +482,16 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：`Opportunity`。
 - 副作用：无。
 - 错误：404，不存在。
+- 示例：`curl http://127.0.0.1:8000/api/v1/opportunities/<opportunity_id>`。
 
 ### `PATCH /api/v1/opportunities/{opportunity_id}` — 更新跟进
 
 - 用途：修改 `stage`、`owner`、`next_action_at`、`notes`、`tags`、`is_read`。
+- 请求：路径中的 `opportunity_id` 为机会卡片本地 ID；JSON 只需提交要修改的字段。`stage` 可为 `new/following/bidding/won/lost/archived`，`tags` 是字符串数组，`next_action_at` 使用 ISO 8601 时间或 null；不允许提交原始公告标题、采购人、评分或 URL。
 - 返回：更新后的机会。
 - 副作用：写人工跟进状态，不修改原始证据；后续公告刷新不覆盖人工字段。
 - 错误：404 不存在；422 枚举、日期或长度非法。
+- 示例：`curl -X PATCH http://127.0.0.1:8000/api/v1/opportunities/<opportunity_id> -H "Content-Type: application/json" -d '{"stage":"following","owner":"王同学","tags":["重点"],"is_read":true}'`。
 
 ### `DELETE /api/v1/opportunities/{opportunity_id}` — 删除工作台卡片
 
@@ -493,15 +509,18 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：按发布时间升序的 `TenderRecord`，每条保留原文 URL。
 - 副作用：无。
 - 错误：404，不存在。
+- 示例：`curl http://127.0.0.1:8000/api/v1/opportunities/<opportunity_id>/timeline`。
 
 ## 9. 配置中心
 
 ### `GET /api/v1/config` — 读取脱敏配置
 
 - 用途：读取模型和六类通道的非敏感字段与就绪状态。
+- 参数：无请求体、无查询参数，也不需要编辑令牌；该只读接口只接受本机服务当前可见配置。
 - 返回：`RuntimeConfigView`；敏感字段只有 `configured`。
 - 副作用：无。
 - 错误：数据库不可用时 500。
+- 示例：`curl http://127.0.0.1:8000/api/v1/config`。返回中的 `llm_api_key.configured=true` 只表示已保存，不会回显密钥。
 
 ### `POST /api/v1/config/edit-token` — 获取编辑令牌
 
@@ -510,6 +529,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：`edit_token`、`expires_in`；响应禁止缓存。
 - 副作用：只在当前进程内登记令牌，重启即失效。
 - 错误：通常无业务错误。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/config/edit-token`。只应在本机使用返回令牌，且不要写入日志或仓库。
 
 ### `PUT /api/v1/config` — 保存配置
 
@@ -519,6 +539,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：脱敏后的最新配置。
 - 副作用：写 `runtime_config`；敏感值用本机 Fernet 密钥加密后存入 SQLite。
 - 错误：403 令牌无效；422 未知字段、URL、端口、超时或枚举非法。
+- 示例：先获取编辑令牌，再将下方 JSON 发送到 `PUT /api/v1/config` 并设置请求头 `X-BidPilot-Config-Token: <token>`。
 
 ```json
 {
@@ -538,6 +559,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：成功、延迟和固定测试回复预览。
 - 副作用：向模型服务发送固定测试句，可能消耗极少量额度；不发送招标数据。
 - 错误：403 令牌；422 配置不完整；502 超时、HTTP 或响应格式错误。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/config/model/test -H "X-BidPilot-Config-Token: <token>"`。
 
 ### `POST /api/v1/config/channels/{channel}/test` — 通道测试
 
@@ -546,6 +568,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 返回：实际通道、消息、延迟和成功状态。
 - 副作用：真实外发；网页会在调用前二次确认。
 - 错误：403 令牌；422 通道未配置/不支持；502 网络、认证或平台响应失败。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/config/channels/feishu_webhook/test -H "X-BidPilot-Config-Token: <token>"`。该请求会向已配置飞书群真实发送一条测试消息。
 
 ## 10. 配置写入示例
 

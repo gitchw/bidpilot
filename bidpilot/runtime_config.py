@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from bidpilot.config import Settings
 from bidpilot.db import Database
+from bidpilot.private_files import harden_private_path
 
 SecretField = Literal[
     "llm_api_key",
@@ -280,17 +281,19 @@ class LocalSecretVault:
 
     def _fernet(self, *, create: bool) -> Fernet | None:
         if self.key_path.exists():
+            harden_private_path(self.key_path, directory=False)
             return Fernet(self.key_path.read_bytes().strip())
         if not create:
             return None
         self.key_path.parent.mkdir(parents=True, exist_ok=True)
+        harden_private_path(self.key_path.parent, directory=True)
         key = Fernet.generate_key()
         try:
             with self.key_path.open("xb") as handle:
                 handle.write(key)
-            self.key_path.chmod(0o600)
         except FileExistsError:
             key = self.key_path.read_bytes().strip()
+        harden_private_path(self.key_path, directory=False)
         return Fernet(key)
 
     def encrypt(self, value: str) -> str:

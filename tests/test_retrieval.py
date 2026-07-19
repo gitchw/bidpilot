@@ -19,6 +19,7 @@ NOW = datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 def make_settings(tmp_path: Path, **updates) -> Settings:
     values = {
         "data_dir": tmp_path / "data",
+        "control_dir": tmp_path / "control",
         "report_dir": tmp_path / "reports",
         "database_path": tmp_path / "data" / "test.db",
         "request_interval": 0.1,
@@ -337,3 +338,26 @@ def test_retrieval_benchmark_requires_three_improvements_and_no_broken_urls():
     failed = compare_with_baseline(baseline, current)
     assert failed["passed"] is False
     assert failed["criteria"]["all_evidence_urls_verified"] is False
+
+
+def test_ai_deployment_environment_contract_is_complete():
+    required_variables = {
+        "BIDPILOT_INTENT_LLM_MODE",
+        "BIDPILOT_INTENT_LLM_CONFIDENCE_THRESHOLD",
+        "BIDPILOT_RETRIEVAL_LLM_MODE",
+        "BIDPILOT_RETRIEVAL_MAX_ROUNDS",
+        "BIDPILOT_RETRIEVAL_QUERY_BUDGET_PER_SOURCE",
+        "BIDPILOT_RETRIEVAL_SEMANTIC_REVIEW",
+        "BIDPILOT_RETRIEVAL_SEMANTIC_THRESHOLD",
+        "BIDPILOT_RETRIEVAL_SEMANTIC_CANDIDATE_LIMIT",
+        "BIDPILOT_INTELLIGENCE_BRIEF_MODE",
+        "BIDPILOT_INTELLIGENCE_BRIEF_MAX_RECORDS",
+        "BIDPILOT_DECISION_ASSESSMENT_MODE",
+        "BIDPILOT_DECISION_ASSESSMENT_MAX_RECORDS",
+    }
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+    compose = Path("compose.yaml").read_text(encoding="utf-8")
+
+    for variable in required_variables:
+        assert f"{variable}=" in env_example, f".env.example 缺少 {variable}"
+        assert f"{variable}:" in compose, f"compose.yaml 未转发 {variable}"

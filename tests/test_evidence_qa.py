@@ -17,6 +17,7 @@ from bidpilot.service import BidPilotService, RunEvidenceNotReadyError
 def make_settings(tmp_path: Path, **updates) -> Settings:
     values = {
         "data_dir": tmp_path / "data",
+        "control_dir": tmp_path / "control",
         "report_dir": tmp_path / "reports",
         "database_path": tmp_path / "data" / "evidence-qa.db",
         "llm_base_url": "http://model.test/v1",
