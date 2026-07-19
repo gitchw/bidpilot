@@ -245,3 +245,11 @@
 - 清理旧版交付物：移除 v0.5 手册、候选渲染目录、旧零结果截图、孤立报告、`tmp/`、`.pytest_cache/`、`.ruff_cache/` 和工作区 `__pycache__`；保留真实数据库、密钥、34 份数据库引用报告和最终 v0.7.0 手册。
 - 最终工程门禁：`pytest` 172 passed、Ruff lint/format、Node `--check`、`compileall`、32 个 JSON、1 个 YAML、`pip check`、`git diff --check`、敏感密钥扫描、数据库/报告一致性检查全部通过。
 - 重新构建 `dist/bidpilot-0.7.0-py3-none-any.whl`（243,597 bytes，SHA-256 `7afba6acdb4045ca427900a38a09652c1dc8a81955ea890df5b2f488500f739a`）；隔离安装后确认 `bidpilot.__version__ == 0.7.0`、OpenAPI 操作数 50、静态前端资源存在，wheel 不包含数据库、报告或 secrets。
+
+## 2026-07-19 — v0.8.0 产品审计与验收契约
+
+- 完成网页配置、来源授权、AI/检索、通知调度与安全边界的分离只读审计；确认当前 57 个 Settings 字段中 36 个已网页化，主要缺口是高价值检索参数、脏字段保存、来源恢复、revision 和配置来源说明。
+- 定位千里马假成功/立即过期根因：旧登录入口、Cookie 扁平化、登录与检索环境切换、无账号探针、零结果误判和令牌轮换丢失；同时确认会员条款不允许把用户 Cookie 用于后台连续机器抓取。
+- 定位多渠道的结构性缺口：API、模型、SQLite、UI 和调度均为单 `delivery_channel`，投递失败会整轮重抓且 ledger 不含 channel；v0.8 必须使用渠道级持久 outbox 与账本。
+- 定位 AI P0：模型发现词可污染最终可信关键词、语义复核缺少逐字引句校验、行动数字可用子串绕过证据门、预览后执行会二次解析漂移。
+- 追加 F45-F52 和 v0.8.0 Sprint 硬门，所有功能保持 `pending`，只有实际实现、运行验证、文档更新、提交和推送后才能改为通过。
