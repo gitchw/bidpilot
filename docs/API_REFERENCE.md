@@ -1,6 +1,6 @@
 # 标擎 BidPilot API 参考（v0.7.0）
 
-本文档对应当前代码中的 50 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。每个接口均说明用途、输入、返回、副作用、常见错误和示例；“副作用”不是警告装饰，而是告诉调用者该请求是否会抓取外部站点、写数据、真实推送、打开可见浏览器或停止进程。
+本文档对应当前代码中的 52 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。每个接口均说明用途、输入、返回、副作用、常见错误和示例；“副作用”不是警告装饰，而是告诉调用者该请求是否会抓取外部站点、写数据、真实推送、打开可见浏览器或停止进程。
 
 ## 1. 调用约定
 
@@ -185,10 +185,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `POST /api/v1/runs` — 立即执行任务
 
 - 用途：解析问题、访问来源、过滤、去重、摘要和持久化。即时任务即使最终保留 0 条，也会生成包含诊断信息的 Word；长期订阅在无新增时是否生成/外发报告由通知策略决定。
-- 请求：`query`；`delivery_channel` 可为 `local`、`feishu_webhook`、`feishu_app`、`email`、`dingtalk_webhook`、`wecom_webhook`、`generic_webhook`。
-- 返回：`RunResult`，包含运行 ID、意图、记录、来源诊断、`search_explanation`、新增数、报告路径和投递回执。
-- 副作用：会真实访问公开/已授权来源、写数据库、可能生成 DOCX，并可能向外部通道发送。
-- 错误：422 请求非法；502 抓取、报告或投递失败。失败运行仍保存诊断。
+- 请求：`query` 必填；推荐用 `delivery_targets` 选择 1～10 个已配置目标，例如 `["local","email"]`。旧 `delivery_channel` 继续兼容并等价于单元素列表；同时提交时以列表为准，第一个目标回填到旧字段。
+- 返回：`RunResult` 除运行 ID、证据、来源诊断、`search_explanation`、新增数和报告路径外，还包含 `delivery_targets` 与逐目标 `delivery_receipts`；每条回执的 `outbox_id` 可直接用于死信重试。状态 `retrying` 表示已进入后台重试，`dead_letter` 表示达到上限待人工处理。
+- 副作用：真实访问公开/已授权来源并写数据库；报告记录、全部目标 Outbox 及各自公告集合先原子落库，之后才外发。每个目标只收到自己尚未确认的公告；一个渠道失败不会让成功渠道重发。
+- 错误：422 请求字段非法；502 表示意图、抓取、报告或持久入队在可靠投递点之前失败。单个外部渠道超时通常返回 HTTP 200、运行 `partial` 和目标 `retrying`，不会重新抓取。
 - 示例：请求体见下方 JSON；发送到 `POST /api/v1/runs` 后会立即执行一次真实任务。
 
 `diagnostics` 中每个来源都有三个容易混淆的数字：
@@ -208,7 +208,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ```json
 {
   "query": "最近1个月深圳充电桩招标信息",
-  "delivery_channel": "local"
+  "delivery_targets": ["local", "email"]
 }
 ```
 
@@ -347,19 +347,19 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `POST /api/v1/buyers/{buyer_id}/subscriptions` — 从真实买方创建精准监控
 
 - 用途：选择买方雷达中已经由本地公告证据确认的采购单位，创建长期监控任务。系统会把该单位写入不可由客户端伪造的 `spec.buyer_keywords` 精确过滤条件，并继续复用统一的混合意图解析、检索计划、来源授权、调度和增量投递账本。
-- 参数：路径中的 `buyer_id` 必须是上一条接口返回的 24 位小写十六进制本地哈希。JSON 包含 `name`（1～100 字）、带有“每天/每周/每月/未来某时刻”等明确计划的 `query`（2～500 字）、`delivery_channel`、`delivery_policy`（`always` 或 `on_change`）以及 `run_immediately`。客户端不得提交 `buyer_keywords` 改写买方身份。
+- 参数：路径中的 `buyer_id` 必须是上一条接口返回的 24 位小写十六进制本地哈希。JSON 包含 `name`（1～100 字）、带有“每天/每周/每月/未来某时刻”等明确计划的 `query`（2～500 字）、`delivery_targets`（1～10 个已配置目标；旧 `delivery_channel` 兼容）、`delivery_policy`（`always` 或 `on_change`）以及 `run_immediately`。客户端不得提交 `buyer_keywords` 改写买方身份。
 - 返回：标准 `Subscription`。重点检查 `spec.buyer_keywords` 是否只含所选采购单位；`spec.resolution.decisions` 中也会记录该字段由本地证据锁定，便于审计。
 - 副作用：会保存一条持久订阅；意图解析可能调用用户已配置的大模型。`run_immediately=true` 只将任务设为立即到期，持久 worker 领取后才会访问来源、生成报告并按配置投递。
 - 错误：404 表示该 `buyer_id` 不在当前本地雷达；422 表示字段非法、查询没有明确调度计划、投递通道未配置、客户端企图提交额外字段，或买方名称无法形成可靠查询。后续来源登录、网络或投递失败会写入该订阅的运行日志。
-- 示例：`POST /api/v1/buyers/0123456789abcdef01234567/subscriptions`，请求体可为 `{"name":"安徽大学采购监控","query":"每天9点汇总最近30天服务器采购公告","delivery_channel":"local","delivery_policy":"on_change","run_immediately":false}`。
+- 示例：`POST /api/v1/buyers/0123456789abcdef01234567/subscriptions`，请求体可为 `{"name":"安徽大学采购监控","query":"每天9点汇总最近30天服务器采购公告","delivery_targets":["local","email"],"delivery_policy":"on_change","run_immediately":false}`。
 
 ## 7. 长期订阅
 
 ### `POST /api/v1/subscriptions` — 创建订阅
 
-- 用途：保存每天、每周、每月或一次性未来计划；同规则同通道重复提交会复用原订阅。
-- 请求：`name`、`query`、`delivery_channel`、`delivery_policy`（`always`/`on_change`）、`run_immediately`。
-- 返回：订阅 ID、解析规则、启用状态、下一次时间和最近状态。
+- 用途：保存每天、每周、每月或一次性未来计划；同规则、同买方和同一有序目标列表重复提交会复用原订阅。
+- 请求：`name`、`query`、`delivery_targets`（1～10 个已配置目标）、`delivery_policy`（`always`/`on_change`）、`run_immediately`。旧 `delivery_channel` 仍可单独使用。
+- 返回：订阅 ID、`delivery_targets`、兼容 `delivery_channel`、解析规则、启用状态、下一次时间和最近状态。
 - 副作用：写订阅表；立即模式把首轮置为到期，由持久 worker 领取。
 - 错误：422，无法形成计划、通道未配置或字段非法。
 - 示例：将下方 JSON 发送到 `POST /api/v1/subscriptions`；`local` 表示只在本机报告中心保存结果。
@@ -368,7 +368,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 {
   "name": "深圳充电桩日报",
   "query": "每天9点汇总最近1个月深圳充电桩信息",
-  "delivery_channel": "local",
+  "delivery_targets": ["local", "email"],
   "delivery_policy": "always",
   "run_immediately": true
 }
@@ -394,10 +394,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 
 ### `PATCH /api/v1/subscriptions/{subscription_id}` — 编辑订阅
 
-- 用途：局部修改名称、规则、通道或无新增策略；改规则后重算下次时间，保留既有防重复账本。
-- 请求：只提交要改的 `name`、`query`、`delivery_channel`、`delivery_policy`。
-- 返回：更新后的订阅。
-- 副作用：更新订阅和计划时间，不立即执行。
+- 用途：局部修改名称、规则、多目标列表或无新增策略；改规则后重算下次时间，保留仍在使用目标的防重复账本。
+- 请求：只提交要改的 `name`、`query`、`delivery_targets`、兼容 `delivery_channel` 或 `delivery_policy`。
+- 返回：更新后的订阅，包括规范化后的全部目标。
+- 副作用：更新订阅和计划时间，不立即检索。被移除目标尚未发送的 pending、retrying、dead_letter 任务会转为 skipped 并保留取消审计；若该目标正在真实发送则返回 409，避免“页面显示取消但外部仍收到”。
 - 错误：404 不存在；409 正在执行；422 规则或通道非法。
 - 示例：`curl -X PATCH http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id> -H "Content-Type: application/json" -d '{"name":"深圳充电桩工作日报","delivery_policy":"on_change"}'`。
 
@@ -406,8 +406,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 用途：立即执行已保存订阅，并与后台 worker 租约互斥。
 - 参数：`subscription_id`；无请求体。
 - 返回：本轮 `RunResult`。
-- 副作用：真实抓取、写运行/标讯/报告，并可能外发；成功投递后才记账。
-- 错误：404 不存在；409 正在执行；502 本轮失败。
+- 副作用：真实抓取并先持久化报告与逐目标 Outbox，再分别发送；目标成功状态与该目标公告账本在同一 SQLite 事务提交。
+- 错误：404 不存在；409 正在执行；502 表示检索、报告或入队失败。单个渠道失败时运行返回 partial，该目标由 worker 后台重试。
 - 示例：`curl -X POST http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/run`。收到 409 时等待当前任务结束，不要并发重试。
 
 ### `POST /api/v1/subscriptions/{subscription_id}/pause` — 暂停
@@ -430,11 +430,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 
 ### `DELETE /api/v1/subscriptions/{subscription_id}` — 删除
 
-- 用途：永久删除订阅及其成功投递增量账本。
+- 用途：永久删除订阅、目标级/兼容增量账本和该订阅尚未发送的 Outbox；既有运行、报告与尝试审计按保留策略继续可查。
 - 参数：`subscription_id`。
 - 返回：`{"deleted": true}`。
-- 副作用：不可逆；重建同规则后可能再次推送历史版本。网页端要求二次点击。
-- 错误：404 不存在；409 正在执行。
+- 副作用：不可逆；待重试与死信任务一并取消，重建同规则后可能再次推送历史版本。网页端要求二次点击。
+- 错误：404 不存在；409 表示订阅正在检索，或某个目标已经进入外部发送，系统无法保证撤回。
 - 示例：`curl -X DELETE http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>`。删除前应先导出或查看运行日志与投递回执。
 
 ### `GET /api/v1/subscriptions/{subscription_id}/runs` — 运行日志
@@ -454,6 +454,26 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 - 副作用：无。
 - 错误：404 不存在。
 - 示例：`curl http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/deliveries`。
+
+### `GET /api/v1/subscriptions/{subscription_id}/delivery-outbox` — 逐目标持久投递队列
+
+- 用途：一行查看“一次运行 × 一个交付目标”的最终状态，区分尚未领取、正在发送、等待重试、已经成功、死信和按策略跳过；排查问题时不必从多条尝试日志猜测当前结论。
+- 参数：路径参数 `subscription_id`；可选查询参数 `limit` 范围 1～200，默认 100。此接口没有请求体。
+- 返回：按创建时间倒序返回 `id`、`run_id`、`channel`、`status`、`attempt_count`、`max_attempts`、`next_attempt_at`、`item_count`、`report_path`、`last_message`、脱敏 `last_error`、`external_id` 和租约审计字段。`retrying` 表示 worker 会自动再试；`dead_letter` 表示达到上限，必须先修复配置再手动重试。
+- 副作用：无；只读 SQLite，不发送消息、不占用租约、不改变重试时间。
+- 错误：404 表示订阅不存在；422 表示 `limit` 不是整数。空数组表示该订阅尚未产生投递任务，不等于接口故障。
+- 示例：`curl "http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/delivery-outbox?limit=100"`。
+
+### `POST /api/v1/delivery-outbox/{outbox_id}/retry` — 重试单个死信目标
+
+- 用途：修复 Webhook、邮箱或模型之外的渠道配置后，只重新排队指定的失败目标；不会重新抓取网站，也不会再次发送同一运行中已经成功的其他渠道。
+- 路径参数：`outbox_id` 必须来自上一个接口，且当前 `status` 必须是 `dead_letter`；无 JSON 请求体。局域网访问时仍遵循当前 `admin_token` 或 `trusted_lan` 写操作策略。
+- 返回：重新排队后的 outbox 行，通常为 `status=retrying`、`attempt_count=0`、`next_attempt_at` 为当前时间。HTTP 返回成功只表示“已经持久入队”，真实发送结果应继续查看本接口列表或投递回执。
+- 副作用：清除这个死信目标的旧租约和错误并重新入队；不删除历史尝试、不修改成功目标的目标级账本、不立即在 HTTP 请求线程外发。
+- 错误：404 表示 ID 不存在；409 表示不是死信或状态刚被其他 worker 改变；422 表示渠道仍未配置，或原 Word 报告已经被手工删除，此时应先修复配置或重新运行订阅。
+- 示例：`curl -X POST http://127.0.0.1:8000/api/v1/delivery-outbox/<outbox_id>/retry`。不要对 `retrying` 连续点击；worker 会按持久队列处理。
+
+> 可靠性边界：数据库内“成功状态 + 目标级公告账本”原子提交，因此已经被 BidPilot 确认成功的目标不会因其他目标失败而再次发送。但普通 Webhook、SMTP 和多数消息平台没有统一幂等键；如果外部平台已经接收，进程却在写回 SQLite 前崩溃，租约到期后的重试仍可能产生一条重复消息。这是诚实的 `at-least-once` 外部投递，不应宣传为端到端 exactly-once。报告名、运行 ID、时间和逐目标审计可用于识别这一极小的不确定窗口。
 
 ## 8. 机会工作台
 

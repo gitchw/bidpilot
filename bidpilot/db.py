@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from bidpilot.models import DeliveryPolicy, RunStatus, TenderQuerySpec
 
@@ -87,6 +88,7 @@ class Database:
             raw_query TEXT NOT NULL,
             spec_json TEXT NOT NULL,
             delivery_channel TEXT NOT NULL DEFAULT 'local',
+            delivery_targets_json TEXT NOT NULL DEFAULT '[]',
             delivery_policy TEXT NOT NULL DEFAULT 'always',
             enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
@@ -127,6 +129,44 @@ class Database:
             message TEXT NOT NULL,
             external_id TEXT,
             created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS delivery_target_ledger (
+            subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+            channel TEXT NOT NULL,
+            canonical_id TEXT NOT NULL,
+            version_hash TEXT NOT NULL,
+            delivered_at TEXT NOT NULL,
+            report_path TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (subscription_id, channel, canonical_id, version_hash)
+        );
+        CREATE TABLE IF NOT EXISTS delivery_outbox (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+            subscription_id TEXT REFERENCES subscriptions(id) ON DELETE CASCADE,
+            channel TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            report_path TEXT,
+            new_count INTEGER NOT NULL DEFAULT 0,
+            subscription_name TEXT,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            max_attempts INTEGER NOT NULL DEFAULT 5,
+            next_attempt_at TEXT,
+            lease_owner TEXT,
+            lease_token TEXT,
+            lease_until TEXT,
+            last_error TEXT,
+            last_message TEXT,
+            external_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            delivered_at TEXT,
+            UNIQUE (run_id, channel)
+        );
+        CREATE TABLE IF NOT EXISTS delivery_outbox_items (
+            outbox_id TEXT NOT NULL REFERENCES delivery_outbox(id) ON DELETE CASCADE,
+            canonical_id TEXT NOT NULL,
+            version_hash TEXT NOT NULL,
+            PRIMARY KEY (outbox_id, canonical_id, version_hash)
         );
         CREATE TABLE IF NOT EXISTS workers (
             id TEXT PRIMARY KEY,
@@ -214,6 +254,12 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_subscriptions_due ON subscriptions(enabled, next_run_at);
         CREATE INDEX IF NOT EXISTS idx_delivery_attempts_run ON delivery_attempts(run_id);
+        CREATE INDEX IF NOT EXISTS idx_delivery_outbox_due
+          ON delivery_outbox(status, next_attempt_at, lease_until);
+        CREATE INDEX IF NOT EXISTS idx_delivery_outbox_subscription
+          ON delivery_outbox(subscription_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_delivery_outbox_items_key
+          ON delivery_outbox_items(canonical_id, version_hash);
         CREATE INDEX IF NOT EXISTS idx_opportunities_stage ON opportunities(stage, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_opportunities_next_action ON opportunities(next_action_at);
         CREATE INDEX IF NOT EXISTS idx_source_auth_test ON source_authorizations(last_test_at DESC);
@@ -236,6 +282,9 @@ class Database:
             self._ensure_column(
                 conn, "subscriptions", "delivery_policy", "TEXT NOT NULL DEFAULT 'always'"
             )
+            self._ensure_column(
+                conn, "subscriptions", "delivery_targets_json", "TEXT NOT NULL DEFAULT '[]'"
+            )
             self._ensure_column(conn, "subscriptions", "updated_at", "TEXT")
             self._ensure_column(conn, "subscriptions", "last_status", "TEXT")
             self._ensure_column(conn, "subscriptions", "last_message", "TEXT")
@@ -254,6 +303,32 @@ class Database:
             self._ensure_column(conn, "runs", "retrieval_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "brief_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "assessment_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "delivery_outbox", "last_message", "TEXT")
+            legacy_target_rows = conn.execute(
+                """
+                SELECT id, delivery_channel FROM subscriptions
+                WHERE delivery_targets_json IS NULL OR delivery_targets_json='' OR delivery_targets_json='[]'
+                """
+            ).fetchall()
+            conn.executemany(
+                "UPDATE subscriptions SET delivery_targets_json=? WHERE id=?",
+                [
+                    (json.dumps([row["delivery_channel"] or "local"]), row["id"])
+                    for row in legacy_target_rows
+                ],
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO delivery_target_ledger(
+                  subscription_id, channel, canonical_id, version_hash,
+                  delivered_at, report_path
+                )
+                SELECT l.subscription_id, COALESCE(NULLIF(s.delivery_channel, ''), 'local'),
+                  l.canonical_id, l.version_hash, l.delivered_at, l.report_path
+                FROM delivery_ledger AS l
+                JOIN subscriptions AS s ON s.id=l.subscription_id
+                """
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_subscription "
                 "ON runs(subscription_id, started_at DESC)"
@@ -679,6 +754,107 @@ class Database:
                 [(subscription_id, c, v, now, report_path) for c, v in keys],
             )
 
+    def undelivered_keys_by_target(
+        self,
+        subscription_id: str,
+        targets: list[str],
+        keys: list[tuple[str, str]],
+    ) -> dict[str, set[tuple[str, str]]]:
+        if not keys or not targets:
+            return {target: set() for target in targets}
+        placeholders = ",".join("?" for _ in targets)
+        with self.connection() as conn:
+            delivered_rows = conn.execute(
+                f"""
+                SELECT channel, canonical_id, version_hash
+                FROM delivery_target_ledger
+                WHERE subscription_id=? AND channel IN ({placeholders})
+                """,
+                (subscription_id, *targets),
+            ).fetchall()
+            reserved_rows = conn.execute(
+                f"""
+                SELECT o.channel, i.canonical_id, i.version_hash
+                FROM delivery_outbox AS o
+                JOIN delivery_outbox_items AS i ON i.outbox_id=o.id
+                WHERE o.subscription_id=? AND o.channel IN ({placeholders})
+                  AND o.status IN ('pending','sending','retrying','dead_letter','succeeded')
+                """,
+                (subscription_id, *targets),
+            ).fetchall()
+        delivered = {
+            (row["channel"], row["canonical_id"], row["version_hash"])
+            for row in [*delivered_rows, *reserved_rows]
+        }
+        return {
+            target: {key for key in keys if (target, key[0], key[1]) not in delivered}
+            for target in targets
+        }
+
+    def undelivered_keys_for_targets(
+        self,
+        subscription_id: str,
+        targets: list[str],
+        keys: list[tuple[str, str]],
+    ) -> set[tuple[str, str]]:
+        """Compatibility helper returning the union missing from any target."""
+        by_target = self.undelivered_keys_by_target(subscription_id, targets, keys)
+        return set().union(*by_target.values()) if by_target else set()
+
+    def mark_target_delivered(
+        self,
+        subscription_id: str,
+        channel: str,
+        keys: list[tuple[str, str]],
+        report_path: str | None,
+    ) -> None:
+        if not keys:
+            return
+        now = utcnow_iso()
+        with self.connection() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO delivery_target_ledger(
+                  subscription_id, channel, canonical_id, version_hash, delivered_at, report_path
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                [
+                    (subscription_id, channel, canonical_id, version_hash, now, report_path or "")
+                    for canonical_id, version_hash in keys
+                ],
+            )
+
+    def open_delivery_targets(self, subscription_id: str) -> set[str]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT channel FROM delivery_outbox
+                WHERE subscription_id=?
+                  AND status IN ('pending','sending','retrying','dead_letter')
+                """,
+                (subscription_id,),
+            ).fetchall()
+        return {row["channel"] for row in rows}
+
+    def delivery_outbox_run_ids_for_targets(
+        self,
+        subscription_id: str,
+        targets: list[str],
+    ) -> list[str]:
+        if not targets:
+            return []
+        placeholders = ",".join("?" for _ in targets)
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT run_id FROM delivery_outbox
+                WHERE subscription_id=? AND channel IN ({placeholders})
+                  AND status IN ('pending','sending','retrying','dead_letter')
+                """,
+                (subscription_id, *targets),
+            ).fetchall()
+        return [row["run_id"] for row in rows]
+
     def create_subscription(
         self,
         subscription_id: str,
@@ -687,15 +863,17 @@ class Database:
         delivery_channel: str,
         next_run_at: datetime | None,
         delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
+        delivery_targets: list[str] | None = None,
     ) -> None:
+        targets = delivery_targets or [delivery_channel or "local"]
         now = utcnow_iso()
         with self.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO subscriptions(
-                  id, name, raw_query, spec_json, delivery_channel, delivery_policy,
-                  created_at, updated_at, next_run_at
-                ) VALUES(?,?,?,?,?,?,?,?,?)
+                  id, name, raw_query, spec_json, delivery_channel, delivery_targets_json,
+                  delivery_policy, created_at, updated_at, next_run_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     subscription_id,
@@ -703,6 +881,7 @@ class Database:
                     spec.raw_query,
                     spec.model_dump_json(),
                     delivery_channel,
+                    json.dumps(targets, ensure_ascii=False),
                     delivery_policy.value,
                     now,
                     now,
@@ -778,7 +957,9 @@ class Database:
         next_run_at: datetime | None = None,
         update_next_run: bool = False,
         delivery_channel: str | None = None,
+        delivery_targets: list[str] | None = None,
         delivery_policy: DeliveryPolicy | None = None,
+        cancel_delivery_targets: list[str] | None = None,
         only_if_idle_at: datetime | None = None,
     ) -> bool:
         assignments = ["updated_at=?"]
@@ -786,6 +967,12 @@ class Database:
         for column, value in (
             ("name", name),
             ("delivery_channel", delivery_channel),
+            (
+                "delivery_targets_json",
+                json.dumps(delivery_targets, ensure_ascii=False)
+                if delivery_targets is not None
+                else None,
+            ),
             ("delivery_policy", delivery_policy.value if delivery_policy else None),
         ):
             if value is not None:
@@ -802,10 +989,60 @@ class Database:
         if only_if_idle_at is not None:
             where += " AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until<=?)"
             values.append(only_if_idle_at.isoformat())
+        cancel_targets = list(dict.fromkeys(cancel_delivery_targets or []))
+        cancel_placeholders = ",".join("?" for _ in cancel_targets)
+        if cancel_targets:
+            where += (
+                " AND NOT EXISTS (SELECT 1 FROM delivery_outbox AS o "
+                "WHERE o.subscription_id=subscriptions.id "
+                f"AND o.channel IN ({cancel_placeholders}) AND o.status='sending')"
+            )
+            values.extend(cancel_targets)
         with self.connection() as conn:
             cursor = conn.execute(
                 f"UPDATE subscriptions SET {', '.join(assignments)} WHERE {where}", values
             )
+            if cursor.rowcount == 1 and cancel_targets:
+                rows = conn.execute(
+                    f"""
+                    SELECT id, run_id, channel FROM delivery_outbox
+                    WHERE subscription_id=? AND channel IN ({cancel_placeholders})
+                      AND status IN ('pending','retrying','dead_letter')
+                    """,
+                    (subscription_id, *cancel_targets),
+                ).fetchall()
+                message = "该交付目标已从订阅中移除；原待处理任务已取消。"
+                conn.execute(
+                    f"""
+                    UPDATE delivery_outbox SET status='skipped', next_attempt_at=NULL,
+                      lease_owner=NULL, lease_token=NULL, lease_until=NULL,
+                      last_error=NULL, last_message=?, updated_at=?
+                    WHERE subscription_id=? AND channel IN ({cancel_placeholders})
+                      AND status IN ('pending','retrying','dead_letter')
+                    """,
+                    (message, utcnow_iso(), subscription_id, *cancel_targets),
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO delivery_attempts(
+                      run_id, subscription_id, channel, success, skipped, message,
+                      external_id, created_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    [
+                        (
+                            row["run_id"],
+                            subscription_id,
+                            row["channel"],
+                            1,
+                            1,
+                            message,
+                            None,
+                            utcnow_iso(),
+                        )
+                        for row in rows
+                    ],
+                )
         return cursor.rowcount > 0
 
     def delete_subscription(
@@ -819,6 +1056,10 @@ class Database:
         if only_if_idle_at is not None:
             where += " AND (lease_owner IS NULL OR lease_until IS NULL OR lease_until<=?)"
             values.append(only_if_idle_at.isoformat())
+        where += (
+            " AND NOT EXISTS (SELECT 1 FROM delivery_outbox AS o "
+            "WHERE o.subscription_id=subscriptions.id AND o.status='sending')"
+        )
         with self.connection() as conn:
             cursor = conn.execute(f"DELETE FROM subscriptions WHERE {where}", values)
         return cursor.rowcount > 0
@@ -956,6 +1197,14 @@ class Database:
             row = conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return dict(row) if row else None
 
+    def set_run_status(self, run_id: str, status: RunStatus) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "UPDATE runs SET status=? WHERE id=? AND status IN ('partial','completed')",
+                (status.value, run_id),
+            )
+        return cursor.rowcount == 1
+
     def update_run_assessment(self, run_id: str, assessment: dict[str, Any]) -> bool:
         with self.connection() as conn:
             cursor = conn.execute(
@@ -995,6 +1244,395 @@ class Database:
                 ),
             )
 
+    def stage_delivery_outbox(
+        self,
+        *,
+        run_id: str,
+        subscription_id: str | None,
+        entries: list[dict[str, Any]],
+        available_at: datetime | None = None,
+        report_id: str | None = None,
+        report_path: str | None = None,
+        report_item_count: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Persist the report row and every destination before any external send."""
+        if not entries:
+            return []
+        now = utcnow_iso()
+        due_at = available_at.isoformat() if available_at else now
+        outbox_ids: list[str] = []
+        with self.connection() as conn:
+            if report_id and report_path:
+                conn.execute(
+                    """
+                    INSERT INTO reports(id, run_id, subscription_id, path, item_count, created_at)
+                    VALUES(?,?,?,?,?,?)
+                    """,
+                    (
+                        report_id,
+                        run_id,
+                        subscription_id,
+                        report_path,
+                        report_item_count,
+                        now,
+                    ),
+                )
+            for entry in entries:
+                status = str(entry.get("status", "pending"))
+                if status not in {"pending", "retrying", "skipped"}:
+                    raise ValueError(f"不支持的初始投递队列状态：{status}")
+                max_attempts = int(entry.get("max_attempts", 5))
+                if not 1 <= max_attempts <= 20:
+                    raise ValueError("投递最大尝试次数必须在 1～20 之间")
+                outbox_id = uuid4().hex
+                outbox_ids.append(outbox_id)
+                message = str(entry.get("message") or "")[:500] or None
+                next_attempt_at = due_at if status in {"pending", "retrying"} else None
+                conn.execute(
+                    """
+                    INSERT INTO delivery_outbox(
+                      id, run_id, subscription_id, channel, status, report_path, new_count,
+                      subscription_name, attempt_count, max_attempts, next_attempt_at,
+                      last_error, last_message, created_at, updated_at
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        outbox_id,
+                        run_id,
+                        subscription_id,
+                        str(entry["channel"]),
+                        status,
+                        entry.get("report_path"),
+                        int(entry.get("new_count", 0)),
+                        entry.get("subscription_name"),
+                        0,
+                        max_attempts,
+                        next_attempt_at,
+                        message if status == "retrying" else None,
+                        message,
+                        now,
+                        now,
+                    ),
+                )
+                keys = list(dict.fromkeys(entry.get("keys") or []))
+                conn.executemany(
+                    """
+                    INSERT INTO delivery_outbox_items(outbox_id, canonical_id, version_hash)
+                    VALUES(?,?,?)
+                    """,
+                    [
+                        (outbox_id, canonical_id, version_hash)
+                        for canonical_id, version_hash in keys
+                    ],
+                )
+                if status == "skipped":
+                    conn.execute(
+                        """
+                        INSERT INTO delivery_attempts(
+                          run_id, subscription_id, channel, success, skipped, message,
+                          external_id, created_at
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            run_id,
+                            subscription_id,
+                            str(entry["channel"]),
+                            1,
+                            1,
+                            message or "本轮按通知策略跳过外发。",
+                            None,
+                            now,
+                        ),
+                    )
+        rows = [self.get_delivery_outbox(outbox_id) for outbox_id in outbox_ids]
+        if any(row is None for row in rows):
+            raise RuntimeError("投递队列批量写入后无法完整读取")
+        return [row for row in rows if row is not None]
+
+    def create_delivery_outbox_item(
+        self,
+        *,
+        run_id: str,
+        subscription_id: str | None,
+        channel: str,
+        report_path: str | None,
+        new_count: int,
+        subscription_name: str | None,
+        status: str = "pending",
+        message: str | None = None,
+        max_attempts: int = 5,
+        keys: list[tuple[str, str]] | None = None,
+        available_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        return self.stage_delivery_outbox(
+            run_id=run_id,
+            subscription_id=subscription_id,
+            available_at=available_at,
+            entries=[
+                {
+                    "channel": channel,
+                    "report_path": report_path,
+                    "new_count": new_count,
+                    "subscription_name": subscription_name,
+                    "status": status,
+                    "message": message,
+                    "max_attempts": max_attempts,
+                    "keys": keys or [],
+                }
+            ],
+        )[0]
+
+    def get_delivery_outbox(self, outbox_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT o.*,
+                  (SELECT COUNT(*) FROM delivery_outbox_items AS i WHERE i.outbox_id=o.id)
+                    AS item_count
+                FROM delivery_outbox AS o WHERE o.id=?
+                """,
+                (outbox_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_delivery_outbox_items(self, outbox_id: str) -> list[tuple[str, str]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT canonical_id, version_hash FROM delivery_outbox_items
+                WHERE outbox_id=? ORDER BY canonical_id, version_hash
+                """,
+                (outbox_id,),
+            ).fetchall()
+        return [(row["canonical_id"], row["version_hash"]) for row in rows]
+
+    def claim_new_delivery_outbox(
+        self,
+        outbox_id: str,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_until: datetime,
+    ) -> dict[str, Any] | None:
+        """Claim a newly staged item before its delayed worker-visible due time."""
+        token = uuid4().hex
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                """
+                UPDATE delivery_outbox SET status='sending', lease_owner=?, lease_token=?,
+                  lease_until=?, attempt_count=1, updated_at=?
+                WHERE id=? AND status='pending' AND attempt_count=0
+                  AND (lease_until IS NULL OR lease_until<?)
+                """,
+                (
+                    worker_id,
+                    token,
+                    lease_until.isoformat(),
+                    utcnow_iso(),
+                    outbox_id,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT * FROM delivery_outbox WHERE id=? AND lease_token=?",
+                (outbox_id, token),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def claim_due_delivery_outbox(
+        self,
+        *,
+        worker_id: str,
+        now: datetime,
+        lease_until: datetime,
+        outbox_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        token = uuid4().hex
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            filters = [
+                "((status IN ('pending','retrying') AND next_attempt_at IS NOT NULL "
+                "AND next_attempt_at<=?) OR (status='sending' AND lease_until<?))",
+                "(lease_until IS NULL OR lease_until<?)",
+            ]
+            values: list[Any] = [now.isoformat(), now.isoformat(), now.isoformat()]
+            if outbox_id is not None:
+                filters.append("id=?")
+                values.append(outbox_id)
+            row = conn.execute(
+                f"""
+                SELECT * FROM delivery_outbox
+                WHERE {" AND ".join(filters)}
+                ORDER BY next_attempt_at ASC, created_at ASC
+                LIMIT 1
+                """,
+                values,
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = conn.execute(
+                """
+                UPDATE delivery_outbox SET status='sending', lease_owner=?, lease_token=?,
+                  lease_until=?, attempt_count=attempt_count+1, updated_at=?
+                WHERE id=? AND (
+                  (status IN ('pending','retrying') AND next_attempt_at<=?)
+                  OR (status='sending' AND lease_until<?)
+                ) AND (lease_until IS NULL OR lease_until<?)
+                """,
+                (
+                    worker_id,
+                    token,
+                    lease_until.isoformat(),
+                    utcnow_iso(),
+                    row["id"],
+                    now.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            claimed = conn.execute(
+                "SELECT * FROM delivery_outbox WHERE id=? AND lease_token=?",
+                (row["id"], token),
+            ).fetchone()
+        return dict(claimed) if claimed else None
+
+    def finish_delivery_outbox(
+        self,
+        outbox_id: str,
+        *,
+        lease_token: str,
+        status: str,
+        message: str,
+        external_id: str | None = None,
+        next_attempt_at: datetime | None = None,
+    ) -> bool:
+        if status not in {"succeeded", "retrying", "dead_letter", "skipped"}:
+            raise ValueError(f"不支持的投递队列状态：{status}")
+        delivered_at = utcnow_iso() if status == "succeeded" else None
+        with self.connection() as conn:
+            owned = conn.execute(
+                """
+                SELECT run_id, subscription_id, channel, report_path FROM delivery_outbox
+                WHERE id=? AND lease_token=? AND status='sending'
+                """,
+                (outbox_id, lease_token),
+            ).fetchone()
+            if owned is None:
+                return False
+            cursor = conn.execute(
+                """
+                UPDATE delivery_outbox SET status=?, next_attempt_at=?, lease_owner=NULL,
+                  lease_token=NULL, lease_until=NULL, last_error=?, last_message=?,
+                  external_id=?, updated_at=?, delivered_at=?
+                WHERE id=? AND lease_token=? AND status='sending'
+                """,
+                (
+                    status,
+                    next_attempt_at.isoformat() if next_attempt_at else None,
+                    message if status in {"retrying", "dead_letter"} else None,
+                    message,
+                    external_id,
+                    utcnow_iso(),
+                    delivered_at,
+                    outbox_id,
+                    lease_token,
+                ),
+            )
+            if cursor.rowcount == 1:
+                if status == "succeeded" and owned["subscription_id"]:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO delivery_target_ledger(
+                          subscription_id, channel, canonical_id, version_hash,
+                          delivered_at, report_path
+                        )
+                        SELECT ?, ?, canonical_id, version_hash, ?, ?
+                        FROM delivery_outbox_items WHERE outbox_id=?
+                        """,
+                        (
+                            owned["subscription_id"],
+                            owned["channel"],
+                            delivered_at,
+                            owned["report_path"] or "",
+                            outbox_id,
+                        ),
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO delivery_attempts(
+                      run_id, subscription_id, channel, success, skipped, message,
+                      external_id, created_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        owned["run_id"],
+                        owned["subscription_id"],
+                        owned["channel"],
+                        int(status == "succeeded"),
+                        int(status == "skipped"),
+                        message,
+                        external_id,
+                        utcnow_iso(),
+                    ),
+                )
+        return cursor.rowcount == 1
+
+    def retry_delivery_outbox(self, outbox_id: str, *, now: datetime) -> bool:
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE delivery_outbox SET status='retrying', attempt_count=0,
+                  next_attempt_at=?, lease_owner=NULL, lease_token=NULL, lease_until=NULL,
+                  last_error=NULL, last_message='已手动重新排队。', updated_at=?
+                WHERE id=? AND status='dead_letter'
+                """,
+                (now.isoformat(), utcnow_iso(), outbox_id),
+            )
+        return cursor.rowcount == 1
+
+    def delivery_outbox_summary(self, run_id: str) -> dict[str, int]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS count FROM delivery_outbox WHERE run_id=? GROUP BY status",
+                (run_id,),
+            ).fetchall()
+        return {row["status"]: int(row["count"]) for row in rows}
+
+    def list_delivery_outbox(
+        self,
+        *,
+        subscription_id: str | None = None,
+        run_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        filters: list[str] = []
+        values: list[Any] = []
+        if subscription_id is not None:
+            filters.append("subscription_id=?")
+            values.append(subscription_id)
+        if run_id is not None:
+            filters.append("run_id=?")
+            values.append(run_id)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        values.append(limit)
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT o.*,
+                  (SELECT COUNT(*) FROM delivery_outbox_items AS i WHERE i.outbox_id=o.id)
+                    AS item_count
+                FROM delivery_outbox AS o {where}
+                ORDER BY o.created_at DESC LIMIT ?
+                """,
+                values,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_delivery_attempts(
         self, *, subscription_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
@@ -1002,14 +1640,31 @@ class Database:
             if subscription_id:
                 rows = conn.execute(
                     """
-                    SELECT * FROM delivery_attempts WHERE subscription_id=?
-                    ORDER BY created_at DESC LIMIT ?
+                    SELECT a.*, o.id AS outbox_id, o.status AS outbox_status,
+                      o.attempt_count, o.max_attempts, o.next_attempt_at,
+                      o.last_error, o.last_message, o.report_path,
+                      o.new_count, o.delivered_at
+                    FROM delivery_attempts AS a
+                    LEFT JOIN delivery_outbox AS o
+                      ON o.run_id=a.run_id AND o.channel=a.channel
+                    WHERE a.subscription_id=?
+                    ORDER BY a.created_at DESC LIMIT ?
                     """,
                     (subscription_id, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM delivery_attempts ORDER BY created_at DESC LIMIT ?", (limit,)
+                    """
+                    SELECT a.*, o.id AS outbox_id, o.status AS outbox_status,
+                      o.attempt_count, o.max_attempts, o.next_attempt_at,
+                      o.last_error, o.last_message, o.report_path,
+                      o.new_count, o.delivered_at
+                    FROM delivery_attempts AS a
+                    LEFT JOIN delivery_outbox AS o
+                      ON o.run_id=a.run_id AND o.channel=a.channel
+                    ORDER BY a.created_at DESC LIMIT ?
+                    """,
+                    (limit,),
                 ).fetchall()
         return [dict(row) for row in rows]
 

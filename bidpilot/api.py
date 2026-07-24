@@ -50,7 +50,12 @@ from bidpilot.runtime_config import (
     RuntimeConfigView,
 )
 from bidpilot.scheduler import SubscriptionWorker
-from bidpilot.service import BidPilotService, RunEvidenceNotReadyError, SubscriptionBusyError
+from bidpilot.service import (
+    BidPilotService,
+    DeliveryOutboxStateError,
+    RunEvidenceNotReadyError,
+    SubscriptionBusyError,
+)
 from bidpilot.source_auth import (
     SourceAuthError,
     SourceAuthSessionView,
@@ -67,6 +72,7 @@ class QueryRequest(BaseModel):
                 {
                     "query": "最近1个月深圳充电桩招标信息",
                     "delivery_channel": "local",
+                    "delivery_targets": ["local", "email"],
                 }
             ]
         }
@@ -76,6 +82,11 @@ class QueryRequest(BaseModel):
     delivery_channel: str = Field(
         default="local",
         description="本轮投递通道；解析接口不会执行该字段",
+    )
+    delivery_targets: list[str] | None = Field(
+        default=None,
+        max_length=10,
+        description="本轮可同时使用的交付目标；省略时兼容 delivery_channel",
     )
 
 
@@ -327,17 +338,38 @@ def create_app(
             tag="情报任务",
             summary="立即执行一次情报任务",
             purpose="解析问题、访问已启用来源、清洗去重、生成证据摘要并持久化结果。即时任务即使保留 0 条，也会生成包含扫描漏斗、排除原因和覆盖边界的 Word 诊断报告。",
-            parameters="JSON 请求体：`query` 为自然语言；`delivery_channel` 可选 local、feishu_webhook、feishu_app、email、dingtalk_webhook、wecom_webhook 或 generic_webhook。",
-            returns="HTTP 200；返回运行 ID、结构化意图、可信记录、逐来源扫描/候选/保留诊断、`search_explanation`、新增数量、报告路径和投递结果。`search_explanation` 会区分没有候选与候选全部被过滤，并给出不会自动执行的安全放宽建议。",
-            side_effects="【有副作用】会访问公开/已授权来源、写入运行与标讯记录、可能生成 DOCX，并可能向选定外部通道推送。",
-            errors="422：请求体不合法；502：来源执行、报告生成或投递失败。失败运行仍保留诊断记录。",
-            example='POST /api/v1/runs\n{"query":"最近1个月深圳充电桩招标信息","delivery_channel":"local"}',
-            responses={422: "请求格式或字段校验失败。", 502: "抓取、报告或投递链路执行失败。"},
+            parameters=(
+                "JSON 请求体：`query` 为自然语言；推荐用 `delivery_targets` 同时选择 1～10 个已配置目标。"
+                "合法目标来自 `/api/v1/system/status` 的 `delivery_channels`。旧 `delivery_channel` 继续兼容；"
+                "两者同时出现时，以 `delivery_targets` 为准，并把第一个目标回填到旧字段。"
+            ),
+            returns=(
+                "HTTP 200；除运行、证据和报告字段外，`delivery_targets` 列出全部目标，"
+                "`delivery_receipts` 逐目标返回 outbox_id 及 succeeded、retrying、dead_letter 或 skipped。"
+                "单个渠道暂时失败时本轮通常返回 partial，失败目标进入持久重试，成功目标不会重发。"
+            ),
+            side_effects=(
+                "【有副作用】访问来源并写运行、标讯和报告；报告记录、全部目标 Outbox 和目标公告集合"
+                "会在首次外发前原子持久化，之后才并发发送。"
+            ),
+            errors=(
+                "422：请求体字段非法；502：意图、来源、报告或持久入队在可恢复投递点之前失败。"
+                "单个外部渠道超时不会让系统重新抓取，而会写入逐目标重试状态。"
+            ),
+            example=(
+                'POST /api/v1/runs\n{"query":"最近1个月深圳充电桩招标信息",'
+                '"delivery_targets":["local","email"]}'
+            ),
+            responses={422: "请求格式或字段校验失败。", 502: "检索、报告或持久入队失败。"},
         ),
     )
     async def run_query(request: QueryRequest):
         try:
-            return await service.run_query(request.query, delivery_channel=request.delivery_channel)
+            return await service.run_query(
+                request.query,
+                delivery_channel=request.delivery_channel,
+                delivery_targets=request.delivery_targets,
+            )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -701,7 +733,8 @@ def create_app(
             ),
             parameters=(
                 "路径参数 `buyer_id` 是 GET /api/v1/buyers 返回的 24 位本地稳定哈希。"
-                "JSON 与普通订阅一致：`name`、含明确计划的 `query`、`delivery_channel`、"
+                "JSON 与普通订阅一致：`name`、含明确计划的 `query`、`delivery_targets`；"
+                "旧 `delivery_channel` 仍兼容。另含"
                 "`delivery_policy`（always/on_change）和 `run_immediately`。"
             ),
             returns=(
@@ -721,7 +754,8 @@ def create_app(
             example=(
                 "POST /api/v1/buyers/0123456789abcdef01234567/subscriptions\n"
                 '{"name":"安徽大学采购监控","query":"每天9点汇总最近30天服务器采购公告",'
-                '"delivery_channel":"local","delivery_policy":"on_change","run_immediately":false}'
+                '"delivery_targets":["local","email"],"delivery_policy":"on_change",'
+                '"run_immediately":false}'
             ),
             responses={
                 404: "本地买方雷达中没有该采购单位。",
@@ -746,9 +780,10 @@ def create_app(
                 buyer_id,
                 request.name,
                 request.query,
-                request.delivery_channel,
-                request.delivery_policy,
-                request.run_immediately,
+                delivery_channel=request.delivery_channel,
+                delivery_targets=request.delivery_targets,
+                delivery_policy=request.delivery_policy,
+                run_immediately=request.run_immediately,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
@@ -760,12 +795,16 @@ def create_app(
         **_api_docs(
             tag="长期订阅",
             summary="创建持久化订阅",
-            purpose="把带有每天、每周、每月或一次性未来计划的自然语言保存为长期任务，并计算下一次执行时间。相同规则和通道重复提交会复用原订阅。",
-            parameters="JSON：`name` 名称、`query` 自然语言、`delivery_channel`、`delivery_policy`（always/on_change）和 `run_immediately`。",
-            returns="HTTP 200；返回订阅 ID、解析后的规则、启用状态、下次时间和最近运行状态。",
+            purpose="把带有每天、每周、每月或一次性未来计划的自然语言保存为长期任务，并计算下一次执行时间。相同规则和同一组目标重复提交会复用原订阅。",
+            parameters=(
+                "JSON：`name`、`query`；`delivery_targets` 为 1～10 个已配置目标。"
+                "旧 `delivery_channel` 等价于单元素列表；另有 `delivery_policy`（always/on_change）"
+                "和 `run_immediately`。"
+            ),
+            returns="HTTP 200；返回订阅 ID、`delivery_targets`、兼容 `delivery_channel`、解析规则、启用状态、下次时间和最近运行状态。",
             side_effects="【有副作用】写入订阅表；`run_immediately=true` 会把首轮设为立即到期，由持久 worker 领取。不会在请求线程内假装完成推送。",
             errors="422：规则不是可调度任务、通道未配置或字段非法。",
-            example='POST /api/v1/subscriptions\n{"name":"深圳充电桩日报","query":"每天9点汇总最近1个月深圳充电桩信息","delivery_channel":"local","delivery_policy":"always","run_immediately":true}',
+            example='POST /api/v1/subscriptions\n{"name":"深圳充电桩日报","query":"每天9点汇总最近1个月深圳充电桩信息","delivery_targets":["local","email"],"delivery_policy":"always","run_immediately":true}',
             responses={422: "计划无法解析、通道未配置或请求字段非法。"},
         ),
     )
@@ -774,9 +813,10 @@ def create_app(
             return await service.create_subscription_hybrid(
                 request.name,
                 request.query,
-                request.delivery_channel,
-                request.delivery_policy,
-                request.run_immediately,
+                delivery_channel=request.delivery_channel,
+                delivery_targets=request.delivery_targets,
+                delivery_policy=request.delivery_policy,
+                run_immediately=request.run_immediately,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -822,10 +862,10 @@ def create_app(
         **_api_docs(
             tag="长期订阅",
             summary="编辑订阅规则或通道",
-            purpose="局部修改名称、自然语言规则、投递通道或无新增策略；修改规则后重新计算下一次时间，但保留既有防重复账本。",
-            parameters="路径参数 `subscription_id`；JSON 仅提交要修改的 `name`、`query`、`delivery_channel`、`delivery_policy`。",
+            purpose="局部修改名称、自然语言规则、多目标投递或无新增策略；修改规则后重新计算下一次时间，但保留仍在使用目标的防重复账本。",
+            parameters="路径参数 `subscription_id`；JSON 仅提交要修改的 `name`、`query`、`delivery_targets`、兼容 `delivery_channel` 或 `delivery_policy`。",
             returns="HTTP 200；返回更新后的订阅。",
-            side_effects="【有副作用】更新持久化订阅和计划时间；不会立即执行任务。",
+            side_effects="【有副作用】更新持久化订阅和计划时间；被移除目标尚未发送的 pending/retrying/dead_letter 任务会标为已取消，已经成功的审计记录保留。不会立即执行新检索。",
             errors="404：订阅不存在；409：订阅正在执行；422：新规则非法或新通道未配置。",
             example='PATCH /api/v1/subscriptions/{id}\n{"query":"每周一9点汇总深圳充电桩中标公告","delivery_policy":"on_change"}',
             responses={
@@ -854,8 +894,8 @@ def create_app(
             purpose="用户手动触发已保存订阅，并通过租约与后台 worker 互斥，避免同一订阅并发执行。",
             parameters="路径参数 `subscription_id`；无请求体。",
             returns="HTTP 200；返回本轮 RunResult，包括新增数、报告和投递回执。",
-            side_effects="【有副作用】真实抓取、写入运行/标讯/报告记录，并按订阅通道可能向外部发送。成功投递后才写防重复账本。",
-            errors="404：订阅不存在；409：正在执行；502：抓取、报告或投递失败。",
+            side_effects="【有副作用】真实抓取并先持久化报告与逐目标 Outbox，再按各目标独立公告集合发送；单目标成功与该目标防重复账本在同一事务提交。",
+            errors="404：订阅不存在；409：正在执行；502：检索、报告或持久入队失败。单个渠道失败返回 partial 并由 worker 重试。",
             example="POST /api/v1/subscriptions/{id}/run",
             responses={404: "订阅不存在。", 409: "订阅正在执行。", 502: "本轮执行失败。"},
         ),
@@ -924,11 +964,11 @@ def create_app(
         **_api_docs(
             tag="长期订阅",
             summary="删除订阅及增量账本",
-            purpose="永久删除订阅；数据库外键会同时清除该订阅的成功投递账本。运行和报告审计记录按现有保留策略处理。",
+            purpose="永久删除订阅；数据库外键会同时清除该订阅的目标级/兼容投递账本及尚未发送的 Outbox。运行、报告和既有尝试审计按现有保留策略处理。",
             parameters="路径参数 `subscription_id`；无请求体。网页端要求二次点击确认。",
             returns='HTTP 200；返回 `{"deleted":true}`。',
-            side_effects="【不可逆副作用】删除订阅和该订阅的防重复账本；删除后用同一规则重建可能再次推送历史版本。",
-            errors="404：订阅不存在；409：订阅正在执行，拒绝删除。",
+            side_effects="【不可逆副作用】删除订阅、防重复账本和待处理重试；删除后用同一规则重建可能再次推送历史版本。已经进入外部发送中的目标不能被可靠撤回，因此会先返回 409。",
+            errors="404：订阅不存在；409：订阅检索或某个目标正在发送，拒绝删除。",
             example="DELETE /api/v1/subscriptions/{id}",
             responses={404: "订阅不存在。", 409: "订阅正在执行。"},
         ),
@@ -979,6 +1019,78 @@ def create_app(
         if service.get_subscription(subscription_id) is None:
             raise HTTPException(status_code=404, detail="订阅不存在")
         return service.list_delivery_attempts(subscription_id)
+
+    @app.get(
+        "/api/v1/subscriptions/{subscription_id}/delivery-outbox",
+        **_api_docs(
+            tag="长期订阅",
+            summary="查看订阅的逐目标持久投递队列",
+            purpose=(
+                "按一次运行、一个交付目标一行展示 pending、sending、retrying、"
+                "succeeded、dead_letter 或 skipped 状态，用来判断哪个渠道已经完成、"
+                "哪个渠道仍在后台重试。"
+            ),
+            parameters=(
+                "路径参数 `subscription_id` 为订阅 ID；查询参数 `limit` 为返回行数，"
+                "范围 1～200，默认 100。"
+            ),
+            returns=(
+                "HTTP 200；每行包含 outbox ID、run ID、channel、status、attempt_count、"
+                "max_attempts、next_attempt_at、item_count、脱敏错误、报告路径和外部消息 ID。"
+            ),
+            side_effects="无。只读 SQLite，不会触发推送，也不会修改下一次重试时间。",
+            errors="404：订阅不存在；422：limit 不是整数。",
+            example="GET /api/v1/subscriptions/{id}/delivery-outbox?limit=100",
+            responses={404: "订阅不存在。", 422: "limit 参数非法。"},
+        ),
+    )
+    async def list_subscription_delivery_outbox(subscription_id: str, limit: int = 100):
+        if service.get_subscription(subscription_id) is None:
+            raise HTTPException(status_code=404, detail="订阅不存在")
+        return service.list_delivery_outbox(
+            subscription_id=subscription_id,
+            limit=limit,
+        )
+
+    @app.post(
+        "/api/v1/delivery-outbox/{outbox_id}/retry",
+        **_api_docs(
+            tag="长期订阅",
+            summary="手动重试一个死信交付目标",
+            purpose=(
+                "在用户修复渠道配置或网络后，只把指定 dead_letter 目标重新排队；"
+                "不会重新抓取公告，也不会重新发送同一运行中已经成功的其他目标。"
+            ),
+            parameters="路径参数 `outbox_id` 来自逐目标投递队列；无请求体。",
+            returns=(
+                "HTTP 200；返回 status=retrying、attempt_count=0 和新的 next_attempt_at。"
+                "持久 worker 随后领取；本接口本身不在 HTTP 请求线程内直接外发。"
+            ),
+            side_effects=(
+                "【有副作用】清除该死信的上轮错误和租约并重新入队。"
+                "已成功目标及其目标级防重复账本保持不变。"
+            ),
+            errors=(
+                "404：outbox 不存在；409：任务不是死信或状态刚被其他操作改变；"
+                "422：渠道仍未配置，或原报告文件已不存在。"
+            ),
+            example="POST /api/v1/delivery-outbox/{outbox_id}/retry",
+            responses={
+                404: "投递任务不存在。",
+                409: "当前状态不能手动重试。",
+                422: "必须先修复配置或重新生成报告。",
+            },
+        ),
+    )
+    async def retry_delivery_outbox(outbox_id: str):
+        try:
+            return service.retry_dead_letter(outbox_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+        except DeliveryOutboxStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post(
         "/api/v1/opportunities",

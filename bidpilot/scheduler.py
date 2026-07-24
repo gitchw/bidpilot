@@ -97,6 +97,7 @@ class SubscriptionWorker:
         self.started_at = datetime.now(self.timezone)
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._outbox_streak = 0
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -121,6 +122,12 @@ class SubscriptionWorker:
         )
 
     async def run_once(self) -> bool:
+        checked_outbox = False
+        if self._outbox_streak < 5:
+            checked_outbox = True
+            if await self.service.process_due_delivery_outbox(worker_id=self.worker_id):
+                self._outbox_streak += 1
+                return True
         now = datetime.now(self.timezone)
         row = self.service.db.claim_due_subscription(
             worker_id=self.worker_id,
@@ -128,7 +135,11 @@ class SubscriptionWorker:
             lease_until=now + timedelta(seconds=self.settings.worker_lease_seconds),
         )
         if row is None:
-            return False
+            self._outbox_streak = 0
+            if checked_outbox:
+                return False
+            return await self.service.process_due_delivery_outbox(worker_id=self.worker_id)
+        self._outbox_streak = 0
         renewal = asyncio.create_task(
             maintain_subscription_lease(
                 self.service.db,

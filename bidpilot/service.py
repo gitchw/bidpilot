@@ -14,7 +14,7 @@ from bidpilot.clean import stable_hash
 from bidpilot.config import Settings
 from bidpilot.db import Database
 from bidpilot.decision import OpportunityFitAssessor
-from bidpilot.delivery import DeliveryManager, DeliveryReceipt
+from bidpilot.delivery import DeliveryError, DeliveryManager
 from bidpilot.evidence_qa import RunEvidenceQACopilot
 from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
@@ -24,6 +24,7 @@ from bidpilot.models import (
     CompanyProfile,
     CompanyProfileUpdate,
     DeliveryPolicy,
+    DeliveryTargetReceipt,
     EventType,
     EvidenceAnswer,
     FeedbackUpdate,
@@ -44,6 +45,7 @@ from bidpilot.models import (
     TenderFeedback,
     TenderQuerySpec,
     TenderRecord,
+    normalize_delivery_targets,
 )
 from bidpilot.pipeline import TenderPipeline
 from bidpilot.report import generate_report
@@ -85,6 +87,14 @@ class SubscriptionBusyError(RuntimeError):
 
 
 class RunEvidenceNotReadyError(RuntimeError):
+    pass
+
+
+class DeliveryOutboxStateError(RuntimeError):
+    pass
+
+
+class DeliveryArtifactMissingError(DeliveryError):
     pass
 
 
@@ -182,6 +192,7 @@ class BidPilotService:
         *,
         subscription_id: str | None = None,
         delivery_channel: str | None = None,
+        delivery_targets: list[str] | None = None,
         trigger_reason: str = "manual",
         buyer_keywords: list[str] | None = None,
     ) -> RunResult:
@@ -194,9 +205,14 @@ class BidPilotService:
         spec = await self.intent_engine.resolve(query, now=started_at)
         if buyer_keywords:
             spec = self._lock_buyer_filter(spec, buyer_keywords)
-        if delivery_channel:
-            spec.delivery_channel = delivery_channel
-        channel = spec.delivery_channel
+        targets = normalize_delivery_targets(
+            delivery_targets,
+            delivery_channel or spec.delivery_channel,
+        )
+        self._validate_delivery_targets(targets)
+        spec.delivery_targets = targets
+        spec.delivery_channel = targets[0]
+        channel = targets[0]
         run_id = uuid4().hex
         self.db.create_run(
             run_id,
@@ -221,15 +237,29 @@ class BidPilotService:
                 self.db.add_source_run(run_id, diagnostic)
 
             incremental = subscription_id is not None
-            output_records = records
+            record_keys = [(record.canonical_id, record.version_hash) for record in records]
             if subscription_id:
-                keys = [(record.canonical_id, record.version_hash) for record in records]
-                allowed = self.db.undelivered_keys(subscription_id, keys)
-                output_records = [
+                undelivered_by_target = self.db.undelivered_keys_by_target(
+                    subscription_id,
+                    targets,
+                    record_keys,
+                )
+            else:
+                undelivered_by_target = {target: set(record_keys) for target in targets}
+            output_keys = set().union(*undelivered_by_target.values())
+            output_records = [
+                record
+                for record in records
+                if (record.canonical_id, record.version_hash) in output_keys
+            ]
+            records_by_target = {
+                target: [
                     record
                     for record in records
-                    if (record.canonical_id, record.version_hash) in allowed
+                    if (record.canonical_id, record.version_hash) in undelivered_by_target[target]
                 ]
+                for target in targets
+            }
 
             self.db.set_run_items(
                 run_id,
@@ -250,6 +280,7 @@ class BidPilotService:
                     generated_at=started_at,
                     incremental=incremental,
                     intelligence_brief=intelligence_brief,
+                    filename_suffix=run_id[:8],
                 )
 
             policy = DeliveryPolicy(
@@ -257,70 +288,149 @@ class BidPilotService:
                 if subscription_row
                 else DeliveryPolicy.ALWAYS.value
             )
-            should_notify = report_path is not None or (
-                incremental and policy == DeliveryPolicy.ALWAYS
-            )
-            if should_notify:
-                try:
-                    receipt = await self.delivery.deliver(
-                        report_path,
-                        channel,
-                        new_count=len(output_records),
-                        subscription_name=subscription_row["name"] if subscription_row else None,
-                    )
-                except Exception as exc:
-                    self.db.create_delivery_attempt(
-                        run_id=run_id,
-                        subscription_id=subscription_id,
-                        channel=channel,
-                        success=False,
-                        skipped=False,
-                        message=str(exc),
-                        external_id=None,
-                    )
-                    raise
-            else:
-                receipt = DeliveryReceipt(
-                    channel=channel,
-                    success=True,
-                    skipped=True,
-                    message="本轮无新增；按“仅有变化时通知”策略未外发。",
-                )
-            self.db.create_delivery_attempt(
-                run_id=run_id,
-                subscription_id=subscription_id,
-                channel=receipt.channel,
-                success=receipt.success,
-                skipped=receipt.skipped,
-                message=receipt.message,
-                external_id=receipt.external_id,
-            )
-            if not receipt.success:
-                raise RuntimeError(receipt.message)
-
-            if report_path:
-                self.db.create_report(
-                    uuid4().hex,
-                    run_id,
-                    str(report_path),
-                    len(output_records),
-                    subscription_id,
-                )
-                if subscription_id:
-                    self.db.mark_delivered(
-                        subscription_id,
-                        [(record.canonical_id, record.version_hash) for record in output_records],
-                        str(report_path),
-                    )
-
             partial_statuses = {
                 SourceStatus.PARTIAL,
                 SourceStatus.AUTH_REQUIRED,
                 SourceStatus.FAILED,
             }
+            subscription_name = subscription_row["name"] if subscription_row else None
+            base_keys = {(record.canonical_id, record.version_hash) for record in output_records}
+            report_cache: dict[tuple[tuple[str, str], ...], Path] = {}
+            if report_path:
+                report_cache[tuple(sorted(base_keys))] = report_path
+            open_delivery_targets = (
+                self.db.open_delivery_targets(subscription_id) if subscription_id else set()
+            )
+            entries: list[dict] = []
+            for target in targets:
+                target_records = records_by_target[target]
+                target_keys = [
+                    (record.canonical_id, record.version_hash) for record in target_records
+                ]
+                target_path: Path | None = None
+                status = "pending"
+                message = None
+                if not incremental:
+                    target_path = report_path
+                elif target_records:
+                    cache_key = tuple(sorted(target_keys))
+                    target_path = report_cache.get(cache_key)
+                    if target_path is None:
+                        target_path = generate_report(
+                            spec,
+                            target_records,
+                            pipeline_result.diagnostics,
+                            self.settings.report_dir,
+                            generated_at=started_at,
+                            incremental=True,
+                            filename_suffix=f"{run_id[:8]}-{target}",
+                        )
+                        report_cache[cache_key] = target_path
+                elif target in open_delivery_targets:
+                    status = "skipped"
+                    message = (
+                        "该目标已有待重试或死信任务；本轮不重复排队，请在投递记录中处理原任务。"
+                    )
+                elif policy == DeliveryPolicy.ON_CHANGE:
+                    status = "skipped"
+                    message = "本轮该目标无新增；按“仅有变化时通知”策略未外发。"
+                entries.append(
+                    {
+                        "channel": target,
+                        "report_path": str(target_path) if target_path else None,
+                        "new_count": len(target_records),
+                        "subscription_name": subscription_name,
+                        "status": status,
+                        "message": message,
+                        "keys": target_keys,
+                    }
+                )
+
+            initial_delay = max(
+                5.0,
+                min(float(self.settings.worker_lease_seconds), 30.0),
+            )
+            outbox_rows = self.db.stage_delivery_outbox(
+                run_id=run_id,
+                subscription_id=subscription_id,
+                entries=entries,
+                available_at=datetime.now(UTC) + timedelta(seconds=initial_delay),
+                report_id=uuid4().hex if report_path else None,
+                report_path=str(report_path) if report_path else None,
+                report_item_count=len(output_records),
+            )
+            staged_delivery_pending = any(
+                row["status"] in {"pending", "sending", "retrying", "dead_letter"}
+                for row in outbox_rows
+            )
+            staged_status = (
+                RunStatus.PARTIAL
+                if staged_delivery_pending
+                or any(item.status in partial_statuses for item in pipeline_result.diagnostics)
+                else RunStatus.COMPLETED
+            )
+            self.db.complete_run(
+                run_id,
+                staged_status,
+                report_path=str(report_path) if report_path else None,
+                result_count=result_count,
+                new_count=len(output_records),
+                diagnostics=diagnostics_dump,
+                retrieval=pipeline_result.retrieval.model_dump(mode="json"),
+                brief=intelligence_brief.model_dump(mode="json"),
+                assessment=opportunity_assessments.model_dump(mode="json"),
+            )
+            receipts: list[DeliveryTargetReceipt] = []
+            dispatch_rows: list[dict] = []
+            for row in outbox_rows:
+                if row["status"] == "skipped":
+                    receipts.append(
+                        DeliveryTargetReceipt(
+                            outbox_id=row["id"],
+                            channel=row["channel"],
+                            status="skipped",
+                            message=row.get("last_message") or "本轮按通知策略跳过外发。",
+                        )
+                    )
+                else:
+                    dispatch_rows.append(row)
+            dispatched = await asyncio.gather(
+                *(
+                    self.dispatch_delivery_outbox(
+                        row["id"],
+                        worker_id=f"initial:{run_id}",
+                        claim_new=True,
+                    )
+                    for row in dispatch_rows
+                )
+            )
+            receipts.extend(receipt for receipt in dispatched if receipt is not None)
+            receipt_order = {target: index for index, target in enumerate(targets)}
+            receipts.sort(key=lambda receipt: receipt_order[receipt.channel])
+
+            delivery_pending = any(
+                receipt.status in {"retrying", "dead_letter"} for receipt in receipts
+            )
+            delivery_status = (
+                "partial"
+                if delivery_pending
+                else "skipped"
+                if receipts and all(receipt.status == "skipped" for receipt in receipts)
+                else "success"
+            )
+            delivered_count = sum(
+                receipt.status in {"succeeded", "skipped"} for receipt in receipts
+            )
+            delivery_message = f"{delivered_count}/{len(receipts)} 个交付目标已完成；" + (
+                "失败目标已进入持久重试队列，不会重新抓取或重复成功渠道。"
+                if delivery_pending
+                else "全部目标均已确认。"
+            )
+
             status = (
                 RunStatus.PARTIAL
-                if any(item.status in partial_statuses for item in pipeline_result.diagnostics)
+                if delivery_pending
+                or any(item.status in partial_statuses for item in pipeline_result.diagnostics)
                 else RunStatus.COMPLETED
             )
             completed_at = datetime.now(ZoneInfo(self.settings.timezone))
@@ -339,9 +449,11 @@ class BidPilotService:
                 started_at=started_at,
                 completed_at=completed_at,
                 warnings=spec.warnings,
-                delivery_channel=receipt.channel,
-                delivery_status="skipped" if receipt.skipped else "success",
-                delivery_message=receipt.message,
+                delivery_channel=channel,
+                delivery_targets=targets,
+                delivery_receipts=receipts,
+                delivery_status=delivery_status,
+                delivery_message=delivery_message,
             )
             self.db.complete_run(
                 run_id,
@@ -354,6 +466,7 @@ class BidPilotService:
                 brief=intelligence_brief.model_dump(mode="json"),
                 assessment=opportunity_assessments.model_dump(mode="json"),
             )
+            self._finalize_legacy_delivery_ledger(run_id)
             self._live_results[run_id] = result
             return result
         except Exception as exc:
@@ -368,6 +481,189 @@ class BidPilotService:
                 error=str(exc),
             )
             raise RunExecutionError(run_id, str(exc)) from exc
+
+    async def dispatch_delivery_outbox(
+        self,
+        outbox_id: str | None = None,
+        *,
+        worker_id: str,
+        claim_new: bool = False,
+    ) -> DeliveryTargetReceipt | None:
+        now = datetime.now(UTC)
+        lease_seconds = max(
+            float(self.settings.worker_lease_seconds),
+            float(self.settings.delivery_webhook_timeout) + 15.0,
+            float(self.settings.smtp_timeout) + 15.0,
+            45.0,
+        )
+        lease_until = now + timedelta(seconds=lease_seconds)
+        if claim_new and outbox_id:
+            row = self.db.claim_new_delivery_outbox(
+                outbox_id,
+                worker_id=worker_id,
+                now=now,
+                lease_until=lease_until,
+            )
+        else:
+            row = self.db.claim_due_delivery_outbox(
+                worker_id=worker_id,
+                now=now,
+                lease_until=lease_until,
+                outbox_id=outbox_id,
+            )
+        if row is None:
+            if outbox_id:
+                current = self.db.get_delivery_outbox(outbox_id)
+                if current:
+                    return self._delivery_receipt_from_outbox(current)
+            return None
+        channel = row["channel"]
+        report_path = Path(row["report_path"]) if row.get("report_path") else None
+        try:
+            if report_path and not report_path.is_file():
+                raise DeliveryArtifactMissingError("原投递报告文件已不存在；请重新运行订阅生成报告")
+            receipt = await self.delivery.deliver(
+                report_path,
+                channel,
+                new_count=int(row.get("new_count", 0)),
+                subscription_name=row.get("subscription_name"),
+            )
+            if not receipt.success:
+                raise RuntimeError(receipt.message)
+        except Exception as exc:
+            message = str(exc)[:500] or f"投递通道 {channel} 执行失败"
+            attempt_count = int(row.get("attempt_count", 1))
+            max_attempts = int(row.get("max_attempts", 5))
+            dead_letter = (
+                isinstance(exc, DeliveryArtifactMissingError) or attempt_count >= max_attempts
+            )
+            next_attempt_at = None if dead_letter else retry_time(now, attempt_count - 1)
+            status = "dead_letter" if dead_letter else "retrying"
+            finished = self.db.finish_delivery_outbox(
+                row["id"],
+                lease_token=row["lease_token"],
+                status=status,
+                message=message,
+                next_attempt_at=next_attempt_at,
+            )
+            if not finished:
+                current = self.db.get_delivery_outbox(row["id"])
+                if current:
+                    return self._delivery_receipt_from_outbox(
+                        current,
+                        fallback_message="投递失败结果未取得队列栅栏所有权；请查看当前所有者状态。",
+                    )
+            return DeliveryTargetReceipt(
+                outbox_id=row["id"],
+                channel=channel,
+                status=status,
+                message=message,
+                attempt_count=attempt_count,
+                next_attempt_at=next_attempt_at,
+            )
+
+        finished = self.db.finish_delivery_outbox(
+            row["id"],
+            lease_token=row["lease_token"],
+            status="succeeded",
+            message=receipt.message,
+            external_id=receipt.external_id,
+        )
+        if not finished:
+            current = self.db.get_delivery_outbox(row["id"])
+            if current:
+                return self._delivery_receipt_from_outbox(
+                    current,
+                    fallback_message=(
+                        "外部通道已响应，但队列所有权已变化；请查看投递审计确认最终状态。"
+                    ),
+                )
+        if row.get("subscription_id"):
+            self._finalize_legacy_delivery_ledger(row["run_id"])
+        return DeliveryTargetReceipt(
+            outbox_id=row["id"],
+            channel=channel,
+            status="succeeded",
+            message=receipt.message,
+            external_id=receipt.external_id,
+            attempt_count=int(row.get("attempt_count", 1)),
+        )
+
+    @staticmethod
+    def _delivery_receipt_from_outbox(
+        row: dict,
+        *,
+        fallback_message: str = "投递任务已由其他 worker 接管。",
+    ) -> DeliveryTargetReceipt:
+        raw_status = str(row.get("status") or "retrying")
+        status = (
+            raw_status
+            if raw_status in {"succeeded", "skipped", "retrying", "dead_letter"}
+            else "retrying"
+        )
+        next_attempt_at = (
+            datetime.fromisoformat(row["next_attempt_at"]) if row.get("next_attempt_at") else None
+        )
+        return DeliveryTargetReceipt(
+            outbox_id=row.get("id"),
+            channel=row["channel"],
+            status=status,
+            message=row.get("last_message") or row.get("last_error") or fallback_message,
+            external_id=row.get("external_id"),
+            attempt_count=int(row.get("attempt_count", 0)),
+            next_attempt_at=next_attempt_at,
+        )
+
+    def _finalize_legacy_delivery_ledger(self, run_id: str) -> None:
+        rows = self.db.list_delivery_outbox(run_id=run_id)
+        self._reconcile_run_delivery_status(run_id, rows)
+        if not rows or any(row["status"] not in {"succeeded", "skipped"} for row in rows):
+            return
+        run = self.db.get_run(run_id)
+        if not run or not run.get("subscription_id") or not run.get("report_path"):
+            return
+        keys = [
+            (item["canonical_id"], item["version_hash"]) for item in self.db.list_run_items(run_id)
+        ]
+        self.db.mark_delivered(
+            run["subscription_id"],
+            keys,
+            run["report_path"],
+        )
+
+    def _reconcile_run_delivery_status(self, run_id: str, rows: list[dict]) -> None:
+        run = self.db.get_run(run_id)
+        if not run or run.get("status") not in {
+            RunStatus.PARTIAL.value,
+            RunStatus.COMPLETED.value,
+        }:
+            return
+        delivery_incomplete = any(
+            row["status"] in {"pending", "sending", "retrying", "dead_letter"} for row in rows
+        )
+        try:
+            diagnostics = json.loads(run.get("diagnostics_json") or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            diagnostics = []
+        source_incomplete = any(
+            item.get("status")
+            in {
+                SourceStatus.PARTIAL.value,
+                SourceStatus.AUTH_REQUIRED.value,
+                SourceStatus.FAILED.value,
+            }
+            for item in diagnostics
+            if isinstance(item, dict)
+        )
+        desired = (
+            RunStatus.PARTIAL if delivery_incomplete or source_incomplete else RunStatus.COMPLETED
+        )
+        if run["status"] != desired.value:
+            self.db.set_run_status(run_id, desired)
+
+    async def process_due_delivery_outbox(self, *, worker_id: str) -> bool:
+        receipt = await self.dispatch_delivery_outbox(worker_id=worker_id)
+        return receipt is not None
 
     async def _build_intelligence_brief(
         self,
@@ -490,6 +786,13 @@ class BidPilotService:
             item["id"] == channel and item["configured"] for item in self.delivery.channel_status()
         )
 
+    def _validate_delivery_targets(self, targets: list[str]) -> None:
+        unconfigured = [target for target in targets if not self._channel_is_configured(target)]
+        if unconfigured:
+            raise ValueError(
+                "以下交付目标尚未配置，不能创建虚假推送承诺：" + "、".join(unconfigured)
+            )
+
     def create_subscription(
         self,
         name: str,
@@ -497,6 +800,7 @@ class BidPilotService:
         delivery_channel: str = "local",
         delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
         run_immediately: bool = True,
+        delivery_targets: list[str] | None = None,
     ) -> Subscription:
         now = datetime.now(ZoneInfo(self.settings.timezone))
         spec = self.parser.parse(query, now=now)
@@ -504,6 +808,7 @@ class BidPilotService:
             name,
             spec,
             delivery_channel,
+            delivery_targets,
             delivery_policy,
             run_immediately,
             now,
@@ -516,6 +821,7 @@ class BidPilotService:
         delivery_channel: str = "local",
         delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
         run_immediately: bool = True,
+        delivery_targets: list[str] | None = None,
     ) -> Subscription:
         now = datetime.now(ZoneInfo(self.settings.timezone))
         spec = await self.parse_intent(query, now=now)
@@ -523,6 +829,7 @@ class BidPilotService:
             name,
             spec,
             delivery_channel,
+            delivery_targets,
             delivery_policy,
             run_immediately,
             now,
@@ -536,6 +843,7 @@ class BidPilotService:
         delivery_channel: str = "local",
         delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
         run_immediately: bool = True,
+        delivery_targets: list[str] | None = None,
     ) -> Subscription:
         """Create a normal subscription with a locally selected buyer identity locked in."""
         rows = self.db.list_tender_items_for_buyer_radar()
@@ -551,6 +859,7 @@ class BidPilotService:
             name,
             spec,
             delivery_channel,
+            delivery_targets,
             delivery_policy,
             run_immediately,
             now,
@@ -561,18 +870,24 @@ class BidPilotService:
         name: str,
         spec: TenderQuerySpec,
         delivery_channel: str,
+        delivery_targets: list[str] | None,
         delivery_policy: DeliveryPolicy,
         run_immediately: bool,
         now: datetime,
     ) -> Subscription:
         if spec.schedule.kind == ScheduleKind.IMMEDIATE:
             raise ValueError("订阅问题必须包含每天、每周或明确的未来发送时间")
-        if not self._channel_is_configured(delivery_channel):
-            raise ValueError(f"投递通道 {delivery_channel} 尚未配置，不能创建虚假推送承诺")
+        targets = normalize_delivery_targets(delivery_targets, delivery_channel)
+        self._validate_delivery_targets(targets)
         delivery_policy = DeliveryPolicy(delivery_policy)
-        spec.delivery_channel = delivery_channel
+        spec.delivery_targets = targets
+        spec.delivery_channel = targets[0]
         for row in self.db.list_subscriptions():
-            if row["raw_query"] != spec.raw_query or row["delivery_channel"] != delivery_channel:
+            existing_targets = normalize_delivery_targets(
+                json.loads(row.get("delivery_targets_json") or "[]") or None,
+                row["delivery_channel"],
+            )
+            if row["raw_query"] != spec.raw_query or existing_targets != targets:
                 continue
             try:
                 existing_spec = TenderQuerySpec.model_validate_json(row["spec_json"])
@@ -599,9 +914,10 @@ class BidPilotService:
             subscription_id,
             name,
             spec,
-            delivery_channel,
+            targets[0],
             next_run_at,
             delivery_policy,
+            delivery_targets=targets,
         )
         row = self.db.get_subscription(subscription_id)
         if row is None:
@@ -656,10 +972,32 @@ class BidPilotService:
                     spec.raw_query,
                     subscription_id=subscription_id,
                     delivery_channel=row["delivery_channel"],
+                    delivery_targets=self._delivery_targets_from_row(row),
                     trigger_reason=trigger_reason,
                     buyer_keywords=spec.buyer_keywords,
                 )
-            except RunExecutionError as exc:
+            except Exception as exc:
+                if isinstance(exc, RunExecutionError):
+                    failure = exc
+                else:
+                    failure_run_id = uuid4().hex
+                    self.db.create_run(
+                        failure_run_id,
+                        spec,
+                        subscription_id=subscription_id,
+                        trigger_reason=trigger_reason,
+                    )
+                    self.db.complete_run(
+                        failure_run_id,
+                        RunStatus.FAILED,
+                        report_path=None,
+                        result_count=0,
+                        new_count=0,
+                        diagnostics=[],
+                        retrieval=None,
+                        error=str(exc),
+                    )
+                    failure = RunExecutionError(failure_run_id, str(exc))
                 failed_at = datetime.now(ZoneInfo(self.settings.timezone))
                 retry_at = retry_time(failed_at, int(row.get("consecutive_failures", 0)))
                 regular_at = next_schedule_time(spec.schedule, failed_at)
@@ -669,12 +1007,14 @@ class BidPilotService:
                     last_run_at=failed_at,
                     next_run_at=next_run_at,
                     status=RunStatus.FAILED,
-                    message=str(exc),
+                    message=str(failure),
                     new_count=0,
-                    run_id=exc.run_id,
+                    run_id=failure.run_id,
                     success=False,
                 )
-                raise
+                if failure is exc:
+                    raise
+                raise failure from exc
 
             finished_at = result.completed_at or datetime.now(ZoneInfo(self.settings.timezone))
             next_run_at = next_schedule_time(spec.schedule, finished_at)
@@ -719,6 +1059,7 @@ class BidPilotService:
             spec=TenderQuerySpec.model_validate_json(row["spec_json"]),
             enabled=bool(row["enabled"]),
             delivery_channel=row["delivery_channel"],
+            delivery_targets=self._delivery_targets_from_row(row),
             delivery_policy=DeliveryPolicy(row.get("delivery_policy", "always")),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]) if row.get("updated_at") else None,
@@ -735,6 +1076,14 @@ class BidPilotService:
             last_run_id=row.get("last_run_id"),
             in_progress=bool(row.get("lease_owner") and lease_until and lease_until > now),
         )
+
+    @staticmethod
+    def _delivery_targets_from_row(row: dict) -> list[str]:
+        try:
+            values = json.loads(row.get("delivery_targets_json") or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = None
+        return normalize_delivery_targets(values or None, row.get("delivery_channel"))
 
     def get_subscription(self, subscription_id: str) -> Subscription | None:
         row = self.db.get_subscription(subscription_id)
@@ -764,32 +1113,53 @@ class BidPilotService:
         row = self.db.get_subscription(subscription_id)
         if row is None:
             raise KeyError(f"订阅不存在：{subscription_id}")
-        if update.delivery_channel and not self._channel_is_configured(update.delivery_channel):
-            raise ValueError(f"投递通道 {update.delivery_channel} 尚未配置")
+        if update.delivery_targets is not None:
+            self._validate_delivery_targets(update.delivery_targets)
         current = self._subscription_from_row(row)
         if current.in_progress:
             raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改")
         now = datetime.now(ZoneInfo(self.settings.timezone))
+        removed_targets = (
+            [target for target in current.delivery_targets if target not in update.delivery_targets]
+            if update.delivery_targets is not None
+            else []
+        )
+        affected_run_ids = self.db.delivery_outbox_run_ids_for_targets(
+            subscription_id,
+            removed_targets,
+        )
         spec = None
         next_run_at = None
+        query_changed = update.query is not None
         if update.query is not None:
             spec = self.parser.parse(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
             if current.spec.buyer_keywords:
                 spec = self._lock_buyer_filter(spec, current.spec.buyer_keywords)
-            spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
+            targets = update.delivery_targets or current.delivery_targets
+            spec.delivery_targets = targets
+            spec.delivery_channel = targets[0]
             next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
+        elif update.delivery_targets is not None:
+            spec = current.spec.model_copy(deep=True)
+            spec.delivery_targets = update.delivery_targets
+            spec.delivery_channel = update.delivery_targets[0]
         changed = self.db.update_subscription(
             subscription_id,
             name=update.name,
             spec=spec,
             next_run_at=next_run_at,
-            update_next_run=spec is not None,
-            delivery_channel=update.delivery_channel,
+            update_next_run=query_changed,
+            delivery_channel=(update.delivery_targets or [None])[0],
+            delivery_targets=update.delivery_targets,
             delivery_policy=update.delivery_policy,
+            cancel_delivery_targets=removed_targets,
             only_if_idle_at=now,
         )
+        if changed:
+            for run_id in affected_run_ids:
+                self._finalize_legacy_delivery_ledger(run_id)
         return self._complete_subscription_mutation(subscription_id, changed)
 
     async def update_subscription_hybrid(
@@ -800,32 +1170,53 @@ class BidPilotService:
         row = self.db.get_subscription(subscription_id)
         if row is None:
             raise KeyError(f"订阅不存在：{subscription_id}")
-        if update.delivery_channel and not self._channel_is_configured(update.delivery_channel):
-            raise ValueError(f"投递通道 {update.delivery_channel} 尚未配置")
+        if update.delivery_targets is not None:
+            self._validate_delivery_targets(update.delivery_targets)
         current = self._subscription_from_row(row)
         if current.in_progress:
             raise SubscriptionBusyError("该订阅正在执行，请在本轮完成后再修改")
         now = datetime.now(ZoneInfo(self.settings.timezone))
+        removed_targets = (
+            [target for target in current.delivery_targets if target not in update.delivery_targets]
+            if update.delivery_targets is not None
+            else []
+        )
+        affected_run_ids = self.db.delivery_outbox_run_ids_for_targets(
+            subscription_id,
+            removed_targets,
+        )
         spec = None
         next_run_at = None
+        query_changed = update.query is not None
         if update.query is not None:
             spec = await self.parse_intent(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
             if current.spec.buyer_keywords:
                 spec = self._lock_buyer_filter(spec, current.spec.buyer_keywords)
-            spec.delivery_channel = update.delivery_channel or row["delivery_channel"]
+            targets = update.delivery_targets or current.delivery_targets
+            spec.delivery_targets = targets
+            spec.delivery_channel = targets[0]
             next_run_at = next_schedule_time(spec.schedule, now) if row["enabled"] else None
+        elif update.delivery_targets is not None:
+            spec = current.spec.model_copy(deep=True)
+            spec.delivery_targets = update.delivery_targets
+            spec.delivery_channel = update.delivery_targets[0]
         changed = self.db.update_subscription(
             subscription_id,
             name=update.name,
             spec=spec,
             next_run_at=next_run_at,
-            update_next_run=spec is not None,
-            delivery_channel=update.delivery_channel,
+            update_next_run=query_changed,
+            delivery_channel=(update.delivery_targets or [None])[0],
+            delivery_targets=update.delivery_targets,
             delivery_policy=update.delivery_policy,
+            cancel_delivery_targets=removed_targets,
             only_if_idle_at=now,
         )
+        if changed:
+            for run_id in affected_run_ids:
+                self._finalize_legacy_delivery_ledger(run_id)
         return self._complete_subscription_mutation(subscription_id, changed)
 
     def pause_subscription(self, subscription_id: str) -> Subscription:
@@ -885,6 +1276,95 @@ class BidPilotService:
     def list_delivery_attempts(self, subscription_id: str | None = None) -> list[dict]:
         return self.db.list_delivery_attempts(subscription_id=subscription_id)
 
+    def list_delivery_outbox(
+        self,
+        *,
+        subscription_id: str | None = None,
+        run_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        return [
+            self._public_delivery_outbox_row(row)
+            for row in self.db.list_delivery_outbox(
+                subscription_id=subscription_id,
+                run_id=run_id,
+                limit=min(max(limit, 1), 200),
+            )
+        ]
+
+    def retry_dead_letter(self, outbox_id: str) -> dict:
+        row = self.db.get_delivery_outbox(outbox_id)
+        if row is None:
+            raise KeyError(f"投递任务不存在：{outbox_id}")
+        if row["status"] != "dead_letter":
+            raise DeliveryOutboxStateError("只有死信任务可以手动重新排队")
+        if not self._channel_is_configured(row["channel"]):
+            raise ValueError(f"请先完成投递通道 {row['channel']} 的配置，再重试死信")
+        if row.get("report_path") and not Path(row["report_path"]).is_file():
+            raise ValueError("原投递报告文件已不存在，不能安全重试；请重新运行订阅")
+        if not self.db.retry_delivery_outbox(outbox_id, now=datetime.now(UTC)):
+            raise DeliveryOutboxStateError("死信状态刚刚发生变化，请刷新后重试")
+        queued = self.db.get_delivery_outbox(outbox_id)
+        if queued is None:
+            raise RuntimeError("死信重新排队后无法读取")
+        return self._public_delivery_outbox_row(queued)
+
+    @staticmethod
+    def _public_delivery_outbox_row(row: dict) -> dict:
+        allowed = {
+            "id",
+            "run_id",
+            "subscription_id",
+            "channel",
+            "status",
+            "report_path",
+            "new_count",
+            "item_count",
+            "attempt_count",
+            "max_attempts",
+            "next_attempt_at",
+            "lease_owner",
+            "lease_until",
+            "last_error",
+            "last_message",
+            "external_id",
+            "created_at",
+            "updated_at",
+            "delivered_at",
+        }
+        return {key: value for key, value in row.items() if key in allowed}
+
+    def _run_delivery_state(
+        self,
+        run_id: str,
+        preferred_targets: list[str] | None = None,
+    ) -> tuple[list[str], list[DeliveryTargetReceipt], str | None, str | None]:
+        rows = self.db.list_delivery_outbox(run_id=run_id, limit=20)
+        if not rows:
+            return preferred_targets or [], [], None, None
+        by_channel = {row["channel"]: row for row in rows}
+        targets = list(dict.fromkeys([*(preferred_targets or []), *by_channel]))
+        receipts = [
+            self._delivery_receipt_from_outbox(by_channel[target])
+            for target in targets
+            if target in by_channel
+        ]
+        incomplete = any(
+            row["status"] in {"pending", "sending", "retrying", "dead_letter"} for row in rows
+        )
+        status = (
+            "partial"
+            if incomplete
+            else "skipped"
+            if all(row["status"] == "skipped" for row in rows)
+            else "success"
+        )
+        completed = sum(row["status"] in {"succeeded", "skipped"} for row in rows)
+        message = f"{completed}/{len(rows)} 个交付目标已完成；" + (
+            "其余目标仍在重试或等待人工处理。" if incomplete else "全部目标均已确认。"
+        )
+        return targets, receipts, status, message
+
     def list_runs(self, limit: int = 30) -> list[dict]:
         rows = self.db.list_runs(limit)
         for row in rows:
@@ -895,11 +1375,46 @@ class BidPilotService:
             row["opportunity_assessments"] = (
                 json.loads(row.pop("assessment_json", "{}") or "{}") or None
             )
+            preferred = row["spec"].get("delivery_targets") or [
+                row["spec"].get("delivery_channel", "local")
+            ]
+            targets, receipts, status, message = self._run_delivery_state(row["id"], preferred)
+            row.update(
+                {
+                    "delivery_channel": targets[0] if targets else None,
+                    "delivery_targets": targets,
+                    "delivery_receipts": [receipt.model_dump(mode="json") for receipt in receipts],
+                    "delivery_status": status,
+                    "delivery_message": message,
+                }
+            )
         return rows
 
     def get_run(self, run_id: str) -> dict | RunResult | None:
         if run_id in self._live_results:
-            return self._live_results[run_id]
+            live = self._live_results[run_id]
+            targets, receipts, status, message = self._run_delivery_state(
+                run_id,
+                live.delivery_targets,
+            )
+            if receipts:
+                persisted = self.db.get_run(run_id)
+                live = live.model_copy(
+                    update={
+                        "status": (
+                            RunStatus(persisted["status"])
+                            if persisted and persisted.get("status")
+                            else live.status
+                        ),
+                        "delivery_channel": targets[0],
+                        "delivery_targets": targets,
+                        "delivery_receipts": receipts,
+                        "delivery_status": status,
+                        "delivery_message": message,
+                    }
+                )
+                self._live_results[run_id] = live
+            return live
         row = self.db.get_run(run_id)
         if row:
             row["spec"] = json.loads(row.pop("spec_json"))
@@ -908,6 +1423,19 @@ class BidPilotService:
             row["intelligence_brief"] = json.loads(row.pop("brief_json", "{}") or "{}") or None
             row["opportunity_assessments"] = (
                 json.loads(row.pop("assessment_json", "{}") or "{}") or None
+            )
+            preferred = row["spec"].get("delivery_targets") or [
+                row["spec"].get("delivery_channel", "local")
+            ]
+            targets, receipts, status, message = self._run_delivery_state(run_id, preferred)
+            row.update(
+                {
+                    "delivery_channel": targets[0] if targets else None,
+                    "delivery_targets": targets,
+                    "delivery_receipts": [receipt.model_dump(mode="json") for receipt in receipts],
+                    "delivery_status": status,
+                    "delivery_message": message,
+                }
             )
         return row
 

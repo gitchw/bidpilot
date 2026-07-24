@@ -28,7 +28,7 @@ from bidpilot.models import (
 )
 from bidpilot.runtime_config import RuntimeConfigUpdate
 from bidpilot.scheduler import SubscriptionWorker, next_schedule_time
-from bidpilot.service import BidPilotService, RunExecutionError, SubscriptionBusyError
+from bidpilot.service import BidPilotService, SubscriptionBusyError
 from bidpilot.sources.base import SourceAdapter
 
 
@@ -446,7 +446,7 @@ async def test_durable_worker_continues_after_service_restart(tmp_path: Path):
     assert all(attempt["success"] for attempt in attempts)
 
 
-async def test_delivery_failure_keeps_increment_uncommitted_and_schedules_retry(
+async def test_delivery_failure_keeps_increment_uncommitted_and_queues_target_retry(
     tmp_path: Path, monkeypatch
 ):
     service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
@@ -460,19 +460,14 @@ async def test_delivery_failure_keeps_increment_uncommitted_and_schedules_retry(
         raise RuntimeError("模拟投递服务不可用")
 
     monkeypatch.setattr(service.delivery, "deliver", fail_delivery)
-    before = datetime.now(ZoneInfo("Asia/Shanghai"))
-    try:
-        await service.run_subscription(subscription.id, trigger_reason="schedule")
-    except RunExecutionError as exc:
-        assert "模拟投递服务不可用" in str(exc)
-    else:
-        raise AssertionError("Expected delivery failure")
+    before = datetime.now(ZoneInfo("UTC"))
+    result = await service.run_subscription(subscription.id, trigger_reason="schedule")
 
     row = service.db.get_subscription(subscription.id)
-    assert row["last_status"] == "failed"
-    assert row["consecutive_failures"] == 1
-    retry_at = datetime.fromisoformat(row["next_run_at"])
-    assert timedelta(seconds=45) <= retry_at - before <= timedelta(seconds=90)
+    assert result.status == RunStatus.PARTIAL
+    assert result.delivery_status == "partial"
+    assert row["last_status"] == "partial"
+    assert row["consecutive_failures"] == 0
     with service.db.connection() as conn:
         delivered = conn.execute(
             "SELECT COUNT(*) FROM delivery_ledger WHERE subscription_id=?",
@@ -483,10 +478,13 @@ async def test_delivery_failure_keeps_increment_uncommitted_and_schedules_retry(
             (subscription.id,),
         ).fetchone()[0]
     assert delivered == 0
-    assert reports == 0
+    assert reports == 1
     attempts = service.db.list_delivery_attempts(subscription_id=subscription.id)
     assert len(attempts) == 1
     assert attempts[0]["success"] == 0
+    assert attempts[0]["outbox_status"] == "retrying"
+    retry_at = datetime.fromisoformat(attempts[0]["next_attempt_at"])
+    assert timedelta(seconds=45) <= retry_at - before <= timedelta(seconds=90)
 
 
 def test_subscription_lease_blocks_duplicate_claim_and_recovers_after_expiry(tmp_path: Path):
@@ -1248,7 +1246,7 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
                 continue
             operations.append((method.upper(), path, operation))
 
-    assert len(operations) == 50
+    assert len(operations) == 52
     for method, path, operation in operations:
         description = operation.get("description", "")
         documented_operation = f"`{method} {path}`"

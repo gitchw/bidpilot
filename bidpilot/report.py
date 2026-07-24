@@ -21,12 +21,14 @@ MUTED = "657085"
 LIGHT = "EAF0FF"
 
 
-def safe_filename(raw_query: str, timestamp: datetime) -> str:
+def safe_filename(raw_query: str, timestamp: datetime, suffix: str | None = None) -> str:
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw_query)
     cleaned = re.sub(r"\s+", "", cleaned).strip("._")
     if len(cleaned) > 90:
         cleaned = cleaned[:90]
-    return f"{cleaned}_{timestamp.strftime('%Y%m%d%H%M')}.docx"
+    safe_suffix = re.sub(r"[^\w.-]+", "_", suffix or "").strip("._")[:40]
+    suffix_part = f"_{safe_suffix}" if safe_suffix else ""
+    return f"{cleaned}_{timestamp.strftime('%Y%m%d%H%M')}{suffix_part}.docx"
 
 
 def _set_cell_shading(cell, color: str) -> None:
@@ -119,10 +121,11 @@ def generate_report(
     generated_at: datetime | None = None,
     incremental: bool = False,
     intelligence_brief: IntelligenceBrief | None = None,
+    filename_suffix: str | None = None,
 ) -> Path:
     generated_at = generated_at or datetime.now(ZoneInfo(spec.schedule.timezone))
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / safe_filename(spec.raw_query, generated_at)
+    path = output_dir / safe_filename(spec.raw_query, generated_at, filename_suffix)
 
     document = Document()
     _configure_document(document)

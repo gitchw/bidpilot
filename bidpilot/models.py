@@ -4,7 +4,20 @@ from datetime import date, datetime, time
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def normalize_delivery_targets(
+    targets: list[str] | None,
+    legacy_channel: str | None = None,
+) -> list[str]:
+    values = targets if targets is not None else [legacy_channel or "local"]
+    cleaned = list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
+    if not cleaned:
+        raise ValueError("至少选择一个交付目标")
+    if len(cleaned) > 10:
+        raise ValueError("单个任务最多选择 10 个交付目标")
+    return cleaned
 
 
 class ScheduleKind(StrEnum):
@@ -514,6 +527,11 @@ class TenderQuerySpec(BaseModel):
     end_date: date = Field(description="检索结束日期，含当天")
     schedule: IntentSchedule = Field(default_factory=IntentSchedule, description="执行计划")
     delivery_channel: str = Field(default="local", description="解析出的投递通道 ID")
+    delivery_targets: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="实际交付目标列表；历史数据为空时自动使用 delivery_channel",
+    )
     slot_confidence: dict[str, float] = Field(
         default_factory=dict,
         description="主题、地域、时间和计划字段置信度",
@@ -542,6 +560,16 @@ class TenderQuerySpec(BaseModel):
                 cleaned.append(normalized)
                 seen.add(key)
         return cleaned
+
+    @model_validator(mode="after")
+    def normalize_delivery_compatibility(self) -> TenderQuerySpec:
+        targets = normalize_delivery_targets(
+            self.delivery_targets or None,
+            self.delivery_channel,
+        )
+        self.delivery_targets = targets
+        self.delivery_channel = targets[0]
+        return self
 
     @field_validator("exclude_keywords")
     @classmethod
@@ -869,6 +897,16 @@ class SearchExplanation(BaseModel):
     )
 
 
+class DeliveryTargetReceipt(BaseModel):
+    outbox_id: str | None = None
+    channel: str
+    status: Literal["succeeded", "skipped", "retrying", "dead_letter"]
+    message: str
+    external_id: str | None = None
+    attempt_count: int = Field(default=0, ge=0)
+    next_attempt_at: datetime | None = None
+
+
 class RunResult(BaseModel):
     run_id: str
     status: RunStatus
@@ -897,6 +935,8 @@ class RunResult(BaseModel):
     completed_at: datetime | None = None
     warnings: list[str] = Field(default_factory=list)
     delivery_channel: str | None = None
+    delivery_targets: list[str] = Field(default_factory=list)
+    delivery_receipts: list[DeliveryTargetReceipt] = Field(default_factory=list)
     delivery_status: str | None = None
     delivery_message: str | None = None
 
@@ -909,6 +949,7 @@ class SubscriptionCreate(BaseModel):
                     "name": "深圳充电桩日报",
                     "query": "每天9点汇总最近1个月深圳充电桩信息",
                     "delivery_channel": "local",
+                    "delivery_targets": ["local", "email"],
                     "delivery_policy": "always",
                     "run_immediately": True,
                 }
@@ -919,11 +960,25 @@ class SubscriptionCreate(BaseModel):
     name: str = Field(description="用户可读的订阅名称", min_length=1, max_length=100)
     query: str = Field(description="必须包含可识别计划的中文规则", min_length=2, max_length=500)
     delivery_channel: str = Field(default="local", description="已配置的投递通道 ID")
+    delivery_targets: list[str] | None = Field(
+        default=None,
+        max_length=10,
+        description="可同时投递的目标列表；省略时兼容使用 delivery_channel",
+    )
     delivery_policy: DeliveryPolicy = Field(
         default=DeliveryPolicy.ALWAYS,
         description="always 每轮回执；on_change 仅变化外发",
     )
     run_immediately: bool = Field(default=True, description="创建后是否立即进入待领取队列")
+
+    @model_validator(mode="after")
+    def normalize_delivery_compatibility(self) -> SubscriptionCreate:
+        self.delivery_targets = normalize_delivery_targets(
+            self.delivery_targets,
+            self.delivery_channel,
+        )
+        self.delivery_channel = self.delivery_targets[0]
+        return self
 
 
 class BuyerSubscriptionCreate(SubscriptionCreate):
@@ -937,6 +992,7 @@ class BuyerSubscriptionCreate(SubscriptionCreate):
                     "name": "安徽大学采购监控",
                     "query": "每天9点汇总最近30天服务器采购公告",
                     "delivery_channel": "local",
+                    "delivery_targets": ["local"],
                     "delivery_policy": "on_change",
                     "run_immediately": False,
                 }
@@ -954,7 +1010,21 @@ class SubscriptionUpdate(BaseModel):
         max_length=500,
     )
     delivery_channel: str | None = Field(default=None, description="新投递通道 ID")
+    delivery_targets: list[str] | None = Field(
+        default=None,
+        max_length=10,
+        description="替换后的多目标列表；只传旧 delivery_channel 时自动转为单目标",
+    )
     delivery_policy: DeliveryPolicy | None = Field(default=None, description="新无新增策略")
+
+    @model_validator(mode="after")
+    def normalize_delivery_compatibility(self) -> SubscriptionUpdate:
+        if self.delivery_targets is not None:
+            self.delivery_targets = normalize_delivery_targets(self.delivery_targets)
+            self.delivery_channel = self.delivery_targets[0]
+        elif self.delivery_channel is not None:
+            self.delivery_targets = normalize_delivery_targets(None, self.delivery_channel)
+        return self
 
 
 class Subscription(BaseModel):
@@ -963,6 +1033,7 @@ class Subscription(BaseModel):
     spec: TenderQuerySpec
     enabled: bool = True
     delivery_channel: str = "local"
+    delivery_targets: list[str] = Field(default_factory=list)
     delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS
     created_at: datetime
     updated_at: datetime | None = None
@@ -974,6 +1045,15 @@ class Subscription(BaseModel):
     consecutive_failures: int = 0
     last_run_id: str | None = None
     in_progress: bool = False
+
+    @model_validator(mode="after")
+    def normalize_delivery_compatibility(self) -> Subscription:
+        self.delivery_targets = normalize_delivery_targets(
+            self.delivery_targets or None,
+            self.delivery_channel,
+        )
+        self.delivery_channel = self.delivery_targets[0]
+        return self
 
 
 class HealthResponse(BaseModel):
