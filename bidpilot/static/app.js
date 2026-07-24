@@ -16,7 +16,10 @@ const state = {
   activeTab: "search",
   opportunityView: "opportunities",
   opportunityProjectKeys: new Set(),
+  opportunityLoadSequence: 0,
   buyerRadarLoadSequence: 0,
+  subscriptionLoadSequence: 0,
+  subscriptionExpandedLogs: new Set(),
   sources: [],
   profile: null,
   profileLoaded: false,
@@ -51,6 +54,10 @@ const ASSESSMENT_STATUS_LABELS = {
   applied: "AI 语义复核已通过", cached: "复用已验证 AI 结果", disabled: "AI 已关闭 · 本地判断",
   not_configured: "模型未配置 · 本地判断", profile_missing: "画像未填写 · 通用判断",
   invalid_response: "AI 输出已拒绝 · 本地判断", unavailable: "模型不可用 · 本地判断", empty: "本轮无可信结果",
+};
+const DELIVERY_STATUS_LABELS = {
+  pending: "等待发送", sending: "正在发送", retrying: "等待重试",
+  succeeded: "发送成功", dead_letter: "需要人工处理", skipped: "已跳过",
 };
 
 function escapeHtml(value = "") {
@@ -173,7 +180,109 @@ async function api(path, options = {}) {
 }
 
 function currentQuery() { return $("#query-input").value.trim(); }
-function currentChannel() { return $("#delivery-channel").value || "local"; }
+
+function deliveryChannel(channelId) {
+  return state.system?.delivery_channels?.find((item) => item.id === channelId) || null;
+}
+
+function deliveryChannelName(channelId) {
+  return deliveryChannel(channelId)?.name || channelId || "未知渠道";
+}
+
+function deliveryCapabilityMarkup(channel) {
+  if (!channel) return "";
+  const capabilities = [
+    ["supports_text", "文字"], ["supports_file", "Word"], ["supports_link", "链接"],
+  ].filter(([field]) => channel[field]).map(([, label]) => `<span>${label}</span>`).join("");
+  return `<span class="delivery-capabilities">${capabilities || "<span>结构化事件</span>"}</span>`;
+}
+
+function normalizeDeliveryTargets(targets) {
+  const values = [...new Set((targets || []).map((item) => String(item || "").trim()).filter(Boolean))];
+  return values.length ? values.slice(0, 10) : ["local"];
+}
+
+function selectedDeliveryTargets(root, fallback = true) {
+  if (!root) return fallback ? ["local"] : [];
+  const values = [...root.querySelectorAll("[data-delivery-target]:checked")].map((input) => input.value);
+  if (!values.length) return fallback ? ["local"] : [];
+  return normalizeDeliveryTargets(values);
+}
+
+function deliveryPayload(targets) {
+  const normalized = normalizeDeliveryTargets(targets);
+  return { delivery_targets: normalized, delivery_channel: normalized[0] };
+}
+
+function currentDeliveryTargets() {
+  return selectedDeliveryTargets($("#run-delivery-targets"));
+}
+
+function currentChannel() { return currentDeliveryTargets()[0] || "local"; }
+
+function deliveryTargetPickerMarkup(selectedTargets = ["local"], compatibilityId = "") {
+  const selected = new Set(normalizeDeliveryTargets(selectedTargets));
+  const channels = state.system?.delivery_channels || [];
+  const options = channels.map((channel) => {
+    const checked = selected.has(channel.id);
+    const unavailable = !channel.configured;
+    const canToggle = channel.configured || checked;
+    const configure = unavailable && channel.configuration_group !== "system"
+      ? `<button class="delivery-configure-link" type="button" data-config-group="${escapeHtml(channel.configuration_group)}" aria-label="配置 ${escapeHtml(channel.name)}">去配置</button>` : "";
+    return `<div class="delivery-target-option ${checked ? "selected" : ""} ${unavailable ? "unconfigured" : ""}"><label title="${escapeHtml(channel.message || "")}"><input type="checkbox" data-delivery-target value="${escapeHtml(channel.id)}" ${checked ? "checked" : ""} ${canToggle ? "" : "disabled"}><span class="delivery-target-copy"><b>${escapeHtml(channel.name)}</b>${deliveryCapabilityMarkup(channel)}<small>${escapeHtml(channel.message || "")}</small></span></label>${configure}</div>`;
+  }).join("");
+  const legacy = normalizeDeliveryTargets(selectedTargets)[0];
+  const id = compatibilityId ? ` id="${escapeHtml(compatibilityId)}"` : "";
+  return `<div class="delivery-target-picker">${options || '<div class="delivery-target-loading">尚未读取到交付渠道，请刷新系统状态。</div>'}</div><input class="delivery-channel-compat"${id} type="hidden" value="${escapeHtml(legacy)}"><p class="delivery-target-selection" aria-live="polite"></p>`;
+}
+
+function syncDeliveryTargetPicker(root, changedInput = null) {
+  if (!root) return ["local"];
+  let targets = selectedDeliveryTargets(root, false);
+  if (!targets.length && changedInput) {
+    changedInput.checked = true;
+    targets = [changedInput.value];
+    toast("至少需要保留一个交付目标");
+  }
+  if (targets.length > 10 && changedInput) {
+    changedInput.checked = false;
+    targets = selectedDeliveryTargets(root, false);
+    toast("一次最多选择 10 个交付目标");
+  }
+  targets = normalizeDeliveryTargets(targets);
+  root.querySelectorAll(".delivery-target-option").forEach((option) => {
+    option.classList.toggle("selected", option.querySelector("[data-delivery-target]")?.checked || false);
+  });
+  const mirror = root.querySelector(".delivery-channel-compat"); if (mirror) mirror.value = targets[0];
+  const summary = root.querySelector(".delivery-target-selection");
+  if (summary) summary.textContent = `已选择 ${targets.length} 个：${targets.map(deliveryChannelName).join("、")}。外部渠道采用至少一次投递语义。`;
+  if (root.id === "run-delivery-targets") renderChannelHint();
+  return targets;
+}
+
+async function openDeliveryConfiguration(group) {
+  await activateTab("config");
+  await loadConfig(false);
+  const card = $(`[data-config-group="${group}"]`);
+  if (!card) return toast("没有找到对应的配置卡，请刷新页面后重试", 5000);
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.classList.add("attention-card");
+  window.setTimeout(() => card.classList.remove("attention-card"), 2600);
+}
+
+function bindDeliveryTargetPicker(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-delivery-target]").forEach((input) => input.addEventListener("change", () => syncDeliveryTargetPicker(root, input)));
+  root.querySelectorAll(".delivery-configure-link").forEach((button) => button.addEventListener("click", () => openDeliveryConfiguration(button.dataset.configGroup).catch((error) => toast(error.message, 6000))));
+  syncDeliveryTargetPicker(root);
+}
+
+function renderDeliveryTargetPicker(root, selectedTargets = ["local"]) {
+  if (!root) return;
+  const legend = root.querySelector("legend")?.outerHTML || "";
+  root.innerHTML = `${legend}${deliveryTargetPickerMarkup(selectedTargets, root.id === "run-delivery-targets" ? "delivery-channel" : "")}`;
+  bindDeliveryTargetPicker(root);
+}
 
 async function parseIntent() {
   const query = currentQuery(); if (query.length < 2) return toast("请先输入查询问题");
@@ -229,7 +338,8 @@ function animatePipeline() {
 
 function setRunControlsBusy(busy) {
   state.runInFlight = busy;
-  ["#query-input", "#delivery-channel", "#delivery-policy", "#parse-button"].forEach((selector) => { const control = $(selector); if (control) control.disabled = busy; });
+  ["#query-input", "#delivery-policy", "#parse-button"].forEach((selector) => { const control = $(selector); if (control) control.disabled = busy; });
+  $$("#run-delivery-targets input, #run-delivery-targets button").forEach((control) => { control.disabled = busy || (control.matches("[data-delivery-target]") && control.closest(".unconfigured") && !control.checked); });
   $$("[data-query]").forEach((control) => { control.disabled = busy; });
   const button = $("#run-button"); button.disabled = busy;
   button.querySelector("span").textContent = busy ? "多源采集中…" : "启动情报任务";
@@ -238,6 +348,7 @@ function setRunControlsBusy(busy) {
 async function runQuery() {
   const query = currentQuery(); if (query.length < 2) return toast("请先输入查询问题");
   if (state.runInFlight) return toast("当前情报任务正在执行，请等待本轮完成");
+  const targets = currentDeliveryTargets(); if (!targets.length) return toast("请至少选择一个交付目标");
   const sequence = ++state.runRequestSequence;
   let runCompleted = false;
   setRunControlsBusy(true);
@@ -249,7 +360,7 @@ async function runQuery() {
     }
     $("#run-panel").classList.remove("hidden"); $("#results-panel").classList.add("hidden"); animatePipeline();
     $("#run-panel").scrollIntoView({ behavior: "smooth", block: "center" });
-    const run = await api("/api/v1/runs", { method: "POST", body: JSON.stringify({ query, delivery_channel: currentChannel() }) });
+    const run = await api("/api/v1/runs", { method: "POST", body: JSON.stringify({ query, ...deliveryPayload(targets) }) });
     if (sequence !== state.runRequestSequence) return;
     state.run = run; state.qaAnswer = null; runCompleted = true;
     clearInterval(window.__pipeTimer); $$(".pipe-step").forEach((step) => { step.classList.remove("active"); step.classList.add("done"); });
@@ -266,6 +377,22 @@ async function runQuery() {
     }
   }
   finally { if (sequence === state.runRequestSequence) setRunControlsBusy(false); }
+}
+
+function renderDeliveryReceipts(run) {
+  const root = $("#delivery-receipts"); if (!root) return;
+  const receipts = run?.delivery_receipts || [];
+  if (!receipts.length) { root.innerHTML = ""; root.classList.add("hidden"); return; }
+  const cards = receipts.map((receipt) => {
+    const status = DELIVERY_STATUS_LABELS[receipt.status] || receipt.status;
+    const next = receipt.next_attempt_at ? `<span>下次尝试：${escapeHtml(formatTime(receipt.next_attempt_at))}</span>` : "";
+    const external = receipt.external_id ? `<span>平台回执：${escapeHtml(receipt.external_id)}</span>` : "";
+    const outbox = receipt.outbox_id ? `<span title="${escapeHtml(receipt.outbox_id)}">投递任务：${escapeHtml(receipt.outbox_id.slice(0, 8))}</span>` : "";
+    return `<article class="delivery-receipt ${escapeHtml(receipt.status)}"><div><b>${escapeHtml(deliveryChannelName(receipt.channel))}</b><span class="delivery-receipt-status">${escapeHtml(status)}</span></div><p>${escapeHtml(receipt.message || "暂无详细回执")}</p><footer><span>已尝试 ${receipt.attempt_count || 0} 次</span>${next}${external}${outbox}</footer></article>`;
+  }).join("");
+  const completed = receipts.filter((item) => ["succeeded", "skipped"].includes(item.status)).length;
+  root.innerHTML = `<div class="delivery-receipts-head"><div><p class="eyebrow">DELIVERY RECEIPTS</p><h3>逐目标投递回执</h3></div><span>${completed} / ${receipts.length} 已完成</span></div><p class="delivery-semantics">成功目标不会因其他目标失败而重发；外部平台已接收但本地确认前崩溃的极小窗口仍可能产生重复。</p><div class="delivery-receipt-grid">${cards}</div>`;
+  root.classList.remove("hidden");
 }
 
 function renderResults(run, scroll = true) {
@@ -286,6 +413,7 @@ function renderResults(run, scroll = true) {
     const statusLabel = SOURCE_STATUS_LABELS[item.status] || item.status;
     return `<span class="source-chip ${escapeHtml(item.status)}" title="${escapeHtml(rejection || item.message || "无额外诊断")}">${escapeHtml(item.source)} · 扫描 ${item.scanned_count ?? item.fetched_count} / 候选 ${item.fetched_count} / 保留 ${item.kept_count} · ${escapeHtml(statusLabel)}</span>`;
   }).join("");
+  renderDeliveryReceipts(run);
   renderIntelligenceBrief(run);
   renderRetrievalTrace(run);
   renderRunQA(run);
@@ -547,14 +675,14 @@ function renderEmptyDiagnosis(explanation, root) {
 
 function bindResultOpportunityActions() {
   $$(".add-opportunity").forEach((button) => button.addEventListener("click", async () => {
-    button.disabled = true; button.textContent = "加入中…";
+    button.dataset.busy = "true"; button.disabled = true; button.textContent = "加入中…";
     try {
       const opportunity = await api("/api/v1/opportunities", { method: "POST", body: JSON.stringify({ canonical_id: button.dataset.canonical, version_hash: button.dataset.version }) });
       state.opportunityProjectKeys.add(opportunity.project_key);
-      button.textContent = "✓ 已加入";
+      delete button.dataset.busy; button.textContent = "✓ 已加入";
       toast(`已加入机会：${opportunity.record.title}`, 5000);
       await loadOpportunities();
-    } catch (error) { button.disabled = false; button.textContent = "＋ 加入机会"; toast(error.message, 5000); }
+    } catch (error) { delete button.dataset.busy; button.disabled = false; button.textContent = "＋ 加入机会"; toast(error.message, 5000); }
   }));
 }
 
@@ -586,12 +714,21 @@ function opportunityCard(item) {
 }
 
 async function loadOpportunities() {
+  const sequence = ++state.opportunityLoadSequence;
   const filter = $("#opportunity-stage-filter")?.value || "";
   const search = $("#opportunity-search")?.value.trim() || "";
   const params = new URLSearchParams();
   if (filter) params.set("stage", filter); if (search) params.set("search", search);
   const rows = await api(`/api/v1/opportunities${params.size ? `?${params}` : ""}`);
-  rows.forEach((item) => state.opportunityProjectKeys.add(item.project_key));
+  if (sequence !== state.opportunityLoadSequence) return [];
+  if (!filter && !search) state.opportunityProjectKeys = new Set(rows.map((item) => item.project_key));
+  else rows.forEach((item) => state.opportunityProjectKeys.add(item.project_key));
+  $$(".add-opportunity[data-canonical][data-version]").forEach((button) => {
+    if (button.dataset.busy === "true") return;
+    const record = state.run?.records?.find((item) => item.canonical_id === button.dataset.canonical && item.version_hash === button.dataset.version);
+    const tracked = Boolean(record && state.opportunityProjectKeys.has(record.project_key));
+    button.disabled = tracked; button.textContent = tracked ? "✓ 已加入" : "＋ 加入机会";
+  });
   const summary = $("#opportunity-summary"), board = $("#opportunity-board");
   if (!summary || !board) return rows;
   const now = Date.now(), soon = now + 3 * 86400000;
@@ -740,7 +877,6 @@ function buyerRadarCard(item) {
   const topic = item.top_topics?.[0]?.name || "采购项目";
   const monitorName = `${item.buyer_name}采购监控`.slice(0, 100);
   const monitorQuery = `每天9点汇总最近1个月${topic}采购公告`.slice(0, 500);
-  const channelChoices = channelOptions("local") || '<option value="local">本地报告</option>';
   return `<article class="buyer-radar-card" data-buyer-id="${escapeHtml(item.buyer_id)}">
     <div class="buyer-radar-card-head"><div><p class="eyebrow">VERIFIED LOCAL BUYER</p><h3>${escapeHtml(item.buyer_name)}</h3><span>${escapeHtml((item.sources || []).join(" · ") || "来源未标注")}</span></div><div class="buyer-activity-count"><b>${item.notice_count}</b><span>本地公告</span></div></div>
     <div class="buyer-radar-metrics"><span><small>估算项目</small><b>${item.project_count}</b></span><span><small>内容版本</small><b>${item.version_count}</b></span><span><small>最早活动</small><b>${escapeHtml(item.first_activity_at.slice(0, 10))}</b></span><span><small>最近活动</small><b>${escapeHtml(item.latest_activity_at.slice(0, 10))}</b></span></div>
@@ -750,7 +886,7 @@ function buyerRadarCard(item) {
     <details class="buyer-monitor-editor"><summary>＋ 为这个采购单位创建自动监控</summary><div>
       <label><span>任务名称</span><input class="buyer-monitor-name" maxlength="100" value="${escapeHtml(monitorName)}"></label>
       <label class="wide"><span>自然语言规则</span><textarea class="buyer-monitor-query" rows="3" maxlength="500">${escapeHtml(monitorQuery)}</textarea><small>必须写清每天、每周、每月或未来某个时间；采购单位已由系统锁定，不必重复填写。</small></label>
-      <label><span>投递方式</span><select class="buyer-monitor-channel">${channelChoices}</select></label>
+      <fieldset class="delivery-target-control buyer-monitor-targets wide"><legend>投递目标（可以同时选择多个）</legend>${deliveryTargetPickerMarkup(["local"])}</fieldset>
       <label><span>无新增时</span><select class="buyer-monitor-policy"><option value="on_change">保持安静</option><option value="always">也发送回执</option></select></label>
       <label class="buyer-monitor-immediate"><input class="buyer-monitor-run" type="checkbox" checked><span><b>创建后立即检查一次</b><small>长期任务仍会持久保存；worker 离线时会等待恢复。</small></span></label>
       <div class="buyer-monitor-action"><button class="primary-button compact create-buyer-monitor">创建精准监控</button><span class="buyer-monitor-state" aria-live="polite"></span></div>
@@ -760,6 +896,7 @@ function buyerRadarCard(item) {
 
 function bindBuyerRadarActions() {
   $$(".buyer-radar-card").forEach((card) => {
+    bindDeliveryTargetPicker(card.querySelector(".buyer-monitor-targets"));
     card.querySelector(".create-buyer-monitor").addEventListener("click", async (event) => {
       const button = event.currentTarget;
       const status = card.querySelector(".buyer-monitor-state");
@@ -767,6 +904,8 @@ function bindBuyerRadarActions() {
       const query = card.querySelector(".buyer-monitor-query").value.trim();
       if (!name) return toast("请先填写任务名称");
       if (query.length < 2) return toast("请写清要监控的主题和执行时间");
+      const targets = selectedDeliveryTargets(card.querySelector(".buyer-monitor-targets"));
+      if (!targets.length) return toast("请至少选择一个投递目标");
       button.disabled = true;
       button.textContent = "正在创建…";
       status.textContent = "正在锁定采购单位并解析执行计划…";
@@ -777,7 +916,7 @@ function bindBuyerRadarActions() {
           body: JSON.stringify({
             name,
             query,
-            delivery_channel: card.querySelector(".buyer-monitor-channel").value || "local",
+            ...deliveryPayload(targets),
             delivery_policy: card.querySelector(".buyer-monitor-policy").value,
             run_immediately: runImmediately,
           }),
@@ -1002,16 +1141,20 @@ function bindSourceAuthActions() {
 }
 
 function renderDeliveryOptions() {
-  const select = $("#delivery-channel"), previous = select.value || "local";
-  const channels = state.system?.delivery_channels || [];
-  select.innerHTML = channels.map((channel) => `<option value="${escapeHtml(channel.id)}" ${channel.configured ? "" : "disabled"}>${escapeHtml(channel.name)}${channel.configured ? "" : "（待配置）"}</option>`).join("");
-  select.value = channels.some((item) => item.id === previous && item.configured) ? previous : "local";
-  renderChannelHint();
+  const root = $("#run-delivery-targets"); if (!root) return;
+  const checked = selectedDeliveryTargets(root, false);
+  const previous = checked.length ? checked : [root.querySelector(".delivery-channel-compat")?.value || "local"];
+  renderDeliveryTargetPicker(root, previous);
 }
 
 function renderChannelHint() {
-  const channel = state.system?.delivery_channels?.find((item) => item.id === currentChannel());
-  $("#channel-hint").textContent = channel?.message || "请选择交付方式。";
+  const targets = currentDeliveryTargets();
+  const channels = targets.map(deliveryChannel).filter(Boolean);
+  const external = channels.filter((item) => item.push_capable).length;
+  const fileTargets = channels.filter((item) => item.supports_file).map((item) => item.name);
+  const linkOnly = channels.filter((item) => !item.supports_file && item.supports_link).map((item) => item.name);
+  const details = [fileTargets.length ? `可直接发送 Word：${fileTargets.join("、")}` : "", linkOnly.length ? `以消息/链接发送：${linkOnly.join("、")}` : ""].filter(Boolean).join("；");
+  $("#channel-hint").textContent = `${external ? `已选择 ${external} 个主动推送渠道` : "仅保存到报告中心，不主动推送"}${details ? `；${details}` : ""}。`;
 }
 
 function renderSchedulerHealth() {
@@ -1231,7 +1374,7 @@ function setConfigStatus(id, ready, readyLabel = "已就绪") {
 const CONFIG_SECRET_FIELDS = new Set([
   "llm_api_key", "feishu_webhook_url", "feishu_webhook_secret", "feishu_app_secret",
   "smtp_password", "dingtalk_webhook_url", "dingtalk_webhook_secret", "wecom_webhook_url",
-  "generic_webhook_url", "generic_webhook_bearer_token", "lan_admin_token",
+  "generic_webhook_url", "generic_webhook_bearer_token", "telegram_bot_token", "slack_webhook_url", "lan_admin_token",
 ]);
 
 function configFieldGroup(field) {
@@ -1314,6 +1457,7 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
     network_access_mode: config.network.access_mode, lan_access_policy: config.network.access_policy, lan_trusted_networks: config.network.trusted_networks, port: config.network.port,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
+    telegram_chat_id: config.telegram?.chat_id, telegram_message_thread_id: config.telegram?.message_thread_id, telegram_disable_notification: config.telegram?.disable_notification, telegram_protect_content: config.telegram?.protect_content,
     delivery_webhook_timeout: config.generic_webhook.timeout,
   };
   Object.entries(values).forEach(([field, value]) => { if (preserveFields.has(field)) return; const input = $(`[data-config="${field}"]`); if (input?.type === "checkbox") input.checked = Boolean(value); else if (input) input.value = value ?? ""; });
@@ -1328,6 +1472,8 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
     wecom_webhook_url: config.wecom.webhook_url.configured,
     generic_webhook_url: config.generic_webhook.webhook_url.configured,
     generic_webhook_bearer_token: config.generic_webhook.bearer_token.configured,
+    telegram_bot_token: config.telegram?.bot_token?.configured || false,
+    slack_webhook_url: config.slack?.webhook_url?.configured || false,
     lan_admin_token: config.network.lan_admin_token.configured,
   };
   Object.entries(secrets).forEach(([field, configured]) => renderSecretState(field, configured, preserveFields.has(field)));
@@ -1338,6 +1484,8 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
   setConfigStatus("dingtalk", config.dingtalk.ready, "机器人已就绪");
   setConfigStatus("wecom", config.wecom.ready, "机器人已就绪");
   setConfigStatus("generic", config.generic_webhook.ready, "接口已就绪");
+  setConfigStatus("telegram", config.telegram?.ready, "Bot 已就绪");
+  setConfigStatus("slack", config.slack?.ready, "Webhook 已就绪");
   $("#config-security-notice").textContent = config.security_notice;
   const policyLabels = { admin_token: "管理员令牌保护", trusted_lan: "可信局域网免令牌" };
   const effectiveScope = config.network.effective_access_mode === "lan" ? `局域网 ${config.network.effective_bind_host}:${config.network.effective_port} · ${policyLabels[config.network.effective_access_policy] || config.network.effective_access_policy}` : `仅本机 ${config.network.effective_bind_host}:${config.network.effective_port}`;
@@ -1464,11 +1612,14 @@ async function testModelConnection() {
 }
 
 function channelTestGroup(channel) {
-  if (channel.startsWith("feishu")) return "feishu";
-  if (channel === "email") return "email";
-  if (channel === "dingtalk_webhook") return "dingtalk";
-  if (channel === "wecom_webhook") return "wecom";
-  return "generic";
+  const configuredGroup = deliveryChannel(channel)?.configuration_group;
+  if (configuredGroup) return configuredGroup;
+  const fallback = {
+    feishu_webhook: "feishu", feishu_app: "feishu", email: "email",
+    dingtalk_webhook: "dingtalk", wecom_webhook: "wecom", generic_webhook: "generic",
+    telegram_bot: "telegram", slack_webhook: "slack",
+  };
+  return fallback[channel] || "generic";
 }
 
 async function testDeliveryChannel(button) {
@@ -1483,39 +1634,62 @@ async function testDeliveryChannel(button) {
   finally { button.disabled = false; button.textContent = original; }
 }
 
-function channelOptions(selected) {
-  return (state.system?.delivery_channels || []).map((channel) => `<option value="${escapeHtml(channel.id)}" ${channel.id === selected ? "selected" : ""} ${!channel.configured && channel.id !== selected ? "disabled" : ""}>${escapeHtml(channel.name)}${channel.configured ? "" : "（待配置）"}</option>`).join("");
+function deliveryTargetSummaryMarkup(targets) {
+  return normalizeDeliveryTargets(targets).map((target) => {
+    const channel = deliveryChannel(target);
+    return `<span class="subscription-target-chip ${channel?.configured === false ? "unconfigured" : ""}"><b>${escapeHtml(channel?.name || target)}</b>${deliveryCapabilityMarkup(channel)}</span>`;
+  }).join("");
+}
+
+function sameDeliveryTargets(left, right) {
+  const a = normalizeDeliveryTargets(left), b = normalizeDeliveryTargets(right);
+  return a.length === b.length && a.every((item) => b.includes(item));
 }
 
 function subscriptionState(row) {
   if (row.in_progress) return ["执行中", "warning"];
   if (!row.enabled) return row.spec.schedule.kind === "once" && row.last_run_at ? ["已完成", "muted"] : ["已暂停", "muted"];
   if (row.last_status === "failed") return ["等待重试", "danger"];
+  if (row.last_status === "partial") return ["部分渠道待处理", "warning"];
   if (row.next_run_at && new Date(row.next_run_at) <= new Date()) return ["待领取", "warning"];
   return ["已启用", "success"];
 }
 
 async function loadSubscriptions() {
+  const sequence = ++state.subscriptionLoadSequence;
   const [, rows] = await Promise.all([loadSystemStatus(), api("/api/v1/subscriptions")]);
+  if (sequence !== state.subscriptionLoadSequence) return [];
   const root = $("#subscription-list");
-  if (!rows.length) { root.innerHTML = `<div class="loading-card">尚无订阅。在情报检索中输入“每天 / 每周 / 今天 9:00 发送”即可创建。</div>`; return; }
+  if (!rows.length) { state.subscriptionExpandedLogs.clear(); root.innerHTML = `<div class="loading-card">尚无订阅。在情报检索中输入“每天 / 每周 / 今天 9:00 发送”即可创建。</div>`; return []; }
   root.innerHTML = rows.map((row) => {
     const [label, tone] = subscriptionState(row);
-    return `<article class="subscription-card" data-id="${escapeHtml(row.id)}">
+    const targets = normalizeDeliveryTargets(row.delivery_targets?.length ? row.delivery_targets : [row.delivery_channel]);
+    return `<article class="subscription-card" data-id="${escapeHtml(row.id)}" data-targets="${escapeHtml(targets.join(","))}">
       <div class="subscription-main"><div class="subscription-title"><div><h3>${escapeHtml(row.name)}</h3><p>${escapeHtml(row.spec.raw_query)}</p></div><span class="state-badge ${tone}">${label}</span></div>
       <div class="subscription-meta"><span><small>计划</small><b>${escapeHtml(row.spec.schedule.expression)}</b></span><span><small>下次执行</small><b>${formatTime(row.next_run_at)}</b></span><span><small>最近执行</small><b>${formatTime(row.last_run_at)}</b></span><span><small>最近新增</small><b>${row.last_new_count || 0} 条</b></span></div>
-      <p class="last-message ${row.last_status === "failed" ? "error" : ""}">${escapeHtml(row.last_message || "首轮运行尚未完成；worker 将按到期时间领取。")}</p></div>
-      <div class="subscription-controls"><label><span>交付</span><select class="subscription-channel">${channelOptions(row.delivery_channel)}</select></label><label><span>无新增</span><select class="subscription-policy"><option value="always" ${row.delivery_policy === "always" ? "selected" : ""}>发送回执</option><option value="on_change" ${row.delivery_policy === "on_change" ? "selected" : ""}>保持安静</option></select></label>
-      <div class="row-actions"><button class="secondary-button run-now" ${row.in_progress ? "disabled" : ""}>${row.in_progress ? "执行中…" : "立即执行"}</button><button class="secondary-button toggle-enabled" ${row.in_progress ? "disabled" : ""}>${row.in_progress ? "本轮完成后可暂停" : row.enabled ? "暂停后续" : "恢复"}</button><button class="secondary-button edit-subscription" ${row.in_progress ? "disabled" : ""}>编辑规则</button><button class="secondary-button view-log">日志</button><button class="danger-button delete-subscription" ${row.in_progress ? "disabled" : ""}>删除</button></div></div>
-      <div class="subscription-editor hidden"><div class="editor-grid"><label><span>订阅名称</span><input class="subscription-name" value="${escapeHtml(row.name)}" maxlength="100"></label><label class="editor-query"><span>自然语言规则</span><textarea class="subscription-query" rows="3" maxlength="500">${escapeHtml(row.spec.raw_query)}</textarea></label></div><p>修改后会重新计算下次执行时间；既有投递账本保留，避免同一公告重复提醒。</p><div class="editor-actions"><button class="primary-button compact save-subscription">保存规则</button><button class="secondary-button cancel-edit">取消</button></div></div>
+      <p class="last-message ${row.last_status === "failed" ? "error" : row.last_status === "partial" ? "warning" : ""}">${escapeHtml(row.last_message || "首轮运行尚未完成；worker 将按到期时间领取。")}</p></div>
+      <div class="subscription-controls"><div class="subscription-target-summary"><small>交付目标</small><div>${deliveryTargetSummaryMarkup(targets)}</div></div><label><span>无新增</span><select class="subscription-policy"><option value="always" ${row.delivery_policy === "always" ? "selected" : ""}>发送回执</option><option value="on_change" ${row.delivery_policy === "on_change" ? "selected" : ""}>保持安静</option></select></label>
+      <div class="row-actions"><button class="secondary-button run-now" ${row.in_progress ? "disabled" : ""}>${row.in_progress ? "执行中…" : "立即执行"}</button><button class="secondary-button toggle-enabled" ${row.in_progress ? "disabled" : ""}>${row.in_progress ? "本轮完成后可暂停" : row.enabled ? "暂停后续" : "恢复"}</button><button class="secondary-button edit-subscription" ${row.in_progress ? "disabled" : ""}>编辑规则</button><button class="secondary-button view-log" aria-expanded="false">日志</button><button class="danger-button delete-subscription" ${row.in_progress ? "disabled" : ""}>删除</button></div></div>
+      <div class="subscription-editor hidden"><div class="editor-grid"><label><span>订阅名称</span><input class="subscription-name" value="${escapeHtml(row.name)}" maxlength="100"></label><label class="editor-query"><span>自然语言规则</span><textarea class="subscription-query" rows="3" maxlength="500">${escapeHtml(row.spec.raw_query)}</textarea></label></div><fieldset class="delivery-target-control subscription-target-editor"><legend>交付目标（可以同时选择多个）</legend>${deliveryTargetPickerMarkup(targets)}</fieldset><p>修改规则会重新计算下次执行时间；保留目标的防重复账本不会清空。移除目标会取消该目标尚未发送的队列，保存前会再次确认。</p><div class="editor-actions"><button class="primary-button compact save-subscription">保存规则与目标</button><button class="secondary-button cancel-edit">取消</button></div></div>
       <div class="subscription-log hidden"></div></article>`;
   }).join("");
   bindSubscriptionActions();
+  const visibleIds = new Set(rows.map((row) => row.id));
+  [...state.subscriptionExpandedLogs].filter((id) => !visibleIds.has(id)).forEach((id) => state.subscriptionExpandedLogs.delete(id));
+  await Promise.allSettled([...state.subscriptionExpandedLogs].map((id) => {
+    const card = root.querySelector(`.subscription-card[data-id="${id}"]`);
+    return card ? loadSubscriptionLog(card, id) : Promise.resolve();
+  }));
+  return rows;
 }
 
 function bindSubscriptionActions() {
   $$(".subscription-card").forEach((card) => {
     const id = card.dataset.id;
+    const originalTargets = normalizeDeliveryTargets((card.dataset.targets || "local").split(","));
+    const nameInput = card.querySelector(".subscription-name"), queryInput = card.querySelector(".subscription-query");
+    const originalName = nameInput.value, originalQuery = queryInput.value;
+    bindDeliveryTargetPicker(card.querySelector(".subscription-target-editor"));
     card.querySelector(".run-now").addEventListener("click", async (event) => {
       const button = event.currentTarget; button.disabled = true; button.textContent = "执行中…";
       try { const run = await api(`/api/v1/subscriptions/${id}/run`, { method: "POST" }); toast(`运行完成：${run.new_count} 条新增；${run.delivery_message}`); await Promise.all([loadSubscriptions(), loadReports()]); }
@@ -1532,29 +1706,35 @@ function bindSubscriptionActions() {
       try { await api(`/api/v1/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ delivery_policy: event.target.value }) }); toast("通知策略已更新"); }
       catch (error) { toast(error.message); await loadSubscriptions(); }
     });
-    card.querySelector(".subscription-channel").addEventListener("change", async (event) => {
-      try { await api(`/api/v1/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ delivery_channel: event.target.value }) }); toast("交付通道已更新"); }
-      catch (error) { toast(error.message); await loadSubscriptions(); }
-    });
     card.querySelector(".edit-subscription").addEventListener("click", () => card.querySelector(".subscription-editor").classList.remove("hidden"));
-    card.querySelector(".cancel-edit").addEventListener("click", () => card.querySelector(".subscription-editor").classList.add("hidden"));
+    card.querySelector(".cancel-edit").addEventListener("click", () => {
+      nameInput.value = originalName; queryInput.value = originalQuery;
+      renderDeliveryTargetPicker(card.querySelector(".subscription-target-editor"), originalTargets);
+      card.querySelector(".subscription-editor").classList.add("hidden");
+    });
     card.querySelector(".save-subscription").addEventListener("click", async (event) => {
       const button = event.currentTarget;
       const name = card.querySelector(".subscription-name").value.trim();
       const query = card.querySelector(".subscription-query").value.trim();
       if (!name || query.length < 2) return toast("请填写订阅名称和完整规则");
+      const targets = selectedDeliveryTargets(card.querySelector(".subscription-target-editor"));
+      if (!targets.length) return toast("请至少选择一个投递目标");
+      const removed = originalTargets.filter((target) => !targets.includes(target));
+      if (removed.length && !window.confirm(`移除 ${removed.map(deliveryChannelName).join("、")} 会取消这些目标尚未发送或等待重试的任务；已成功记录仍会保留。确定保存吗？`)) return;
       button.disabled = true; button.textContent = "保存中…";
       try {
-        await api(`/api/v1/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ name, query }) });
-        toast("订阅规则已更新，下次执行时间已重新计算"); await loadSubscriptions();
-      } catch (error) { toast(error.message, 5000); button.disabled = false; button.textContent = "保存规则"; }
+        const payload = { name, query };
+        if (!sameDeliveryTargets(originalTargets, targets)) Object.assign(payload, deliveryPayload(targets));
+        await api(`/api/v1/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+        toast("订阅规则与交付目标已更新，下次执行时间已重新计算"); await loadSubscriptions();
+      } catch (error) { toast(error.message, 5000); button.disabled = false; button.textContent = "保存规则与目标"; }
     });
     card.querySelector(".view-log").addEventListener("click", () => toggleSubscriptionLog(card, id).catch((error) => toast(error.message)));
     card.querySelector(".delete-subscription").addEventListener("click", async (event) => {
       const button = event.currentTarget;
       if (button.dataset.confirm !== "true") {
         button.dataset.confirm = "true"; button.textContent = "再次点击确认";
-        toast("再次点击将停止任务并清除该订阅的增量账本", 8000);
+        toast("再次点击将停止任务、取消尚未发送的投递并清除该订阅的增量账本", 8000);
         clearTimeout(button.__confirmTimer);
         button.__confirmTimer = setTimeout(() => { if (button.isConnected) { button.dataset.confirm = "false"; button.textContent = "删除"; } }, 10000);
         return;
@@ -1568,17 +1748,80 @@ function bindSubscriptionActions() {
 
 async function toggleSubscriptionLog(card, id) {
   const root = card.querySelector(".subscription-log");
-  if (!root.classList.contains("hidden")) { root.classList.add("hidden"); return; }
-  root.classList.remove("hidden"); root.innerHTML = "正在读取运行与投递日志…";
-  const [runs, deliveries] = await Promise.all([api(`/api/v1/subscriptions/${id}/runs?limit=6`), api(`/api/v1/subscriptions/${id}/deliveries`)]);
-  if (!runs.length) { root.innerHTML = "尚无运行记录。"; return; }
+  const button = card.querySelector(".view-log");
+  if (!root.classList.contains("hidden")) {
+    root.classList.add("hidden"); state.subscriptionExpandedLogs.delete(id); button.textContent = "日志"; button.setAttribute("aria-expanded", "false"); return;
+  }
+  state.subscriptionExpandedLogs.add(id); button.textContent = "收起投递"; button.setAttribute("aria-expanded", "true");
+  await loadSubscriptionLog(card, id);
+}
+
+function legacyDeliveryRows(deliveries, runId) {
+  const seen = new Set();
+  return deliveries.filter((item) => item.run_id === runId && !seen.has(item.channel) && seen.add(item.channel)).map((item) => ({
+    id: item.outbox_id || null,
+    channel: item.channel,
+    status: item.outbox_status || (item.skipped ? "skipped" : item.success ? "succeeded" : "retrying"),
+    attempt_count: item.attempt_count || (item.success || item.skipped ? 1 : 0),
+    max_attempts: item.max_attempts || 5,
+    next_attempt_at: item.next_attempt_at,
+    last_error: item.last_error,
+    last_message: item.last_message || item.message,
+    external_id: item.external_id,
+    report_path: item.report_path,
+  }));
+}
+
+function deliveryOutboxRowMarkup(row) {
+  const status = DELIVERY_STATUS_LABELS[row.status] || row.status;
+  const message = row.last_error || row.last_message || (row.status === "pending" ? "已持久保存，等待 worker 领取。" : "暂无详细回执。");
+  const next = row.next_attempt_at && ["pending", "retrying"].includes(row.status) ? `<span>下次尝试 ${escapeHtml(formatTime(row.next_attempt_at))}</span>` : "";
+  const external = row.external_id ? `<span>平台回执 ${escapeHtml(row.external_id)}</span>` : "";
+  const retry = row.status === "dead_letter" && row.id ? `<button class="secondary-button compact retry-outbox" data-outbox-id="${escapeHtml(row.id)}" aria-label="只重试 ${escapeHtml(deliveryChannelName(row.channel))}">只重试此渠道</button>` : "";
+  return `<article class="delivery-outbox-row ${escapeHtml(row.status)}"><div class="delivery-outbox-head"><b>${escapeHtml(deliveryChannelName(row.channel))}</b><span>${escapeHtml(status)}</span></div><p>${escapeHtml(message)}</p><footer><span>尝试 ${row.attempt_count || 0} / ${row.max_attempts || 5}</span>${next}${external}${retry}</footer></article>`;
+}
+
+async function loadSubscriptionLog(card, id) {
+  const root = card.querySelector(".subscription-log"); if (!root) return;
+  const button = card.querySelector(".view-log");
+  root.classList.remove("hidden"); root.innerHTML = '<div class="subscription-log-loading">正在读取运行记录与逐目标投递队列…</div>';
+  if (button) { button.textContent = "收起投递"; button.setAttribute("aria-expanded", "true"); }
+  let runs, deliveries, outbox;
+  try {
+    [runs, deliveries, outbox] = await Promise.all([
+      api(`/api/v1/subscriptions/${id}/runs?limit=6`),
+      api(`/api/v1/subscriptions/${id}/deliveries`),
+      api(`/api/v1/subscriptions/${id}/delivery-outbox?limit=100`),
+    ]);
+  } catch (error) {
+    if (card.isConnected && state.subscriptionExpandedLogs.has(id)) root.innerHTML = `<div class="subscription-log-error">投递记录读取失败：${escapeHtml(error.message)}。请检查服务后点击“收起投递”，再重新打开。</div>`;
+    throw error;
+  }
+  if (!card.isConnected || !state.subscriptionExpandedLogs.has(id)) return;
+  if (!runs.length) { root.innerHTML = "尚无运行记录；创建后的首轮任务仍会由持久 worker 领取。"; return; }
+  const runLabels = { completed: "完成", partial: "部分完成", failed: "失败", running: "执行中", queued: "排队中" };
   root.innerHTML = runs.map((run) => {
-    const attempt = deliveries.find((item) => item.run_id === run.id);
-    const labels = { completed: "完成", partial: "部分完成", failed: "失败", running: "执行中", queued: "排队中" };
     const reason = run.trigger_reason === "schedule" ? "自动" : "手动";
-    const report = run.report_path ? `<a href="/api/v1/reports/${encodeURIComponent(run.report_path.replaceAll("\\", "/").split("/").pop())}">报告 ↗</a>` : "";
-    return `<div class="log-row"><span class="log-status ${escapeHtml(run.status)}">${labels[run.status] || escapeHtml(run.status)}</span><b>${formatTime(run.started_at)} · ${reason}</b><span>发现 ${run.result_count} / 新增 ${run.new_count}</span><em>${escapeHtml(attempt?.message || run.error || "已完成")} ${report}</em></div>`;
+    const targetRows = outbox.filter((item) => item.run_id === run.id);
+    const legacyRows = targetRows.length ? [] : legacyDeliveryRows(deliveries, run.id);
+    const report = run.report_path ? `<a href="/api/v1/reports/${encodeURIComponent(run.report_path.replaceAll("\\", "/").split("/").pop())}">下载本轮报告 ↗</a>` : "";
+    const rows = [...targetRows, ...legacyRows];
+    return `<section class="subscription-run-log"><div class="subscription-run-head"><span class="log-status ${escapeHtml(run.status)}">${runLabels[run.status] || escapeHtml(run.status)}</span><div><b>${formatTime(run.started_at)} · ${reason}</b><span>发现 ${run.result_count} / 新增 ${run.new_count}</span></div>${report}</div>${run.error ? `<p class="subscription-run-error">${escapeHtml(run.error)}</p>` : ""}<div class="delivery-outbox-list">${rows.length ? rows.map(deliveryOutboxRowMarkup).join("") : '<p class="delivery-outbox-empty">这轮没有外部投递任务；旧数据可能只保留总体运行记录。</p>'}</div></section>`;
   }).join("");
+  root.querySelectorAll(".retry-outbox").forEach((retryButton) => retryButton.addEventListener("click", async () => {
+    const outboxId = retryButton.dataset.outboxId;
+    retryButton.disabled = true; retryButton.textContent = "正在重新排队…";
+    try {
+      await api(`/api/v1/delivery-outbox/${encodeURIComponent(outboxId)}/retry`, { method: "POST" });
+      const channelName = retryButton.closest(".delivery-outbox-row")?.querySelector("b")?.textContent || "该渠道";
+      toast(`已将 ${channelName} 的死信重新排队`);
+    } catch (error) {
+      retryButton.disabled = false; retryButton.textContent = "只重试此渠道"; toast(error.message, 6000);
+      return;
+    }
+    try { await loadSubscriptionLog(card, id); }
+    catch (error) { toast(`死信已重新排队，但列表暂未刷新：${error.message}`, 7000); }
+  }));
 }
 
 async function loadReports() {
@@ -1593,8 +1836,9 @@ async function createSubscriptionFromQuery() {
     const query = currentQuery(); const spec = state.spec || await parseIntent();
     if (!spec) return toast("查询内容发生变化，请重新解析后再创建订阅", 6000);
     if (spec.schedule.kind === "immediate") return toast("问题中需要包含每天、每周或未来发送时间");
+    const targets = currentDeliveryTargets(); if (!targets.length) return toast("请至少选择一个交付目标");
     const name = `${spec.region || "全国"} · ${spec.topic} · ${spec.schedule.expression}`;
-    const subscription = await api("/api/v1/subscriptions", { method: "POST", body: JSON.stringify({ name, query, delivery_channel: currentChannel(), delivery_policy: $("#delivery-policy").value, run_immediately: true }) });
+    const subscription = await api("/api/v1/subscriptions", { method: "POST", body: JSON.stringify({ name, query, ...deliveryPayload(targets), delivery_policy: $("#delivery-policy").value, run_immediately: true }) });
     await activateTab("subscriptions");
     const workerOnline = state.system?.worker_online;
     toast(workerOnline ? "订阅已保存，首轮扫描已进入持久队列" : "订阅已保存，但 worker 离线；启动后会自动补跑", 5000);
@@ -1630,7 +1874,6 @@ $$("[data-query]").forEach((button) => button.addEventListener("click", () => { 
 $("#parse-button").addEventListener("click", () => parseIntent().catch((error) => toast(error.message)));
 $("#run-button").addEventListener("click", runQuery);
 $("#create-subscription-button").addEventListener("click", () => createSubscriptionFromQuery().catch((error) => toast(error.message, 5000)));
-$("#delivery-channel").addEventListener("change", renderChannelHint);
 $("#refresh-opportunities").addEventListener("click", () => loadOpportunities().catch((error) => toast(error.message)));
 $("#refresh-buyer-radar").addEventListener("click", () => loadBuyerRadar().catch((error) => toast(error.message, 5000)));
 $("#buyer-radar-limit").addEventListener("change", () => loadBuyerRadar().catch((error) => toast(error.message, 5000)));
@@ -1686,6 +1929,6 @@ window.addEventListener("beforeunload", (event) => { if (state.configDirty.size)
 window.createBidPilotSubscription = createSubscriptionFromQuery;
 Promise.all([loadSystemStatus(), loadSources(), loadReports(), loadSubscriptions(), loadOpportunities()]).catch((error) => toast(error.message));
 setInterval(() => {
-  const editing = $(".subscription-editor:not(.hidden)");
-  if (state.activeTab === "subscriptions" && !editing) loadSubscriptions().catch(() => {});
+  const interacting = $(".subscription-editor:not(.hidden), .subscription-log:not(.hidden)");
+  if (state.activeTab === "subscriptions" && !interacting) loadSubscriptions().catch(() => {});
 }, 15000);

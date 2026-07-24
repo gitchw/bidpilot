@@ -6,7 +6,7 @@
   <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
   <title>标擎 BidPilot</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=0.7.0">
+  <link rel="stylesheet" href="/static/app.css?v=0.8.0">
 </head>
 <body>
   <div class="noise"></div>
@@ -53,7 +53,12 @@
             <button data-query="最近3个月上海充电桩招标信息，请每天9:00汇总后发送给我">每日增量订阅</button>
           </div>
           <div class="task-options">
-            <label><span>交付方式</span><select id="delivery-channel" aria-label="交付方式"><option value="local">报告中心（不主动推送）</option></select></label>
+            <fieldset class="delivery-target-control" id="run-delivery-targets">
+              <legend>交付目标（可以同时选择多个）</legend>
+              <div class="delivery-target-picker"><div class="delivery-target-loading">正在读取可用渠道…</div></div>
+              <input class="delivery-channel-compat" id="delivery-channel" type="hidden" value="local">
+              <p class="delivery-target-selection" aria-live="polite">已选择：报告中心</p>
+            </fieldset>
             <label><span>无新增时</span><select id="delivery-policy" aria-label="无新增通知策略"><option value="always">仍发送运行回执</option><option value="on_change">保持安静</option></select></label>
           </div>
           <p class="channel-hint" id="channel-hint">报告中心只保存文件；如需主动提醒，请配置飞书通道。</p>
@@ -101,6 +106,7 @@
         </div>
         <div class="metric-strip" id="metric-strip"></div>
         <div class="source-coverage" id="source-coverage"></div>
+        <section class="delivery-receipts hidden" id="delivery-receipts" aria-live="polite"></section>
         <section class="intelligence-brief hidden" id="intelligence-brief"></section>
         <section class="retrieval-trace hidden" id="retrieval-trace"></section>
         <section class="run-qa hidden" id="run-qa">
@@ -228,7 +234,7 @@
     </section>
 
     <section class="tab-panel" id="tab-config">
-      <div class="page-heading"><p class="eyebrow">RUNTIME CONTROL CENTER</p><h1>配置中心</h1><p>模型与推送通道都在网页内配置，保存后立即生效并随数据库持久化，无需修改配置文件。</p></div>
+      <div class="page-heading"><p class="eyebrow">RUNTIME CONTROL CENTER</p><h1>模型、投递与服务设置</h1><p>模型与推送通道都在网页内配置，保存后立即生效并随数据库持久化，无需修改配置文件。</p></div>
       <div class="config-security-note"><i>●</i><div><b>敏感信息默认不回显</b><p id="config-security-notice">密钥、密码和 Webhook 地址只显示“已配置”；留空保持原值，只有显式勾选才会清除。</p></div></div>
       <div class="config-toolbar">
         <div><span class="state-badge muted" id="config-save-state">正在读取配置</span><small>通道测试会真实发送一条“配置中心连通性测试”消息。</small></div>
@@ -306,7 +312,7 @@
             <label class="secret-field"><span>应用 App Secret <em data-secret-state="feishu_app_secret">未配置</em></span><input data-config="feishu_app_secret" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="feishu_app_secret" type="checkbox"> 清除</small></label>
             <label><span>接收 ID</span><input data-config="feishu_receive_id" placeholder="群 chat_id 或用户 open_id"></label>
             <label><span>接收 ID 类型</span><select data-config="feishu_receive_id_type"><option value="chat_id">chat_id</option><option value="open_id">open_id</option><option value="user_id">user_id</option><option value="union_id">union_id</option><option value="email">email</option></select></label>
-            <label class="wide"><span>公网报告地址（可选）</span><input data-config="public_base_url" type="url" placeholder="https://bidpilot.example.com"></label>
+            <label class="wide"><span>公网报告地址（链接型渠道共用，可选）</span><input data-config="public_base_url" type="url" placeholder="https://bidpilot.example.com"><small>飞书/钉钉/企业微信/Slack 可发送报告链接；Telegram 文件超过 50 MB 时也需要这个地址。</small></label>
           </div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="feishu" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="feishu_webhook" disabled>测试群机器人</button><button class="secondary-button channel-test" data-test-channel="feishu_app" disabled>测试飞书应用</button><span id="test-result-feishu"></span></div>
         </article>
@@ -356,6 +362,30 @@
           </div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="generic" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="generic_webhook" disabled>发送测试事件</button><span id="test-result-generic"></span></div>
         </article>
+
+        <article class="config-card" data-config-group="telegram">
+          <div class="config-card-head"><div><p class="eyebrow">TELEGRAM</p><h2>Telegram Bot</h2></div><span class="state-badge muted" id="config-status-telegram">未配置</span></div>
+          <p>使用 Telegram 官方 Bot API。普通 Word 报告直接作为文件发送；超过 50 MB 时改发公网下载链接，未配置公网地址则明确进入死信。</p>
+          <div class="config-fields">
+            <label class="wide secret-field"><span>Bot Token <em data-secret-state="telegram_bot_token">未配置</em></span><input data-config="telegram_bot_token" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="telegram_bot_token" type="checkbox"> 清除已保存 Token</small></label>
+            <label><span>Chat ID</span><input data-config="telegram_chat_id" maxlength="200" placeholder="例如 -1001234567890"><small>可填写私聊、群组或频道 ID；机器人必须已经拥有发送权限。</small></label>
+            <label><span>话题 Thread ID（可选）</span><input data-config="telegram_message_thread_id" type="number" min="1" step="1" placeholder="留空发送到主会话"><small>仅论坛群组的话题需要；要恢复为空可使用字段下方的“恢复来源值”。</small></label>
+            <label class="checkbox-config"><input data-config="telegram_disable_notification" type="checkbox"><span><b>静默发送</b><small>消息到达但不触发声音提醒。</small></span></label>
+            <label class="checkbox-config"><input data-config="telegram_protect_content" type="checkbox"><span><b>保护消息内容</b><small>请求 Telegram 限制转发和保存。</small></span></label>
+          </div>
+          <div class="privacy-callout"><b>能力边界</b><span>支持文字、Word 文件和链接；Bot Token 只发送给固定的 api.telegram.org，不会拼接到错误提示或网页回显。</span></div>
+          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="telegram" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="telegram_bot" disabled>发送测试消息</button><span id="test-result-telegram"></span></div>
+        </article>
+
+        <article class="config-card compact-card" data-config-group="slack">
+          <div class="config-card-head"><div><p class="eyebrow">SLACK</p><h2>Slack Incoming Webhook</h2></div><span class="state-badge muted" id="config-status-slack">未配置</span></div>
+          <p>使用 Slack 官方 Incoming Webhook 向其绑定的频道发送消息。Webhook 本身不能上传 Word；配置公网报告地址后会附带下载链接，否则明确提示报告保存在 BidPilot 主机。</p>
+          <div class="config-fields one-column">
+            <label class="secret-field"><span>Incoming Webhook <em data-secret-state="slack_webhook_url">未配置</em></span><input data-config="slack_webhook_url" type="password" autocomplete="new-password" placeholder="https://hooks.slack.com/services/…"><small><input data-clear="slack_webhook_url" type="checkbox"> 清除已保存 Webhook</small></label>
+          </div>
+          <div class="privacy-callout"><b>能力边界</b><span>支持文字和报告链接，不支持附件；仅接受 Slack 官方 HTTPS Webhook 地址。</span></div>
+          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="slack" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="slack_webhook" disabled>发送测试消息</button><span id="test-result-slack"></span></div>
+        </article>
       </div>
     </section>
   </main>
@@ -376,6 +406,6 @@
   </section>
 
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.7.0" defer></script>
+  <script src="/static/app.js?v=0.8.0" defer></script>
 </body>
 </html>
