@@ -7,7 +7,12 @@ import httpx
 import pytest
 
 from bidpilot.config import Settings
-from bidpilot.delivery import DeliveryError, DeliveryManager
+from bidpilot.delivery import (
+    DeliveryError,
+    DeliveryManager,
+    DeliveryPermanentError,
+    DeliveryRetryAfterError,
+)
 
 
 class FakeSMTP:
@@ -45,9 +50,18 @@ class FakeSMTP:
 
 
 class FakeWebhookResponse:
-    def __init__(self, payload: dict | None = None, status_code: int = 200):
+    def __init__(
+        self,
+        payload: dict | None = None,
+        status_code: int = 200,
+        *,
+        text: str = "ok",
+        headers: dict | None = None,
+    ):
         self.payload = payload or {"errcode": 0}
         self.status_code = status_code
+        self.text = text
+        self.headers = headers or {}
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -248,3 +262,233 @@ async def test_webhook_http_errors_never_echo_secret_url(monkeypatch):
 
     assert "do-not-leak" not in str(error.value)
     assert "HTTP 403" in str(error.value)
+
+
+async def test_telegram_sends_docx_through_official_bot_api(tmp_path: Path, monkeypatch):
+    FakeWebhookClient.calls.clear()
+    FakeWebhookClient.response = FakeWebhookResponse(
+        {"ok": True, "result": {"message_id": 7, "chat": {"id": -100123}}}
+    )
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    path = tmp_path / "report.docx"
+    path.write_bytes(b"PK\x03\x04telegram")
+    manager = DeliveryManager(
+        Settings(
+            telegram_bot_token="123456:TEST_TOKEN",
+            telegram_chat_id="-100123",
+            telegram_message_thread_id=42,
+            telegram_disable_notification=True,
+            telegram_protect_content=True,
+        )
+    )
+
+    receipt = await manager.deliver(
+        path,
+        "telegram_bot",
+        new_count=3,
+        subscription_name="服务器日报",
+        delivery_key="run:outbox",
+    )
+
+    assert receipt.external_id == "-100123:7"
+    url, request = FakeWebhookClient.calls[0]
+    assert url == "https://api.telegram.org/bot123456:TEST_TOKEN/sendDocument"
+    assert request["data"]["chat_id"] == "-100123"
+    assert request["data"]["message_thread_id"] == "42"
+    assert request["data"]["disable_notification"] == "true"
+    assert request["files"]["document"][0] == "report.docx"
+    assert "run:outbox" in request["data"]["caption"]
+
+
+async def test_telegram_text_and_retry_after_are_structured(monkeypatch):
+    FakeWebhookClient.calls.clear()
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(
+        Settings(
+            telegram_bot_token="123456:TEST_TOKEN",
+            telegram_chat_id="@bidpilot_test",
+        )
+    )
+    FakeWebhookClient.response = FakeWebhookResponse(
+        {"ok": True, "result": {"message_id": 0, "chat": {"id": 99}}}
+    )
+
+    receipt = await manager.deliver(None, "telegram_bot", delivery_key="run:zero")
+    assert receipt.external_id == "99:0"
+    assert FakeWebhookClient.calls[0][1]["json"]["chat_id"] == "@bidpilot_test"
+
+    FakeWebhookClient.response = FakeWebhookResponse(
+        {
+            "ok": False,
+            "error_code": 429,
+            "parameters": {"retry_after": 120},
+        },
+        status_code=429,
+    )
+    with pytest.raises(DeliveryRetryAfterError) as error:
+        await manager.deliver(None, "telegram_bot")
+    assert error.value.retry_after_seconds == 120
+    assert "TEST_TOKEN" not in str(error.value)
+
+    FakeWebhookClient.response = FakeWebhookResponse(
+        {"ok": False, "error_code": 429},
+        status_code=429,
+        headers={"Retry-After": "75"},
+    )
+    with pytest.raises(DeliveryRetryAfterError) as header_retry:
+        await manager.deliver(None, "telegram_bot")
+    assert header_retry.value.retry_after_seconds == 75
+
+
+async def test_telegram_permanent_error_never_echoes_token(monkeypatch):
+    FakeWebhookClient.calls.clear()
+    FakeWebhookClient.response = FakeWebhookResponse(
+        {"ok": False, "error_code": 403},
+        status_code=403,
+    )
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(
+        Settings(telegram_bot_token="123456:TOP_SECRET", telegram_chat_id="123")
+    )
+
+    with pytest.raises(DeliveryPermanentError) as error:
+        await manager.deliver(None, "telegram_bot")
+    assert "TOP_SECRET" not in str(error.value)
+    assert "403" in str(error.value)
+
+
+async def test_telegram_rejects_malformed_success_and_non_json_auth_failure(monkeypatch):
+    FakeWebhookClient.calls.clear()
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(
+        Settings(telegram_bot_token="123456:TOP_SECRET", telegram_chat_id="123")
+    )
+    FakeWebhookClient.response = FakeWebhookResponse({"ok": True, "result": {}})
+    with pytest.raises(DeliveryError, match="消息编号或会话对象"):
+        await manager.deliver(None, "telegram_bot")
+
+    FakeWebhookClient.response = FakeWebhookResponse(["unexpected"])
+    with pytest.raises(DeliveryError, match="无法识别"):
+        await manager.deliver(None, "telegram_bot")
+
+    class NonJsonAuthFailure(FakeWebhookResponse):
+        def json(self):
+            raise ValueError("not json")
+
+    FakeWebhookClient.response = NonJsonAuthFailure(status_code=401)
+    with pytest.raises(DeliveryPermanentError) as error:
+        await manager.deliver(None, "telegram_bot")
+    assert "TOP_SECRET" not in str(error.value)
+    assert "401" in str(error.value)
+
+
+async def test_slack_incoming_webhook_sends_link_not_fake_attachment(tmp_path: Path, monkeypatch):
+    FakeWebhookClient.calls.clear()
+    FakeWebhookClient.response = FakeWebhookResponse(text="ok")
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    path = tmp_path / "report.docx"
+    path.write_bytes(b"PK\x03\x04slack")
+    manager = DeliveryManager(
+        Settings(
+            slack_webhook_url=("https://hooks.slack.com/services/T00000000/B00000000/TESTSECRET"),
+            public_base_url="https://reports.example.com",
+        )
+    )
+
+    receipt = await manager.deliver(
+        path,
+        "slack_webhook",
+        new_count=2,
+        delivery_key="run:slack",
+    )
+
+    assert receipt.success is True
+    url, request = FakeWebhookClient.calls[0]
+    assert url.startswith("https://hooks.slack.com/services/")
+    assert "files" not in request
+    assert "https://reports.example.com/api/v1/reports/report.docx" in request["json"]["text"]
+    assert "run:slack" in request["json"]["text"]
+
+
+async def test_slack_escapes_user_controlled_mentions(monkeypatch):
+    FakeWebhookClient.calls.clear()
+    FakeWebhookClient.response = FakeWebhookResponse(text="ok")
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(
+        Settings(
+            slack_webhook_url=("https://hooks.slack.com/services/T00000000/B00000000/TESTSECRET")
+        )
+    )
+
+    await manager.deliver(
+        None,
+        "slack_webhook",
+        subscription_name="<!channel> <@U123> 研发&销售",
+    )
+
+    text = FakeWebhookClient.calls[0][1]["json"]["text"]
+    assert "<!channel>" not in text
+    assert "<@U123>" not in text
+    assert "&lt;!channel&gt;" in text
+    assert "&lt;@U123&gt;" in text
+    assert "研发&amp;销售" in text
+
+
+async def test_slack_rate_limit_and_permanent_error_are_classified(monkeypatch):
+    FakeWebhookClient.calls.clear()
+    monkeypatch.setattr("bidpilot.delivery.httpx.AsyncClient", FakeWebhookClient)
+    manager = DeliveryManager(
+        Settings(
+            slack_webhook_url=("https://hooks.slack.com/services/T00000000/B00000000/TESTSECRET")
+        )
+    )
+    FakeWebhookClient.response = FakeWebhookResponse(
+        status_code=429,
+        headers={"Retry-After": "90"},
+    )
+    with pytest.raises(DeliveryRetryAfterError) as retry:
+        await manager.deliver(None, "slack_webhook")
+    assert retry.value.retry_after_seconds == 90
+
+    FakeWebhookClient.response = FakeWebhookResponse(status_code=403, text="invalid_token")
+    with pytest.raises(DeliveryPermanentError):
+        await manager.deliver(None, "slack_webhook")
+
+
+def test_slack_webhook_rejects_non_official_or_non_https_urls():
+    with pytest.raises(ValueError):
+        Settings(slack_webhook_url="https://evil.example.com/services/T/B/C")
+    with pytest.raises(ValueError):
+        Settings(slack_webhook_url="http://hooks.slack.com/services/T/B/C")
+    with pytest.raises(ValueError):
+        Settings(slack_webhook_url="https://hooks.slack.com/services/")
+    with pytest.raises(ValueError):
+        Settings(slack_webhook_url="https://hooks.slack.com/services/T/B/C/extra")
+    with pytest.raises(ValueError):
+        Settings(slack_webhook_url="https://hooks.slack.com/services/T//B/C")
+
+
+def test_optional_telegram_thread_env_value_accepts_blank_and_validates_identity():
+    settings = Settings(
+        _env_file=None,
+        telegram_message_thread_id="",
+        telegram_bot_token=" 123456:TEST_TOKEN ",
+        telegram_chat_id=" -100123 ",
+    )
+    assert settings.telegram_message_thread_id is None
+    assert settings.telegram_bot_token == "123456:TEST_TOKEN"
+    assert settings.telegram_chat_id == "-100123"
+
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, telegram_chat_id="not a chat")
+    with pytest.raises(ValueError) as token_error:
+        Settings(_env_file=None, telegram_bot_token="not-a-real-token")
+    assert "not-a-real-token" not in str(token_error.value)
+    secret_url = "https://hooks.slack.com/services/T/B/DO_NOT_LEAK?x=1"
+    with pytest.raises(ValueError) as error:
+        Settings(_env_file=None, slack_webhook_url=secret_url)
+    assert secret_url not in str(error.value)
+
+
+def test_retry_after_does_not_truncate_platform_delay():
+    assert DeliveryRetryAfterError("limited", 172_800).retry_after_seconds == 172_800

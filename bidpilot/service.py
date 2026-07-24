@@ -14,7 +14,12 @@ from bidpilot.clean import stable_hash
 from bidpilot.config import Settings
 from bidpilot.db import Database
 from bidpilot.decision import OpportunityFitAssessor
-from bidpilot.delivery import DeliveryError, DeliveryManager
+from bidpilot.delivery import (
+    DeliveryError,
+    DeliveryManager,
+    DeliveryPermanentError,
+    DeliveryRetryAfterError,
+)
 from bidpilot.evidence_qa import RunEvidenceQACopilot
 from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
@@ -489,6 +494,10 @@ class BidPilotService:
         worker_id: str,
         claim_new: bool = False,
     ) -> DeliveryTargetReceipt | None:
+        # A standalone worker can spend its entire lifetime draining the
+        # outbox without starting a new search. Reload Web-managed secrets
+        # and timeout settings before every claim so fixes apply immediately.
+        self.runtime_config.load_persisted()
         now = datetime.now(UTC)
         lease_seconds = max(
             float(self.settings.worker_lease_seconds),
@@ -527,17 +536,31 @@ class BidPilotService:
                 channel,
                 new_count=int(row.get("new_count", 0)),
                 subscription_name=row.get("subscription_name"),
+                delivery_key=f"{row['run_id']}:{row['id']}",
             )
             if not receipt.success:
                 raise RuntimeError(receipt.message)
         except Exception as exc:
+            failed_at = datetime.now(UTC)
             message = str(exc)[:500] or f"投递通道 {channel} 执行失败"
             attempt_count = int(row.get("attempt_count", 1))
             max_attempts = int(row.get("max_attempts", 5))
             dead_letter = (
-                isinstance(exc, DeliveryArtifactMissingError) or attempt_count >= max_attempts
+                isinstance(
+                    exc,
+                    (DeliveryArtifactMissingError, DeliveryPermanentError),
+                )
+                or attempt_count >= max_attempts
             )
-            next_attempt_at = None if dead_letter else retry_time(now, attempt_count - 1)
+            if dead_letter:
+                next_attempt_at = None
+            else:
+                next_attempt_at = retry_time(failed_at, attempt_count - 1)
+                if isinstance(exc, DeliveryRetryAfterError):
+                    next_attempt_at = max(
+                        next_attempt_at,
+                        failed_at + timedelta(seconds=exc.retry_after_seconds),
+                    )
             status = "dead_letter" if dead_letter else "retrying"
             finished = self.db.finish_delivery_outbox(
                 row["id"],

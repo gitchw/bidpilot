@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +21,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     env: str = "development"
@@ -96,7 +99,56 @@ class Settings(BaseSettings):
     wecom_webhook_url: str = ""
     generic_webhook_url: str = ""
     generic_webhook_bearer_token: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_message_thread_id: int | None = Field(default=None, ge=1)
+    telegram_disable_notification: bool = False
+    telegram_protect_content: bool = False
+    slack_webhook_url: str = ""
     delivery_webhook_timeout: float = Field(default=20.0, ge=3, le=120)
+
+    @field_validator("telegram_message_thread_id", mode="before")
+    @classmethod
+    def normalize_optional_telegram_thread_id(cls, value: object) -> object:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
+
+    @field_validator("telegram_bot_token")
+    @classmethod
+    def validate_telegram_bot_token(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned and not re.fullmatch(r"\d{5,20}:[A-Za-z0-9_-]{10,}", cleaned):
+            raise ValueError("Telegram Bot Token 格式不正确")
+        return cleaned
+
+    @field_validator("telegram_chat_id")
+    @classmethod
+    def validate_telegram_chat_id(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned and not re.fullmatch(r"-?\d+|@[A-Za-z][A-Za-z0-9_]{3,}", cleaned):
+            raise ValueError("Telegram 会话 ID 必须是整数或 @username")
+        return cleaned
+
+    @field_validator("slack_webhook_url")
+    @classmethod
+    def validate_slack_webhook_url(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return ""
+        parsed = urlparse(cleaned)
+        if (
+            parsed.scheme != "https"
+            or (parsed.hostname or "").lower() not in {"hooks.slack.com", "hooks.slack-gov.com"}
+            or not re.fullmatch(r"/services/[^/]+/[^/]+/[^/]+", parsed.path)
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Slack Webhook 必须是官方 HTTPS /services/ 地址")
+        return cleaned
 
     @field_validator("lan_trusted_networks")
     @classmethod

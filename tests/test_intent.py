@@ -257,6 +257,14 @@ EXTENDED_INTENT_CASES = [
         {"topic": "服务器", "kind": ScheduleKind.DAILY, "channel": "generic_webhook"},
     ),
     (
+        "近1个月江苏服务器，每天9点发送到 Telegram",
+        {"topic": "服务器", "kind": ScheduleKind.DAILY, "channel": "telegram_bot"},
+    ),
+    (
+        "近1个月江苏服务器，每天9点发送到 Slack",
+        {"topic": "服务器", "kind": ScheduleKind.DAILY, "channel": "slack_webhook"},
+    ),
+    (
         "查找内蒙古自治区近2周算力设备采购",
         {"topic": "算力设备", "region": "内蒙古", "region_code": "150000"},
     ),

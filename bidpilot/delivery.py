@@ -23,6 +23,16 @@ class DeliveryError(RuntimeError):
     pass
 
 
+class DeliveryRetryAfterError(DeliveryError):
+    def __init__(self, message: str, retry_after_seconds: int):
+        super().__init__(message)
+        self.retry_after_seconds = max(1, int(retry_after_seconds))
+
+
+class DeliveryPermanentError(DeliveryError):
+    pass
+
+
 @dataclass(slots=True)
 class DeliveryReceipt:
     channel: str
@@ -60,56 +70,135 @@ class DeliveryManager:
             )
         )
         email_ready = self._email_is_configured()
+        telegram_ready = bool(self.settings.telegram_bot_token and self.settings.telegram_chat_id)
+
+        def item(
+            channel_id: str,
+            name: str,
+            *,
+            configured: bool,
+            push_capable: bool,
+            supports_text: bool,
+            supports_file: bool,
+            supports_link: bool,
+            configuration_group: str,
+            message: str,
+        ) -> dict:
+            return {
+                "id": channel_id,
+                "name": name,
+                "configured": configured,
+                "push_capable": push_capable,
+                "supports_text": supports_text,
+                "supports_file": supports_file,
+                "supports_link": supports_link,
+                "configuration_group": configuration_group,
+                "delivery_semantics": (
+                    "local_persistence" if channel_id == "local" else "at_least_once"
+                ),
+                "message": message,
+            }
+
         return [
-            {
-                "id": "local",
-                "name": "报告中心",
-                "configured": True,
-                "push_capable": False,
-                "message": "报告保存在本机；不会向外部应用主动提醒。",
-            },
-            {
-                "id": "feishu_webhook",
-                "name": "飞书群机器人",
-                "configured": bool(self.settings.feishu_webhook_url),
-                "push_capable": True,
-                "message": "可推送卡片；配置公网地址后卡片可直接下载报告。",
-            },
-            {
-                "id": "feishu_app",
-                "name": "飞书应用",
-                "configured": app_ready,
-                "push_capable": True,
-                "message": "可直接发送 Word 文件与无新增回执。",
-            },
-            {
-                "id": "email",
-                "name": "电子邮件",
-                "configured": email_ready,
-                "push_capable": True,
-                "message": "通过标准 SMTP 发送 Word 附件与无新增回执。",
-            },
-            {
-                "id": "dingtalk_webhook",
-                "name": "钉钉群机器人",
-                "configured": bool(self.settings.dingtalk_webhook_url),
-                "push_capable": True,
-                "message": "通过钉钉自定义机器人标准 Webhook 发送 Markdown 回执。",
-            },
-            {
-                "id": "wecom_webhook",
-                "name": "企业微信群机器人",
-                "configured": bool(self.settings.wecom_webhook_url),
-                "push_capable": True,
-                "message": "通过企业微信群机器人标准 Webhook 发送 Markdown 回执。",
-            },
-            {
-                "id": "generic_webhook",
-                "name": "通用 Webhook",
-                "configured": bool(self.settings.generic_webhook_url),
-                "push_capable": True,
-                "message": "向用户配置的 HTTP(S) 地址发送结构化 JSON 事件。",
-            },
+            item(
+                "local",
+                "报告中心",
+                configured=True,
+                push_capable=False,
+                supports_text=False,
+                supports_file=True,
+                supports_link=True,
+                configuration_group="system",
+                message="报告保存在 BidPilot 报告中心；不会向外部应用主动提醒。",
+            ),
+            item(
+                "feishu_webhook",
+                "飞书群机器人",
+                configured=bool(self.settings.feishu_webhook_url),
+                push_capable=True,
+                supports_text=True,
+                supports_file=False,
+                supports_link=True,
+                configuration_group="feishu",
+                message="发送卡片和报告链接；群机器人不能直接上传 Word。",
+            ),
+            item(
+                "feishu_app",
+                "飞书应用",
+                configured=app_ready,
+                push_capable=True,
+                supports_text=True,
+                supports_file=True,
+                supports_link=False,
+                configuration_group="feishu",
+                message="使用官方应用接口直接发送 Word 文件和运行回执。",
+            ),
+            item(
+                "email",
+                "电子邮件",
+                configured=email_ready,
+                push_capable=True,
+                supports_text=True,
+                supports_file=True,
+                supports_link=False,
+                configuration_group="email",
+                message="通过标准 SMTP 发送 Word 附件和无新增回执。",
+            ),
+            item(
+                "dingtalk_webhook",
+                "钉钉群机器人",
+                configured=bool(self.settings.dingtalk_webhook_url),
+                push_capable=True,
+                supports_text=True,
+                supports_file=False,
+                supports_link=True,
+                configuration_group="dingtalk",
+                message="通过官方自定义机器人 Webhook 发送 Markdown 和报告链接。",
+            ),
+            item(
+                "wecom_webhook",
+                "企业微信群机器人",
+                configured=bool(self.settings.wecom_webhook_url),
+                push_capable=True,
+                supports_text=True,
+                supports_file=False,
+                supports_link=True,
+                configuration_group="wecom",
+                message="通过官方群机器人 Webhook 发送 Markdown 和报告链接。",
+            ),
+            item(
+                "generic_webhook",
+                "通用 Webhook",
+                configured=bool(self.settings.generic_webhook_url),
+                push_capable=True,
+                supports_text=False,
+                supports_file=False,
+                supports_link=True,
+                configuration_group="generic",
+                message="向用户配置的 HTTP(S) 地址发送结构化 JSON 事件。",
+            ),
+            item(
+                "telegram_bot",
+                "Telegram Bot",
+                configured=telegram_ready,
+                push_capable=True,
+                supports_text=True,
+                supports_file=True,
+                supports_link=True,
+                configuration_group="telegram",
+                message="通过官方 Bot API 发送 Word 文件或纯文本回执。",
+            ),
+            item(
+                "slack_webhook",
+                "Slack Incoming Webhook",
+                configured=bool(self.settings.slack_webhook_url),
+                push_capable=True,
+                supports_text=True,
+                supports_file=False,
+                supports_link=True,
+                configuration_group="slack",
+                message="发送消息和报告链接；Incoming Webhook 本身不能上传 Word。",
+            ),
         ]
 
     def _resolve_channel(self, channel: str) -> str:
@@ -127,6 +216,7 @@ class DeliveryManager:
         *,
         new_count: int | None = None,
         subscription_name: str | None = None,
+        delivery_key: str | None = None,
     ) -> DeliveryReceipt:
         try:
             return await self._deliver_impl(
@@ -134,6 +224,7 @@ class DeliveryManager:
                 channel,
                 new_count=new_count,
                 subscription_name=subscription_name,
+                delivery_key=delivery_key,
             )
         except DeliveryError:
             raise
@@ -155,6 +246,7 @@ class DeliveryManager:
         *,
         new_count: int | None = None,
         subscription_name: str | None = None,
+        delivery_key: str | None = None,
     ) -> DeliveryReceipt:
         channel = self._resolve_channel(channel)
         if channel == "local":
@@ -185,6 +277,22 @@ class DeliveryManager:
             return await self._send_wecom(path, new_count, subscription_name)
         if channel == "generic_webhook" and self.settings.generic_webhook_url:
             return await self._send_generic_webhook(path, new_count, subscription_name)
+        if channel == "telegram_bot" and all(
+            (self.settings.telegram_bot_token, self.settings.telegram_chat_id)
+        ):
+            return await self._send_telegram(
+                path,
+                new_count,
+                subscription_name,
+                delivery_key,
+            )
+        if channel == "slack_webhook" and self.settings.slack_webhook_url:
+            return await self._send_slack_webhook(
+                path,
+                new_count,
+                subscription_name,
+                delivery_key,
+            )
         raise DeliveryError(f"投递通道 {channel} 未完成配置；请在系统状态页检查所需凭据。")
 
     async def _send_feishu_webhook(
@@ -326,6 +434,196 @@ class DeliveryManager:
             )
             response.raise_for_status()
         return DeliveryReceipt("generic_webhook", True, "通用 Webhook 投递成功")
+
+    def _report_url(self, path: Path | None) -> str | None:
+        if not path or not self.settings.public_base_url:
+            return None
+        return f"{self.settings.public_base_url.rstrip('/')}/api/v1/reports/{quote(path.name)}"
+
+    @staticmethod
+    def _telegram_chat_id(value: str) -> int | str:
+        cleaned = value.strip()
+        if cleaned.lstrip("-").isdigit():
+            return int(cleaned)
+        if cleaned.startswith("@") and len(cleaned) >= 5:
+            return cleaned
+        raise DeliveryPermanentError("Telegram 会话 ID 必须是整数或 @username")
+
+    def _telegram_common_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "chat_id": self._telegram_chat_id(self.settings.telegram_chat_id),
+            "disable_notification": self.settings.telegram_disable_notification,
+            "protect_content": self.settings.telegram_protect_content,
+        }
+        if self.settings.telegram_message_thread_id is not None:
+            payload["message_thread_id"] = self.settings.telegram_message_thread_id
+        return payload
+
+    @staticmethod
+    def _parse_telegram_response(response: httpx.Response) -> dict:
+        try:
+            data = response.json()
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            if response.status_code in {400, 401, 403, 404}:
+                raise DeliveryPermanentError(
+                    f"Telegram 拒绝请求（HTTP {response.status_code}）"
+                ) from exc
+            if response.status_code >= 500:
+                response.raise_for_status()
+            raise DeliveryError("Telegram 返回了无法识别的响应") from exc
+        if not isinstance(data, dict):
+            raise DeliveryError("Telegram 返回了无法识别的响应")
+        parameters = data.get("parameters")
+        parameters = parameters if isinstance(parameters, dict) else {}
+        retry_after = parameters.get("retry_after")
+        error_code = data.get("error_code")
+        if response.status_code == 429 or error_code == 429 or retry_after is not None:
+            retry_after = retry_after or response.headers.get("Retry-After") or 60
+            try:
+                retry_after_seconds = int(retry_after)
+            except (TypeError, ValueError):
+                retry_after_seconds = 60
+            raise DeliveryRetryAfterError(
+                "Telegram 触发平台限流，已按官方 retry_after 延后重试",
+                retry_after_seconds,
+            )
+        if response.status_code >= 500:
+            response.raise_for_status()
+        if response.status_code >= 400 or data.get("ok") is not True:
+            if parameters.get("migrate_to_chat_id") is not None:
+                raise DeliveryPermanentError(
+                    "Telegram 群组已迁移，请在网页更新会话 ID 后手动重试死信"
+                )
+            message = f"Telegram 拒绝请求（错误码 {error_code or response.status_code}）"
+            if response.status_code in {400, 401, 403, 404} or error_code in {
+                400,
+                401,
+                403,
+                404,
+            }:
+                raise DeliveryPermanentError(message)
+            raise DeliveryError(message)
+        result = data.get("result")
+        if not isinstance(result, dict):
+            raise DeliveryError("Telegram 成功响应缺少消息对象")
+        chat = result.get("chat")
+        if not isinstance(result.get("message_id"), int) or not isinstance(chat, dict):
+            raise DeliveryError("Telegram 成功响应缺少消息编号或会话对象")
+        if not isinstance(chat.get("id"), int):
+            raise DeliveryError("Telegram 成功响应缺少有效会话编号")
+        return result
+
+    async def _send_telegram(
+        self,
+        path: Path | None,
+        new_count: int | None,
+        subscription_name: str | None,
+        delivery_key: str | None,
+    ) -> DeliveryReceipt:
+        title = subscription_name or "招投标情报订阅"
+        reference = f"\nBidPilot 投递编号：{delivery_key}" if delivery_key else ""
+        token = self.settings.telegram_bot_token
+        method = "sendMessage"
+        common = self._telegram_common_payload()
+        report_url = self._report_url(path)
+        request: dict[str, object]
+        if path and path.stat().st_size <= 50_000_000:
+            method = "sendDocument"
+            caption = (f"标擎 BidPilot｜{title}\n本轮新增 {new_count or 0} 条。{reference}")[:1024]
+            data = {
+                key: str(value).lower() if isinstance(value, bool) else str(value)
+                for key, value in common.items()
+            }
+            data["caption"] = caption
+            with path.open("rb") as handle:
+                async with httpx.AsyncClient(
+                    timeout=self.settings.delivery_webhook_timeout,
+                    follow_redirects=False,
+                ) as client:
+                    response = await client.post(
+                        f"https://api.telegram.org/bot{token}/{method}",
+                        data=data,
+                        files={
+                            "document": (
+                                path.name,
+                                handle,
+                                "application/vnd.openxmlformats-officedocument."
+                                "wordprocessingml.document",
+                            )
+                        },
+                    )
+        else:
+            if path and not report_url:
+                raise DeliveryPermanentError("Telegram 报告超过 50 MB，且未配置可访问的报告地址")
+            text = (
+                f"标擎 BidPilot｜{title}\n"
+                + (
+                    f"本轮新增 {new_count or 0} 条。\n报告：{report_url}"
+                    if path
+                    else "本轮已完成，没有新增匹配情报。"
+                )
+                + reference
+            )[:4096]
+            request = {**common, "text": text}
+            async with httpx.AsyncClient(
+                timeout=self.settings.delivery_webhook_timeout,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(
+                    f"https://api.telegram.org/bot{token}/{method}",
+                    json=request,
+                )
+        result = self._parse_telegram_response(response)
+        chat = result.get("chat") if isinstance(result.get("chat"), dict) else {}
+        external_id = f"{chat.get('id', self.settings.telegram_chat_id)}:{result.get('message_id')}"
+        return DeliveryReceipt(
+            "telegram_bot",
+            True,
+            "Telegram 文件发送成功" if method == "sendDocument" else "Telegram 回执发送成功",
+            external_id=external_id,
+        )
+
+    async def _send_slack_webhook(
+        self,
+        path: Path | None,
+        new_count: int | None,
+        subscription_name: str | None,
+        delivery_key: str | None,
+    ) -> DeliveryReceipt:
+        def slack_text(value: object) -> str:
+            return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        title = slack_text(subscription_name or "招投标情报订阅")
+        report_url = self._report_url(path)
+        lines = ["标擎 BidPilot", f"{title}｜本轮新增 {new_count or 0} 条。"]
+        if path and report_url:
+            lines.append(f"下载 Word 报告：{slack_text(report_url)}")
+        elif path:
+            lines.append(f"报告 {slack_text(path.name)} 已保存在 BidPilot 部署主机的报告中心。")
+        else:
+            lines[1] = f"{title}｜本轮已完成，没有新增匹配情报。"
+        if delivery_key:
+            lines.append(f"BidPilot 投递编号：{slack_text(delivery_key)}")
+        async with httpx.AsyncClient(
+            timeout=self.settings.delivery_webhook_timeout,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                self.settings.slack_webhook_url,
+                json={"text": "\n".join(lines)[:4000]},
+            )
+        if response.status_code == 429:
+            try:
+                retry_after = int(response.headers.get("Retry-After", "60"))
+            except (TypeError, ValueError):
+                retry_after = 60
+            raise DeliveryRetryAfterError("Slack 触发平台限流，已延后重试", retry_after)
+        if 400 <= response.status_code < 500:
+            raise DeliveryPermanentError(f"Slack Webhook 返回 HTTP {response.status_code}")
+        response.raise_for_status()
+        if response.text.strip().lower() != "ok":
+            raise DeliveryError("Slack Webhook 返回了无法识别的响应")
+        return DeliveryReceipt("slack_webhook", True, "Slack 消息发送成功")
 
     async def _tenant_token(self, client: httpx.AsyncClient) -> str:
         token_response = await client.post(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ SecretField = Literal[
     "wecom_webhook_url",
     "generic_webhook_url",
     "generic_webhook_bearer_token",
+    "telegram_bot_token",
+    "slack_webhook_url",
     "lan_admin_token",
 ]
 
@@ -44,6 +47,8 @@ SECRET_FIELDS: frozenset[str] = frozenset(
         "wecom_webhook_url",
         "generic_webhook_url",
         "generic_webhook_bearer_token",
+        "telegram_bot_token",
+        "slack_webhook_url",
         "lan_admin_token",
     }
 )
@@ -90,6 +95,12 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "wecom_webhook_url",
         "generic_webhook_url",
         "generic_webhook_bearer_token",
+        "telegram_bot_token",
+        "telegram_chat_id",
+        "telegram_message_thread_id",
+        "telegram_disable_notification",
+        "telegram_protect_content",
+        "slack_webhook_url",
         "delivery_webhook_timeout",
         "request_timeout",
         "request_interval",
@@ -124,6 +135,7 @@ URL_FIELDS = {
     "dingtalk_webhook_url",
     "wecom_webhook_url",
     "generic_webhook_url",
+    "slack_webhook_url",
 }
 
 
@@ -187,6 +199,32 @@ class RuntimeConfigUpdate(BaseModel):
     wecom_webhook_url: SecretStr | None = None
     generic_webhook_url: SecretStr | None = None
     generic_webhook_bearer_token: SecretStr | None = None
+    telegram_bot_token: SecretStr | None = Field(
+        default=None,
+        description="Telegram 官方 BotFather 签发的 Bot Token；仅加密保存且永不回显",
+    )
+    telegram_chat_id: str | None = Field(
+        default=None,
+        max_length=200,
+        description="接收消息的整数 chat_id，或公开频道的 @username",
+    )
+    telegram_message_thread_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="可选的话题 message_thread_id；留空表示发送到会话主区域",
+    )
+    telegram_disable_notification: bool | None = Field(
+        default=None,
+        description="是否静默发送 Telegram 消息，不触发接收端声音提醒",
+    )
+    telegram_protect_content: bool | None = Field(
+        default=None,
+        description="是否请求 Telegram 保护消息内容，限制转发与保存",
+    )
+    slack_webhook_url: SecretStr | None = Field(
+        default=None,
+        description="Slack 官方 Incoming Webhook HTTPS 地址；只支持消息和报告链接",
+    )
     delivery_webhook_timeout: float | None = Field(default=None, ge=3, le=120)
 
     request_timeout: float | None = Field(default=None, ge=3, le=120)
@@ -245,6 +283,7 @@ class RuntimeConfigUpdate(BaseModel):
         "dingtalk_webhook_url",
         "wecom_webhook_url",
         "generic_webhook_url",
+        "slack_webhook_url",
     )
     @classmethod
     def validate_secret_url(cls, value: SecretStr | None) -> SecretStr | None:
@@ -252,6 +291,26 @@ class RuntimeConfigUpdate(BaseModel):
             return None
         plain = cls._validate_url(value.get_secret_value())
         return SecretStr(plain or "")
+
+    @field_validator("telegram_bot_token")
+    @classmethod
+    def validate_telegram_bot_token(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        plain = value.get_secret_value().strip()
+        if plain and not re.fullmatch(r"\d{5,20}:[A-Za-z0-9_-]{10,}", plain):
+            raise ValueError("Telegram Bot Token 格式不正确")
+        return SecretStr(plain)
+
+    @field_validator("telegram_chat_id")
+    @classmethod
+    def validate_telegram_chat_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if cleaned and not re.fullmatch(r"-?\d+|@[A-Za-z][A-Za-z0-9_]{3,}", cleaned):
+            raise ValueError("Telegram 会话 ID 必须是整数或 @username")
+        return cleaned
 
     @staticmethod
     def _validate_url(value: str | None) -> str | None:
@@ -335,6 +394,22 @@ class GenericWebhookConfigView(BaseModel):
     ready: bool
 
 
+class TelegramConfigView(BaseModel):
+    bot_token: SecretState = Field(description="Bot Token 是否已经加密保存；永不返回原文")
+    chat_id: str = Field(description="当前接收会话 ID；普通配置字段可在网页恢复来源值")
+    message_thread_id: int | None = Field(description="可选话题 ID；空值表示会话主区域")
+    disable_notification: bool = Field(description="是否静默发送，不触发声音通知")
+    protect_content: bool = Field(description="是否请求平台限制消息转发和保存")
+    ready: bool = Field(description="Token 与会话 ID 是否均已通过配置校验")
+
+
+class SlackConfigView(BaseModel):
+    webhook_url: SecretState = Field(
+        description="官方 Incoming Webhook 是否已经加密保存；永不返回完整地址"
+    )
+    ready: bool = Field(description="官方 HTTPS /services 路径是否已完成配置")
+
+
 class RetrievalConfigView(BaseModel):
     request_timeout: float
     request_interval: float
@@ -389,6 +464,8 @@ class RuntimeConfigView(BaseModel):
     dingtalk: RobotConfigView
     wecom: RobotConfigView
     generic_webhook: GenericWebhookConfigView
+    telegram: TelegramConfigView
+    slack: SlackConfigView
     field_metadata: dict[str, ConfigFieldMetadata]
     updated_at: str | None = None
     security_notice: str
@@ -461,6 +538,7 @@ class RuntimeConfiguration:
         self.base_values = settings.model_dump()
         self.default_values = Settings(_env_file=None).model_dump()
         self.vault = LocalSecretVault(settings.data_dir / "secrets" / "runtime_config.key")
+        self._persisted_fields: set[str] = set()
         self.load_persisted()
         self._effective_restart_values = {
             field: getattr(settings, field) for field in RESTART_REQUIRED_FIELDS
@@ -490,11 +568,20 @@ class RuntimeConfiguration:
                 continue
         if legacy_secrets:
             self.db.set_runtime_config(legacy_secrets)
-        if not persisted:
+        active_fields = set(persisted)
+        removed_fields = self._persisted_fields - active_fields
+        if not active_fields and not removed_fields:
             return
-        candidate = Settings.model_validate({**self.settings.model_dump(), **persisted})
-        for field in persisted:
+        candidate = Settings.model_validate(
+            {
+                **self.settings.model_dump(),
+                **{field: self.base_values[field] for field in removed_fields},
+                **persisted,
+            }
+        )
+        for field in active_fields | removed_fields:
             setattr(self.settings, field, getattr(candidate, field))
+        self._persisted_fields = active_fields
 
     def snapshot(self) -> RuntimeConfigView:
         def secret(field: str) -> SecretState:
@@ -648,6 +735,18 @@ class RuntimeConfiguration:
                 timeout=self.settings.delivery_webhook_timeout,
                 ready=bool(self.settings.generic_webhook_url),
             ),
+            telegram=TelegramConfigView(
+                bot_token=secret("telegram_bot_token"),
+                chat_id=self.settings.telegram_chat_id,
+                message_thread_id=self.settings.telegram_message_thread_id,
+                disable_notification=self.settings.telegram_disable_notification,
+                protect_content=self.settings.telegram_protect_content,
+                ready=bool(self.settings.telegram_bot_token and self.settings.telegram_chat_id),
+            ),
+            slack=SlackConfigView(
+                webhook_url=secret("slack_webhook_url"),
+                ready=bool(self.settings.slack_webhook_url),
+            ),
             field_metadata=metadata,
             updated_at=max(updated_values, default=None),
             security_notice=(
@@ -709,6 +808,7 @@ class RuntimeConfiguration:
             raise RuntimeConfigConflict(self.db.get_runtime_config_revision())
         for field in set(changes) | reset_fields:
             setattr(self.settings, field, getattr(candidate, field))
+        self._persisted_fields = (self._persisted_fields | set(changes)) - reset_fields
         return self.snapshot()
 
     async def test_model(self) -> ConnectionTestResult:

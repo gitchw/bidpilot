@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import Counter
 from datetime import UTC, datetime, timedelta
@@ -10,7 +11,12 @@ from fastapi.testclient import TestClient
 from bidpilot.api import create_app
 from bidpilot.config import Settings
 from bidpilot.db import Database
-from bidpilot.delivery import DeliveryError, DeliveryReceipt
+from bidpilot.delivery import (
+    DeliveryError,
+    DeliveryPermanentError,
+    DeliveryReceipt,
+    DeliveryRetryAfterError,
+)
 from bidpilot.intent import IntentParser
 from bidpilot.models import (
     EventType,
@@ -22,6 +28,7 @@ from bidpilot.models import (
     SubscriptionUpdate,
     TenderQuerySpec,
 )
+from bidpilot.runtime_config import RuntimeConfigUpdate
 from bidpilot.service import BidPilotService, RunExecutionError, SubscriptionBusyError
 from bidpilot.sources.base import SourceAdapter
 
@@ -396,6 +403,114 @@ async def test_missing_staged_report_goes_directly_to_dead_letter(tmp_path: Path
     assert receipt.status == "dead_letter"
     assert receipt.attempt_count == 1
     assert "已不存在" in receipt.message
+
+
+async def test_channel_retry_after_and_permanent_failures_control_outbox_state(
+    tmp_path: Path, monkeypatch
+):
+    service = BidPilotService(make_settings(tmp_path), sources=[])
+    spec = scheduled_spec()
+    service.db.create_run("classified-run", spec)
+    retrying = service.db.create_delivery_outbox_item(
+        run_id="classified-run",
+        subscription_id=None,
+        channel="local",
+        report_path=None,
+        new_count=0,
+        subscription_name="分类错误",
+    )
+
+    async def limited(*args, **kwargs):
+        raise DeliveryRetryAfterError("平台限流", 180)
+
+    monkeypatch.setattr(service.delivery, "deliver", limited)
+    before = datetime.now(UTC)
+    receipt = await service.dispatch_delivery_outbox(
+        retrying["id"], worker_id="worker", claim_new=True
+    )
+    assert receipt.status == "retrying"
+    assert receipt.next_attempt_at >= before + timedelta(seconds=175)
+
+    service.db.create_run("permanent-run", spec)
+    permanent = service.db.create_delivery_outbox_item(
+        run_id="permanent-run",
+        subscription_id=None,
+        channel="local",
+        report_path=None,
+        new_count=0,
+        subscription_name="永久错误",
+    )
+
+    async def rejected(*args, **kwargs):
+        raise DeliveryPermanentError("配置已失效")
+
+    monkeypatch.setattr(service.delivery, "deliver", rejected)
+    dead = await service.dispatch_delivery_outbox(
+        permanent["id"], worker_id="worker", claim_new=True
+    )
+    assert dead.status == "dead_letter"
+    assert dead.attempt_count == 1
+
+
+async def test_retry_after_is_measured_from_platform_failure_time(tmp_path: Path, monkeypatch):
+    service = BidPilotService(make_settings(tmp_path), sources=[])
+    spec = scheduled_spec()
+    service.db.create_run("slow-limited-run", spec)
+    row = service.db.create_delivery_outbox_item(
+        run_id="slow-limited-run",
+        subscription_id=None,
+        channel="local",
+        report_path=None,
+        new_count=0,
+        subscription_name="慢请求限流",
+    )
+
+    async def slow_limited(*args, **kwargs):
+        await asyncio.sleep(0.3)
+        raise DeliveryRetryAfterError("平台要求等待", 1)
+
+    monkeypatch.setattr(service.delivery, "deliver", slow_limited)
+    receipt = await service.dispatch_delivery_outbox(row["id"], worker_id="worker", claim_new=True)
+    returned_at = datetime.now(UTC)
+
+    assert receipt.status == "retrying"
+    assert receipt.next_attempt_at >= returned_at + timedelta(seconds=0.85)
+
+
+async def test_outbox_worker_reloads_web_managed_channel_secrets(tmp_path: Path, monkeypatch):
+    web_service = BidPilotService(make_settings(tmp_path), sources=[])
+    worker_service = BidPilotService(make_settings(tmp_path), sources=[])
+    slack_url = "https://hooks.slack.com/services/T000/B000/WORKERSECRET"
+    assert worker_service.settings.slack_webhook_url == ""
+
+    web_service.runtime_config.update(
+        RuntimeConfigUpdate(
+            revision=web_service.runtime_config.snapshot().revision,
+            slack_webhook_url=slack_url,
+        )
+    )
+    spec = scheduled_spec()
+    worker_service.db.create_run("runtime-config-outbox", spec)
+    row = worker_service.db.create_delivery_outbox_item(
+        run_id="runtime-config-outbox",
+        subscription_id=None,
+        channel="slack_webhook",
+        report_path=None,
+        new_count=0,
+        subscription_name="配置热更新",
+    )
+
+    async def succeed(path, channel, **kwargs):
+        assert worker_service.settings.slack_webhook_url == slack_url
+        return DeliveryReceipt(channel, True, "使用网页新配置完成")
+
+    monkeypatch.setattr(worker_service.delivery, "deliver", succeed)
+    receipt = await worker_service.dispatch_delivery_outbox(
+        row["id"], worker_id="standalone-worker", claim_new=True
+    )
+
+    assert receipt.status == "succeeded"
+    assert worker_service.settings.slack_webhook_url == slack_url
 
 
 async def test_new_service_processes_persisted_pending_outbox(tmp_path: Path, monkeypatch):

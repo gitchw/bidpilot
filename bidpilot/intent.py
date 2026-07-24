@@ -590,7 +590,9 @@ class IntentParser:
             working,
         )
         working = re.sub(
-            r"(?:飞书(?:群|机器人)?|电子邮件|邮件|邮箱|企业微信|企微|钉钉|自定义\s*[Ww]ebhook|[Ww]ebhook|自动化接口|报告中心)",
+            r"(?:飞书(?:群|机器人)?|电子邮件|邮件|邮箱|企业微信|企微|钉钉|"
+            r"自定义\s*[Ww]ebhook|[Ww]ebhook|自动化接口|报告中心|"
+            r"(?i:telegram|slack)|电报)",
             " ",
             working,
         )
@@ -671,6 +673,10 @@ class IntentParser:
 
     @staticmethod
     def _parse_delivery_channel(query: str) -> str:
+        if re.search(r"\btelegram\b|电报", query, re.IGNORECASE):
+            return "telegram_bot"
+        if re.search(r"\bslack\b", query, re.IGNORECASE):
+            return "slack_webhook"
         if "飞书" in query:
             return "feishu"
         if "邮件" in query or "邮箱" in query:

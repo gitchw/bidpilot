@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from bidpilot.api import create_app
 from bidpilot.config import Settings
+from bidpilot.delivery import DeliveryReceipt
 from bidpilot.models import (
     EventType,
     EvidenceSpan,
@@ -908,11 +909,25 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
                 "decision_assessment_max_records": 11,
                 "smtp_port": 587,
                 "smtp_security": "starttls",
+                "telegram_bot_token": "123456:CONFIG_SECRET",
+                "telegram_chat_id": "-1001234567890",
+                "telegram_message_thread_id": 42,
+                "telegram_disable_notification": True,
+                "telegram_protect_content": True,
+                "slack_webhook_url": (
+                    "https://hooks.slack.com/services/T00000000/B00000000/CONFIGSECRET"
+                ),
             },
         )
         assert saved.status_code == 200
         assert saved.json()["ai"]["ready"] is True
         assert saved.json()["ai"]["llm_api_key"] == {"configured": True}
+        assert saved.json()["telegram"]["bot_token"] == {"configured": True}
+        assert saved.json()["telegram"]["ready"] is True
+        assert saved.json()["slack"]["webhook_url"] == {"configured": True}
+        assert saved.json()["slack"]["ready"] is True
+        assert "CONFIG_SECRET" not in saved.text
+        assert "CONFIGSECRET" not in saved.text
         assert secret_value not in saved.text
 
         preserved = client.put(
@@ -940,6 +955,12 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
     assert persisted.ai.intelligence_brief_max_records == 9
     assert persisted.ai.decision_assessment_mode == "off"
     assert persisted.ai.decision_assessment_max_records == 11
+    assert persisted.telegram.bot_token.configured is True
+    assert persisted.telegram.chat_id == "-1001234567890"
+    assert persisted.telegram.message_thread_id == 42
+    assert persisted.telegram.disable_notification is True
+    assert persisted.telegram.protect_content is True
+    assert persisted.slack.webhook_url.configured is True
     assert restarted.settings.smtp_port == 587
     with restarted.db.connection() as conn:
         stored_secret = conn.execute(
@@ -957,10 +978,65 @@ def test_runtime_config_is_masked_token_guarded_and_persistent(tmp_path: Path):
             headers={"X-BidPilot-Config-Token": token},
             json={
                 "revision": client.get("/api/v1/config").json()["revision"],
-                "clear_secrets": ["llm_api_key"],
+                "clear_secrets": ["llm_api_key", "telegram_bot_token", "slack_webhook_url"],
             },
         )
         assert cleared.json()["ai"]["llm_api_key"] == {"configured": False}
+        assert cleared.json()["telegram"]["bot_token"] == {"configured": False}
+        assert cleared.json()["telegram"]["ready"] is False
+        assert cleared.json()["slack"]["webhook_url"] == {"configured": False}
+        assert cleared.json()["slack"]["ready"] is False
+
+
+def test_telegram_and_slack_connection_test_routes_use_saved_channels(tmp_path: Path, monkeypatch):
+    settings = make_settings(tmp_path)
+    settings.telegram_bot_token = "123456:TEST_TOKEN"
+    settings.telegram_chat_id = "-100123"
+    settings.slack_webhook_url = "https://hooks.slack.com/services/T000/B000/TESTSECRET"
+    app = create_app(settings, sources=[FakeSource()])
+    calls: list[str] = []
+
+    async def deliver(path, channel, **kwargs):
+        calls.append(channel)
+        return DeliveryReceipt(channel, True, f"{channel} 测试成功", external_id="test:1")
+
+    monkeypatch.setattr(app.state.service.delivery, "deliver", deliver)
+    with TestClient(app) as client:
+        token = client.post("/api/v1/config/edit-token").json()["edit_token"]
+        headers = {"X-BidPilot-Config-Token": token}
+        for channel in ("telegram_bot", "slack_webhook"):
+            response = client.post(
+                f"/api/v1/config/channels/{channel}/test",
+                headers=headers,
+            )
+            assert response.status_code == 200
+            assert response.json()["target"] == channel
+            assert response.json()["success"] is True
+    assert calls == ["telegram_bot", "slack_webhook"]
+
+
+def test_runtime_config_reload_observes_reset_from_another_process(tmp_path: Path):
+    web_service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    worker_service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    assert worker_service.settings.telegram_chat_id == ""
+
+    saved = web_service.runtime_config.update(
+        RuntimeConfigUpdate(
+            revision=web_service.runtime_config.snapshot().revision,
+            telegram_chat_id="-100123",
+        )
+    )
+    worker_service.runtime_config.load_persisted()
+    assert worker_service.settings.telegram_chat_id == "-100123"
+
+    web_service.runtime_config.update(
+        RuntimeConfigUpdate(
+            revision=saved.revision,
+            reset_fields=["telegram_chat_id"],
+        )
+    )
+    worker_service.runtime_config.load_persisted()
+    assert worker_service.settings.telegram_chat_id == ""
 
 
 def test_runtime_config_revision_metadata_and_reset_are_atomic(tmp_path: Path):

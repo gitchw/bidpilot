@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bidpilot import __version__
 from bidpilot.config import Settings, get_settings
 from bidpilot.control import ControlPlane
+from bidpilot.delivery import DeliveryError
 from bidpilot.models import (
     BuyerRadarResult,
     BuyerSubscriptionCreate,
@@ -114,6 +115,55 @@ class DeletedCountResponse(BaseModel):
         ge=0,
         description="本次批量操作实际删除的本地记录数量",
     )
+
+
+class WorkerStatusResponse(BaseModel):
+    id: str = Field(description="worker 唯一实例 ID，用于识别租约所有者")
+    kind: str = Field(description="worker 类型，例如 embedded 或 standalone")
+    started_at: str = Field(description="worker 启动时间，ISO 8601")
+    heartbeat_at: str = Field(description="最近一次持久心跳时间，ISO 8601")
+    pid: int = Field(description="worker 所在进程 ID")
+    hostname: str = Field(description="worker 所在主机名")
+    online: bool = Field(description="最近心跳是否仍在配置的有效窗口内")
+
+
+class DeliveryChannelStatusResponse(BaseModel):
+    id: str = Field(description="API 和 delivery_targets 使用的稳定通道 ID")
+    name: str = Field(description="网页展示的通道名称")
+    configured: bool = Field(description="当前必要字段是否已完成配置")
+    push_capable: bool = Field(description="是否会主动向外部平台发送提醒")
+    supports_text: bool = Field(description="是否支持文本或消息回执")
+    supports_file: bool = Field(description="是否支持直接交付 Word 文件")
+    supports_link: bool = Field(description="是否支持发送报告下载链接")
+    configuration_group: str = Field(description="网页配置卡分组，用于准确跳转配置")
+    delivery_semantics: Literal["local_persistence", "at_least_once"] = Field(
+        description="本地持久化或外部至少一次投递语义；外部平台不虚构端到端恰好一次"
+    )
+    message: str = Field(description="能力边界、附件方式和下一步操作的中文说明")
+
+
+class IntentEngineStatusResponse(BaseModel):
+    requests: int = Field(description="本进程实际发出的意图模型请求数")
+    applied: int = Field(description="通过本地校验并修正字段的次数")
+    confirmed: int = Field(description="模型复核后确认规则结果的次数")
+    fallbacks: int = Field(description="提议被拒绝、无效或不可用后安全回退次数")
+    invalid_responses: int = Field(description="不符合严格 JSON 契约的模型响应数")
+    mode: Literal["off", "auto", "always"] = Field(description="当前意图模型调用策略")
+    confidence_threshold: float = Field(description="自动触发模型复核的字段置信阈值")
+
+
+class SystemStatusResponse(BaseModel):
+    worker_online: bool = Field(description="是否至少有一个长期任务 worker 在线")
+    workers: list[WorkerStatusResponse] = Field(description="全部已登记 worker 及其心跳状态")
+    subscription_count: int = Field(description="持久订阅总数")
+    enabled_subscription_count: int = Field(description="当前启用的订阅数")
+    running_subscription_count: int = Field(description="当前持有有效运行租约的订阅数")
+    due_count: int = Field(description="已经到期、等待 worker 领取的订阅数")
+    delivery_channels: list[DeliveryChannelStatusResponse] = Field(
+        description="可选交付目标、就绪状态和文本/文件/链接能力矩阵"
+    )
+    intent_engine: IntentEngineStatusResponse = Field(description="混合意图引擎进程内指标")
+    timezone: str = Field(description="计划计算使用的 IANA 时区")
 
 
 OPENAPI_TAGS = [
@@ -1227,6 +1277,7 @@ def create_app(
 
     @app.get(
         "/api/v1/system/status",
+        response_model=SystemStatusResponse,
         **_api_docs(
             tag="系统",
             summary="读取运行时系统状态",
@@ -1596,7 +1647,7 @@ def create_app(
             tag="配置中心",
             summary="真实测试一个推送通道",
             purpose="通过指定通道发送一条明确标记为“配置中心连通性测试”的无新增回执，验证凭据、网络和平台配置。",
-            parameters="路径 `channel`：feishu_webhook、feishu_app、email、dingtalk_webhook、wecom_webhook 或 generic_webhook；请求头必须含短期编辑令牌。",
+            parameters="路径 `channel`：feishu_webhook、feishu_app、email、dingtalk_webhook、wecom_webhook、generic_webhook、telegram_bot 或 slack_webhook；请求头必须含短期编辑令牌。",
             returns="HTTP 200；返回实际通道、平台回执、延迟和成功状态。",
             side_effects="【真实外发副作用】会向已配置群聊、用户、邮箱或 Webhook 接收方发送一条测试消息；网页调用前会二次确认。",
             errors="403：令牌无效；422：通道不支持或未配置；502：网络、认证、平台安全设置或响应失败。",
@@ -1632,6 +1683,8 @@ def create_app(
                 new_count=0,
                 subscription_name="配置中心连通性测试",
             )
+        except DeliveryError as exc:
+            raise HTTPException(status_code=502, detail=f"通道测试失败：{exc}") from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=502,

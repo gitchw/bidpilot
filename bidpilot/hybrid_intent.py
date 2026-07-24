@@ -44,6 +44,8 @@ _CHANNELS = {
     "dingtalk_webhook",
     "wecom_webhook",
     "generic_webhook",
+    "telegram_bot",
+    "slack_webhook",
 }
 _CHANNEL_MARKERS = {
     "local": ("本地", "报告中心"),
@@ -54,6 +56,8 @@ _CHANNEL_MARKERS = {
     "dingtalk_webhook": ("钉钉",),
     "wecom_webhook": ("企业微信", "企微"),
     "generic_webhook": ("webhook", "自动化接口"),
+    "telegram_bot": ("telegram", "电报"),
+    "slack_webhook": ("slack",),
 }
 _TIME_GROUNDING = re.compile(
     r"20\d{2}|最近|近\s*[一二两三四五六七八九十百\d]|过去|"
@@ -117,6 +121,8 @@ class _LLMIntentProposal(BaseModel):
             "dingtalk_webhook",
             "wecom_webhook",
             "generic_webhook",
+            "telegram_bot",
+            "slack_webhook",
         ]
         | None
     ) = None
@@ -354,7 +360,7 @@ class HybridIntentEngine:
             reasons.append("检测到公告类型限定但规则没有提取枚举")
             repairable.add("event_types")
         if baseline.delivery_channel == "local" and re.search(
-            r"飞书|邮件|邮箱|钉钉|企业微信|企微|webhook|自动化接口",
+            r"飞书|邮件|邮箱|钉钉|企业微信|企微|webhook|自动化接口|telegram|电报|slack",
             baseline.raw_query,
             re.IGNORECASE,
         ):
