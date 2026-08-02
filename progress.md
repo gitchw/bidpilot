@@ -292,3 +292,13 @@
 - 编辑订阅移除目标时，原 pending/retrying/dead_letter 原子取消并保留审计；目标正在真实外发时拒绝修改或删除，避免页面显示取消但外部仍收到。删除订阅会明确取消尚未发送的 Outbox。
 - 明确外部通道为 `at-least-once`：已被 SQLite 确认的成功目标不会重复，但外部平台已接收、进程在本地确认前崩溃的极小窗口无法由普通 Webhook/SMTP 统一消除，API 文档不再宣称端到端 exactly-once。
 - 新增旧库迁移、双目标全成功、局部失败、仅失败目标重试、待重试占位、目标移除、发送中保护、报告先持久化、重启恢复、租约栅栏、五次死信、手动恢复、报告丢失和 API 脱敏测试。全量 211 项 Pytest、Ruff lint/format、`compileall`、Node 语法和 `git diff --check` 通过，F48 与 F49 标记通过。
+
+## 2026-08-02 — v0.8.0 最终发布收尾
+
+- 完成意图签名快照、订阅编辑快照校验和买方关键词本地锁定；修复 worker 租约接管竞态、旧 worker 外发窗口、IPv6/显式 LAN 地址停止控制和旧运行记录清理。
+- 配置中心覆盖 62 个白名单字段并提供中文帮助，OpenAPI 共 52 个中文操作；Telegram、Slack、报告发布、多目标选择和 Outbox 控制塔在桌面与 390px 手机视口完成真实浏览器验收，控制台无产品错误。
+- 全量回归在最终代码状态达到 275 passed；发布收尾按用户要求不重复慢速全量，复跑 26 项快照/控制/生命周期高风险测试，并通过 Ruff、JavaScript 语法、`compileall`、`pip check`、JSON/YAML/TOML、SQLite integrity/foreign keys、OpenAPI 与配置说明契约。
+- v0.8.0 零基础操作说明书更新为 59 页、10 张真实截图、7 张表格；DOCX 业务校验通过，Word 原生 PDF 与全部 59 页渲染视觉复核通过。新增面向首次接手人员的 Markdown 交接手册，覆盖安装、8000 端口、停止、LAN、LLM、渠道、备份、升级和排障。
+- 重新构建 `dist/bidpilot-0.8.0-py3-none-any.whl`（300,596 bytes，SHA-256 `0910e8d5e349ff8847bfd6d9f6b6446993523bbb970b6cef212fc5c90bfa9bec`）；51 个包内文件完整，隔离安装确认版本 0.8.0，未包含数据库、报告、Cookie、密钥或 `.env`。
+- 清理 v0.7.0 wheel/说明书、旧零结果截图、被 Telegram/Slack/Outbox 新截图替代的旧图和文档审计临时产物。Docker CLI 在本机不可用，因此真实 Compose 构建仍须由有 Docker 的环境执行。
+- F50、F51、F52 仅更新状态为 `passing`，保留 append-only 描述不变；发布提交、`v0.8.0` 标签、全部分支和标签将同步到 GitHub 并以远程引用复核。
