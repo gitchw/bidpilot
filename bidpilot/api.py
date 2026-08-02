@@ -18,6 +18,7 @@ from bidpilot import __version__
 from bidpilot.config import Settings, get_settings
 from bidpilot.control import ControlPlane
 from bidpilot.delivery import DeliveryError
+from bidpilot.intent_snapshot import IntentSnapshotError
 from bidpilot.models import (
     BuyerRadarResult,
     BuyerSubscriptionCreate,
@@ -88,6 +89,14 @@ class QueryRequest(BaseModel):
         default=None,
         max_length=10,
         description="本轮可同时使用的交付目标；省略时兼容 delivery_channel",
+    )
+    intent_snapshot: str | None = Field(
+        default=None,
+        max_length=100_000,
+        description=(
+            "解析预览返回的限时签名快照；执行时验证原问题、签名和时效，避免再次调用模型后字段漂移"
+        ),
+        repr=False,
     )
 
 
@@ -277,6 +286,12 @@ def create_app(
         if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and not is_loopback_request(
             request
         ):
+            control_shutdown = (
+                request.url.path == "/api/v1/system/shutdown"
+                and control_plane.verify(request.headers.get("X-BidPilot-Control-Token"))
+            )
+            if control_shutdown:
+                return await call_next(request)
             supplied = request.headers.get("X-BidPilot-Admin-Token", "")
             effective_mode = service.runtime_config.effective_restart_value("network_access_mode")
             effective_policy = service.runtime_config.effective_restart_value("lan_access_policy")
@@ -347,7 +362,7 @@ def create_app(
             summary="解析中文招投标意图",
             purpose="先用确定性规则拆解中文需求；仅在低置信、缺失或冲突时调用已配置 LLM 提议修复，再由本地地域、日期、计划和枚举校验器逐字段决定是否合并。",
             parameters="JSON 请求体：`query` 为 2～500 字自然语言；`delivery_channel` 在本接口中仅兼容接收，不改变解析结果。",
-            returns="HTTP 200；返回完整 TenderQuerySpec、字段置信度、警告，以及不含密钥和模型原文的 resolution 解释轨迹。",
+            returns="HTTP 200；返回完整 TenderQuerySpec、字段置信度、警告、不含密钥和模型原文的 resolution 解释轨迹，以及绑定原问题、服务端签名且 15 分钟有效的 confirmation_snapshot。",
             side_effects="不抓取网站、不生成报告、不创建订阅。若模式为 auto/always 且满足触发条件，会把原问题和规则基线发送到用户配置的模型服务；失败自动回退。",
             errors="422：问题太短、规则层日期或计划数值非法，或请求体格式不正确。模型错误不会让本接口失败。",
             example='POST /api/v1/intent/parse\n{"query":"最近1个月深圳充电桩招标信息"}',
@@ -389,7 +404,8 @@ def create_app(
             summary="立即执行一次情报任务",
             purpose="解析问题、访问已启用来源、清洗去重、生成证据摘要并持久化结果。即时任务即使保留 0 条，也会生成包含扫描漏斗、排除原因和覆盖边界的 Word 诊断报告。",
             parameters=(
-                "JSON 请求体：`query` 为自然语言；推荐用 `delivery_targets` 同时选择 1～10 个已配置目标。"
+                "JSON 请求体：`query` 为自然语言；网页应原样回传解析接口给出的 `intent_snapshot`，"
+                "后端验证签名、时效和原问题后执行同一结构化意图，避免二次模型解析漂移。推荐用 `delivery_targets` 同时选择 1～10 个已配置目标。"
                 "合法目标来自 `/api/v1/system/status` 的 `delivery_channels`。旧 `delivery_channel` 继续兼容；"
                 "两者同时出现时，以 `delivery_targets` 为准，并把第一个目标回填到旧字段。"
             ),
@@ -403,7 +419,7 @@ def create_app(
                 "会在首次外发前原子持久化，之后才并发发送。"
             ),
             errors=(
-                "422：请求体字段非法；502：意图、来源、报告或持久入队在可恢复投递点之前失败。"
+                "409：确认快照过期、被修改或与当前问题不一致；422：请求体字段非法；502：意图、来源、报告或持久入队在可恢复投递点之前失败。"
                 "单个外部渠道超时不会让系统重新抓取，而会写入逐目标重试状态。"
             ),
             example=(
@@ -419,7 +435,10 @@ def create_app(
                 request.query,
                 delivery_channel=request.delivery_channel,
                 delivery_targets=request.delivery_targets,
+                intent_snapshot=request.intent_snapshot,
             )
+        except IntentSnapshotError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -784,6 +803,7 @@ def create_app(
             parameters=(
                 "路径参数 `buyer_id` 是 GET /api/v1/buyers 返回的 24 位本地稳定哈希。"
                 "JSON 与普通订阅一致：`name`、含明确计划的 `query`、`delivery_targets`；"
+                "解析预览返回的 `intent_snapshot` 应原样回传，用于锁定已确认的结构化意图。"
                 "旧 `delivery_channel` 仍兼容。另含"
                 "`delivery_policy`（always/on_change）和 `run_immediately`。"
             ),
@@ -792,12 +812,16 @@ def create_app(
                 "便于用户和审计人员确认后续结果不会混入其他买方。"
             ),
             side_effects=(
-                "【有副作用】可能调用用户配置的意图模型，随后写入 subscriptions。"
+                "【有副作用】未回传快照时可能调用用户配置的意图模型；"
+                "有效快照会直接复用已确认意图，再锁定本地采购单位，不会二次调用模型。"
+                "随后写入 subscriptions。"
                 "`run_immediately=true` 只把任务设为立即到期；持久 worker 领取后才会访问已接入来源、"
                 "使用用户本人授权的会话、生成报告并按配置投递。不会生成联系人或采购预测。"
             ),
             errors=(
-                "404：buyer_id 不对应当前本地买方；422：请求字段非法、自然语言没有可调度计划，"
+                "404：buyer_id 不对应当前本地买方；"
+                "409：确认快照过期、签名不匹配、版本失效或与当前问题不一致，请重新解析确认；"
+                "422：请求字段非法、自然语言没有可调度计划，"
                 "投递通道尚未配置，或本地采购单位名称无法形成可靠来源查询。"
                 "来源登录、网络和投递错误发生在实际运行中并写入运行审计。"
             ),
@@ -809,6 +833,7 @@ def create_app(
             ),
             responses={
                 404: "本地买方雷达中没有该采购单位。",
+                409: "意图确认快照已失效或与当前问题不一致，请重新解析后再创建。",
                 422: "计划、通道或请求字段校验失败。",
             },
         ),
@@ -834,9 +859,12 @@ def create_app(
                 delivery_targets=request.delivery_targets,
                 delivery_policy=request.delivery_policy,
                 run_immediately=request.run_immediately,
+                intent_snapshot=request.intent_snapshot,
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=_key_error_detail(exc)) from exc
+        except IntentSnapshotError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -847,15 +875,21 @@ def create_app(
             summary="创建持久化订阅",
             purpose="把带有每天、每周、每月或一次性未来计划的自然语言保存为长期任务，并计算下一次执行时间。相同规则和同一组目标重复提交会复用原订阅。",
             parameters=(
-                "JSON：`name`、`query`；`delivery_targets` 为 1～10 个已配置目标。"
+                "JSON：`name`、`query`，以及解析预览返回的 `intent_snapshot`；网页回传快照后不会再次调用模型。`delivery_targets` 为 1～10 个已配置目标。"
                 "旧 `delivery_channel` 等价于单元素列表；另有 `delivery_policy`（always/on_change）"
                 "和 `run_immediately`。"
             ),
-            returns="HTTP 200；返回订阅 ID、`delivery_targets`、兼容 `delivery_channel`、解析规则、启用状态、下次时间和最近运行状态。",
+            returns="HTTP 200；返回订阅 ID、`delivery_targets`、兼容 `delivery_channel`、已确认解析规则、启用状态、下次时间，以及相互独立的最近检索状态和最近交付状态。",
             side_effects="【有副作用】写入订阅表；`run_immediately=true` 会把首轮设为立即到期，由持久 worker 领取。不会在请求线程内假装完成推送。",
-            errors="422：规则不是可调度任务、通道未配置或字段非法。",
+            errors=(
+                "409：确认快照过期、被修改或与当前问题不一致；"
+                "422：规则不是可调度任务、通道未配置或字段非法。"
+            ),
             example='POST /api/v1/subscriptions\n{"name":"深圳充电桩日报","query":"每天9点汇总最近1个月深圳充电桩信息","delivery_targets":["local","email"],"delivery_policy":"always","run_immediately":true}',
-            responses={422: "计划无法解析、通道未配置或请求字段非法。"},
+            responses={
+                409: "确认快照已失效或与当前问题不一致，请重新解析。",
+                422: "计划无法解析、通道未配置或请求字段非法。",
+            },
         ),
     )
     async def create_subscription(request: SubscriptionCreate):
@@ -867,7 +901,10 @@ def create_app(
                 delivery_targets=request.delivery_targets,
                 delivery_policy=request.delivery_policy,
                 run_immediately=request.run_immediately,
+                intent_snapshot=request.intent_snapshot,
             )
+        except IntentSnapshotError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -876,7 +913,7 @@ def create_app(
         **_api_docs(
             tag="长期订阅",
             summary="列出全部订阅",
-            purpose="读取所有长期任务及其下次时间、租约、失败次数和最近回执，供订阅中心管理。",
+            purpose="读取所有长期任务及其下次时间、租约、失败次数、最近检索状态和独立交付状态，供订阅中心区分来源覆盖受限与渠道待处理。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；按创建时间倒序返回订阅列表。",
             side_effects="无，只读 SQLite。",
@@ -913,14 +950,28 @@ def create_app(
             tag="长期订阅",
             summary="编辑订阅规则或通道",
             purpose="局部修改名称、自然语言规则、多目标投递或无新增策略；修改规则后重新计算下一次时间，但保留仍在使用目标的防重复账本。",
-            parameters="路径参数 `subscription_id`；JSON 仅提交要修改的 `name`、`query`、`delivery_targets`、兼容 `delivery_channel` 或 `delivery_policy`。",
+            parameters=(
+                "路径参数 `subscription_id`；JSON 仅提交要修改的 `name`、`query`、"
+                "`delivery_targets`、兼容 `delivery_channel` 或 `delivery_policy`。修改 `query` 时，"
+                "网页应先调用意图解析接口让用户确认，再把 `intent_snapshot` 与原问题一起提交。"
+            ),
             returns="HTTP 200；返回更新后的订阅。",
-            side_effects="【有副作用】更新持久化订阅和计划时间；被移除目标尚未发送的 pending/retrying/dead_letter 任务会标为已取消，已经成功的审计记录保留。不会立即执行新检索。",
-            errors="404：订阅不存在；409：订阅正在执行；422：新规则非法或新通道未配置。",
-            example='PATCH /api/v1/subscriptions/{id}\n{"query":"每周一9点汇总深圳充电桩中标公告","delivery_policy":"on_change"}',
+            side_effects=(
+                "【有副作用】更新持久化订阅和计划时间；有效意图快照直接复用用户已确认的结构化规则，"
+                "不会二次调用模型。被移除目标尚未发送的 pending/retrying/dead_letter 任务会标为已取消，"
+                "已经成功的审计记录保留。不会立即执行新检索。"
+            ),
+            errors=(
+                "404：订阅不存在；409：订阅正在执行，或意图确认快照过期、被修改、"
+                "与新问题不一致；422：新规则非法、新通道未配置或快照未与 query 同时提交。"
+            ),
+            example=(
+                'PATCH /api/v1/subscriptions/{id}\n{"query":"每周一9点汇总深圳充电桩中标公告",'
+                '"intent_snapshot":"解析接口返回的完整快照","delivery_policy":"on_change"}'
+            ),
             responses={
                 404: "订阅不存在。",
-                409: "订阅当前有活跃租约。",
+                409: "订阅当前有活跃租约，或意图确认快照已失效。",
                 422: "规则或通道校验失败。",
             },
         ),
@@ -931,6 +982,8 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except SubscriptionBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except IntentSnapshotError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1038,7 +1091,7 @@ def create_app(
             tag="长期订阅",
             summary="查看订阅运行日志",
             purpose="读取指定订阅最近的自动/手动运行，定位失败、部分来源受限和新增数量。",
-            parameters="路径参数 `subscription_id`；查询参数 `limit` 限制在 1～100，默认 20。",
+            parameters="路径参数 `subscription_id`；查询参数 `limit` 默认 20，整数小于 1 时按 1、大于 100 时按 100 读取。",
             returns="HTTP 200；按开始时间倒序返回运行记录。",
             side_effects="无，只读 SQLite。",
             errors="404：订阅不存在；422：limit 不是整数。",
@@ -1082,7 +1135,7 @@ def create_app(
             ),
             parameters=(
                 "路径参数 `subscription_id` 为订阅 ID；查询参数 `limit` 为返回行数，"
-                "范围 1～200，默认 100。"
+                "默认 100；整数小于 1 时按 1、大于 200 时按 200 读取。"
             ),
             returns=(
                 "HTTP 200；每行包含 outbox ID、run ID、channel、status、attempt_count、"
@@ -1298,13 +1351,18 @@ def create_app(
             tag="系统",
             summary="优雅停止本机服务",
             purpose="供 `python -m bidpilot stop` 使用：先返回接收确认，再让当前 Uvicorn 服务停止接收新请求并执行 lifespan 清理。",
-            parameters="请求必须来自回环地址，并在 `X-BidPilot-Control-Token` 请求头携带本机 `data/secrets/control.token`；普通网页和远程请求不能调用。",
+            parameters=(
+                "请求必须在 `X-BidPilot-Control-Token` 请求头携带服务主机本地文件 "
+                "`data/secrets/control.token` 中的随机令牌；CLI 从本机私有文件读取它。服务监听明确局域网"
+                "地址时，请求可能经该接口地址回到本机，因此不额外依赖来源 IP。普通网页、LAN 管理员令牌"
+                "和远程配置接口都拿不到此控制令牌。"
+            ),
             returns='HTTP 202；返回 `{"accepted":true}`。随后服务通常在数秒内退出。',
             side_effects="【进程级副作用】停止当前 Web 进程及其内嵌 worker；不删除数据库、报告、订阅、机会或配置。",
-            errors="403：不是本机请求或令牌错误；409：当前进程不是由可控 `serve` 命令启动；服务已停止时无法连接。",
+            errors="403：本机控制令牌缺失或错误；409：当前进程不是由可控 `serve` 命令启动；服务已停止时无法连接。",
             example="POST /api/v1/system/shutdown\nX-BidPilot-Control-Token: <本机控制令牌>",
             responses={
-                403: "本机来源或控制令牌校验失败。",
+                403: "本机控制令牌校验失败。",
                 409: "当前启动方式不支持远程优雅停止。",
             },
         ),
@@ -1317,13 +1375,8 @@ def create_app(
             Header(alias="X-BidPilot-Control-Token"),
         ] = None,
     ):
-        client_host = request.client.host if request.client else ""
-        try:
-            is_loopback = ipaddress.ip_address(client_host).is_loopback
-        except ValueError:
-            is_loopback = client_host == "testclient"
-        if not is_loopback or not control_plane.verify(x_bidpilot_control_token):
-            raise HTTPException(status_code=403, detail="只允许持有本机控制令牌的回环请求停止服务")
+        if not control_plane.verify(x_bidpilot_control_token):
+            raise HTTPException(status_code=403, detail="只允许持有本机控制令牌的 CLI 停止服务")
         callback = getattr(request.app.state, "shutdown_callback", None)
         if callback is None:
             raise HTTPException(
@@ -1537,7 +1590,7 @@ def create_app(
         **_api_docs(
             tag="配置中心",
             summary="读取脱敏后的运行时配置",
-            purpose="为网页配置中心读取 AI、检索、worker、网络访问、飞书、SMTP、钉钉、企业微信和通用 Webhook 的非敏感字段、来源、版本与就绪状态。",
+            purpose="为网页配置中心读取 AI、检索、worker、网络访问、报告发布，以及飞书、SMTP、钉钉、企业微信、通用 Webhook、Telegram 和 Slack 的非敏感字段、来源、版本与就绪状态。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；返回 revision、字段来源和当前/重启后网络状态；敏感字段仅返回 `{configured:true/false}`，永不返回管理员令牌、API Key、密码、Cookie、Webhook 完整地址、签名密钥或 Bearer Token。",
             side_effects="无，只读 SQLite 与当前内存设置。",

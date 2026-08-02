@@ -893,6 +893,7 @@ class Database:
         self,
         subscription_id: str,
         *,
+        worker_id: str,
         last_run_at: datetime,
         next_run_at: datetime | None,
         status: RunStatus,
@@ -900,16 +901,19 @@ class Database:
         new_count: int,
         run_id: str | None,
         success: bool,
-    ) -> None:
+        disable: bool = False,
+    ) -> bool:
+        """Persist an attempt only while the caller still owns the subscription lease."""
         with self.connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE subscriptions SET
                   last_run_at=?, next_run_at=?, last_status=?, last_message=?,
                   last_new_count=?, last_run_id=?, updated_at=?, lease_owner=NULL,
                   lease_until=NULL,
+                  enabled=CASE WHEN ? THEN 0 ELSE enabled END,
                   consecutive_failures=CASE WHEN ? THEN 0 ELSE consecutive_failures + 1 END
-                WHERE id=?
+                WHERE id=? AND lease_owner=?
                 """,
                 (
                     last_run_at.isoformat(),
@@ -919,10 +923,84 @@ class Database:
                     new_count,
                     run_id,
                     utcnow_iso(),
+                    int(disable),
                     int(success),
+                    subscription_id,
+                    worker_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def cancel_subscription_run(
+        self,
+        subscription_id: str,
+        *,
+        worker_id: str,
+        run_id: str,
+        cancelled_at: datetime,
+        message: str,
+    ) -> tuple[bool, bool]:
+        """Fail one interrupted run and release only its caller-owned lease."""
+        timestamp = cancelled_at.isoformat()
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            run_cursor = conn.execute(
+                """
+                UPDATE runs SET status=?, completed_at=?, error=?
+                WHERE id=? AND subscription_id=? AND status IN ('running','partial')
+                """,
+                (
+                    RunStatus.FAILED.value,
+                    timestamp,
+                    message,
+                    run_id,
                     subscription_id,
                 ),
             )
+            run_cancelled = run_cursor.rowcount == 1
+            lease_cursor = conn.execute(
+                """
+                UPDATE subscriptions SET
+                  lease_owner=NULL, lease_until=NULL, updated_at=?,
+                  last_run_at=CASE WHEN ? THEN ? ELSE last_run_at END,
+                  last_status=CASE WHEN ? THEN ? ELSE last_status END,
+                  last_message=CASE WHEN ? THEN ? ELSE last_message END,
+                  last_run_id=CASE WHEN ? THEN ? ELSE last_run_id END
+                WHERE id=? AND lease_owner=?
+                """,
+                (
+                    timestamp,
+                    int(run_cancelled),
+                    timestamp,
+                    int(run_cancelled),
+                    RunStatus.FAILED.value,
+                    int(run_cancelled),
+                    message,
+                    int(run_cancelled),
+                    run_id,
+                    subscription_id,
+                    worker_id,
+                ),
+            )
+        return run_cancelled, lease_cursor.rowcount == 1
+
+    def set_subscription_retrieval_status_for_run(
+        self,
+        run_id: str,
+        status: RunStatus,
+    ) -> bool:
+        """Correct only the latest subscription run's retrieval dimension."""
+        if status not in {RunStatus.COMPLETED, RunStatus.PARTIAL}:
+            raise ValueError("订阅检索状态只能是 completed 或 partial")
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE subscriptions SET last_status=?, updated_at=?
+                WHERE last_run_id=? AND last_status IN ('completed','partial')
+                """,
+                (status.value, utcnow_iso(), run_id),
+            )
+        return cursor.rowcount > 0
 
     def set_subscription_due(
         self,
@@ -1580,6 +1658,34 @@ class Database:
                         utcnow_iso(),
                     ),
                 )
+        return cursor.rowcount == 1
+
+    def release_delivery_outbox_claim(
+        self,
+        outbox_id: str,
+        *,
+        lease_token: str,
+        retry_at: datetime,
+        message: str,
+    ) -> bool:
+        """Requeue an interrupted send only while its exact lease token is owned."""
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE delivery_outbox SET status='retrying', next_attempt_at=?,
+                  lease_owner=NULL, lease_token=NULL, lease_until=NULL,
+                  last_error=?, last_message=?, updated_at=?
+                WHERE id=? AND lease_token=? AND status='sending'
+                """,
+                (
+                    retry_at.isoformat(),
+                    message,
+                    message,
+                    utcnow_iso(),
+                    outbox_id,
+                    lease_token,
+                ),
+            )
         return cursor.rowcount == 1
 
     def retry_delivery_outbox(self, outbox_id: str, *, now: datetime) -> bool:

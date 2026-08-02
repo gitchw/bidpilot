@@ -24,6 +24,7 @@ from bidpilot.evidence_qa import RunEvidenceQACopilot
 from bidpilot.hybrid_intent import HybridIntentEngine
 from bidpilot.intelligence import IntelligenceBriefGenerator
 from bidpilot.intent import IntentParser
+from bidpilot.intent_snapshot import IntentSnapshotSigner
 from bidpilot.models import (
     BuyerRadarResult,
     CompanyProfile,
@@ -111,6 +112,9 @@ class BidPilotService:
         self.runtime_config = RuntimeConfiguration(self.db, settings)
         self.parser = IntentParser(settings.timezone)
         self.intent_engine = HybridIntentEngine(settings, self.parser)
+        self.intent_snapshots = IntentSnapshotSigner(
+            settings.data_dir / "secrets" / "intent_snapshot.key"
+        )
         self.sources = sources or [
             SZGGZYSource(settings),
             GDGPOSource(settings),
@@ -141,7 +145,9 @@ class BidPilotService:
     ) -> TenderQuerySpec:
         """Resolve an intent through rules first and a guarded LLM repair when needed."""
         self.runtime_config.load_persisted()
-        return await self.intent_engine.resolve(query, now=now)
+        spec = await self.intent_engine.resolve(query, now=now)
+        spec.confirmation_snapshot = self.intent_snapshots.issue(spec, now=now)
+        return spec
 
     async def compare_intent(
         self,
@@ -150,7 +156,12 @@ class BidPilotService:
         now: datetime | None = None,
     ) -> IntentComparison:
         self.runtime_config.load_persisted()
-        return await self.intent_engine.compare(query, now=now)
+        comparison = await self.intent_engine.compare(query, now=now)
+        comparison.resolved.confirmation_snapshot = self.intent_snapshots.issue(
+            comparison.resolved,
+            now=now,
+        )
+        return comparison
 
     @staticmethod
     def _lock_buyer_filter(
@@ -200,6 +211,9 @@ class BidPilotService:
         delivery_targets: list[str] | None = None,
         trigger_reason: str = "manual",
         buyer_keywords: list[str] | None = None,
+        intent_snapshot: str | None = None,
+        confirmed_spec: TenderQuerySpec | None = None,
+        run_id: str | None = None,
     ) -> RunResult:
         # A standalone worker is a separate process. Reload the allowlisted
         # SQLite-backed settings before every real run so Web changes apply
@@ -207,7 +221,16 @@ class BidPilotService:
         self.runtime_config.load_persisted()
         self.source_auth.load_persisted()
         started_at = datetime.now(ZoneInfo(self.settings.timezone))
-        spec = await self.intent_engine.resolve(query, now=started_at)
+        if confirmed_spec is not None:
+            spec = confirmed_spec.model_copy(deep=True)
+            spec.confirmation_snapshot = None
+            rolling_baseline = self.parser.parse(query, now=started_at)
+            spec.start_date = rolling_baseline.start_date
+            spec.end_date = rolling_baseline.end_date
+        elif intent_snapshot is not None:
+            spec = self.intent_snapshots.verify(query, intent_snapshot, now=started_at)
+        else:
+            spec = await self.intent_engine.resolve(query, now=started_at)
         if buyer_keywords:
             spec = self._lock_buyer_filter(spec, buyer_keywords)
         targets = normalize_delivery_targets(
@@ -218,7 +241,7 @@ class BidPilotService:
         spec.delivery_targets = targets
         spec.delivery_channel = targets[0]
         channel = targets[0]
-        run_id = uuid4().hex
+        run_id = run_id or uuid4().hex
         self.db.create_run(
             run_id,
             spec,
@@ -540,6 +563,14 @@ class BidPilotService:
             )
             if not receipt.success:
                 raise RuntimeError(receipt.message)
+        except asyncio.CancelledError:
+            self.db.release_delivery_outbox_claim(
+                row["id"],
+                lease_token=row["lease_token"],
+                retry_at=datetime.now(UTC),
+                message="投递 worker 已取消；任务已立即重新排队，可由其他 worker 接管。",
+            )
+            raise
         except Exception as exc:
             failed_at = datetime.now(UTC)
             message = str(exc)[:500] or f"投递通道 {channel} 执行失败"
@@ -668,21 +699,28 @@ class BidPilotService:
             diagnostics = json.loads(run.get("diagnostics_json") or "[]")
         except (TypeError, ValueError, json.JSONDecodeError):
             diagnostics = []
-        source_incomplete = any(
-            item.get("status")
-            in {
-                SourceStatus.PARTIAL.value,
-                SourceStatus.AUTH_REQUIRED.value,
-                SourceStatus.FAILED.value,
-            }
-            for item in diagnostics
-            if isinstance(item, dict)
-        )
-        desired = (
-            RunStatus.PARTIAL if delivery_incomplete or source_incomplete else RunStatus.COMPLETED
-        )
+        retrieval_status = self._retrieval_status_from_diagnostics(diagnostics)
+        desired = RunStatus.PARTIAL if delivery_incomplete else retrieval_status
         if run["status"] != desired.value:
             self.db.set_run_status(run_id, desired)
+        if run.get("subscription_id"):
+            self.db.set_subscription_retrieval_status_for_run(run_id, retrieval_status)
+
+    @staticmethod
+    def _retrieval_status_from_diagnostics(diagnostics: list) -> RunStatus:
+        incomplete = {
+            SourceStatus.PARTIAL.value,
+            SourceStatus.AUTH_REQUIRED.value,
+            SourceStatus.FAILED.value,
+        }
+        for item in diagnostics:
+            raw_status = (
+                item.get("status") if isinstance(item, dict) else getattr(item, "status", None)
+            )
+            status = raw_status.value if isinstance(raw_status, SourceStatus) else raw_status
+            if status in incomplete:
+                return RunStatus.PARTIAL
+        return RunStatus.COMPLETED
 
     async def process_due_delivery_outbox(self, *, worker_id: str) -> bool:
         receipt = await self.dispatch_delivery_outbox(worker_id=worker_id)
@@ -845,9 +883,14 @@ class BidPilotService:
         delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
         run_immediately: bool = True,
         delivery_targets: list[str] | None = None,
+        intent_snapshot: str | None = None,
     ) -> Subscription:
         now = datetime.now(ZoneInfo(self.settings.timezone))
-        spec = await self.parse_intent(query, now=now)
+        if intent_snapshot is not None:
+            spec = self.intent_snapshots.verify(query, intent_snapshot, now=now)
+        else:
+            spec = await self.parse_intent(query, now=now)
+            spec.confirmation_snapshot = None
         return self._create_subscription_from_spec(
             name,
             spec,
@@ -867,6 +910,7 @@ class BidPilotService:
         delivery_policy: DeliveryPolicy = DeliveryPolicy.ALWAYS,
         run_immediately: bool = True,
         delivery_targets: list[str] | None = None,
+        intent_snapshot: str | None = None,
     ) -> Subscription:
         """Create a normal subscription with a locally selected buyer identity locked in."""
         rows = self.db.list_tender_items_for_buyer_radar()
@@ -876,7 +920,11 @@ class BidPilotService:
         if not 2 <= len(buyer.buyer_name) <= 60:
             raise ValueError("采购单位名称长度必须为 2～60 字，当前记录无法建立可靠的来源查询")
         now = datetime.now(ZoneInfo(self.settings.timezone))
-        spec = await self.parse_intent(query, now=now)
+        if intent_snapshot is not None:
+            spec = self.intent_snapshots.verify(query, intent_snapshot, now=now)
+        else:
+            spec = await self.parse_intent(query, now=now)
+            spec.confirmation_snapshot = None
         spec = self._lock_buyer_filter(spec, [buyer.buyer_name])
         return self._create_subscription_from_spec(
             name,
@@ -977,7 +1025,9 @@ class BidPilotService:
         elif row.get("lease_owner") != lease_owner:
             raise SubscriptionBusyError("订阅租约已被其他 worker 接管，本轮不再重复执行")
         spec = TenderQuerySpec.model_validate_json(row["spec_json"])
+        attempt_run_id = uuid4().hex
         renewal = None
+        execution = None
         if manually_claimed:
             renewal = asyncio.create_task(
                 maintain_subscription_lease(
@@ -991,14 +1041,48 @@ class BidPilotService:
             )
         try:
             try:
-                result = await self.run_query(
-                    spec.raw_query,
-                    subscription_id=subscription_id,
-                    delivery_channel=row["delivery_channel"],
-                    delivery_targets=self._delivery_targets_from_row(row),
-                    trigger_reason=trigger_reason,
-                    buyer_keywords=spec.buyer_keywords,
-                )
+                run_arguments = {
+                    "subscription_id": subscription_id,
+                    "delivery_channel": row["delivery_channel"],
+                    "delivery_targets": self._delivery_targets_from_row(row),
+                    "trigger_reason": trigger_reason,
+                    "buyer_keywords": spec.buyer_keywords,
+                    "confirmed_spec": spec,
+                    "run_id": attempt_run_id,
+                }
+                if renewal is None:
+                    result = await self.run_query(spec.raw_query, **run_arguments)
+                else:
+                    execution = asyncio.create_task(
+                        self.run_query(spec.raw_query, **run_arguments),
+                        name=f"bidpilot-manual-run:{subscription_id}",
+                    )
+                    done, _ = await asyncio.wait(
+                        {execution, renewal},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if renewal in done and not execution.done():
+                        lease_error = renewal.exception()
+                        execution.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await execution
+                        self.db.cancel_subscription_run(
+                            subscription_id,
+                            worker_id=lease_owner,
+                            run_id=attempt_run_id,
+                            cancelled_at=datetime.now(ZoneInfo(self.settings.timezone)),
+                            message=("本轮因订阅租约丢失而停止；旧执行者不会继续生成报告或外发。"),
+                        )
+                        if lease_error is not None:
+                            raise SubscriptionBusyError(
+                                "无法确认订阅租约仍归当前执行者；本轮已安全停止"
+                            ) from lease_error
+                        raise SubscriptionBusyError(
+                            "订阅租约已被其他 worker 接管；旧执行者已在外发前停止"
+                        )
+                    result = await execution
+            except SubscriptionBusyError:
+                raise
             except Exception as exc:
                 if isinstance(exc, RunExecutionError):
                     failure = exc
@@ -1025,8 +1109,9 @@ class BidPilotService:
                 retry_at = retry_time(failed_at, int(row.get("consecutive_failures", 0)))
                 regular_at = next_schedule_time(spec.schedule, failed_at)
                 next_run_at = min(retry_at, regular_at) if regular_at else retry_at
-                self.db.finish_subscription_attempt(
+                persisted = self.db.finish_subscription_attempt(
                     subscription_id,
+                    worker_id=lease_owner,
                     last_run_at=failed_at,
                     next_run_at=next_run_at,
                     status=RunStatus.FAILED,
@@ -1035,30 +1120,54 @@ class BidPilotService:
                     run_id=failure.run_id,
                     success=False,
                 )
+                if not persisted:
+                    raise SubscriptionBusyError(
+                        "订阅租约已被其他 worker 接管；旧执行者的失败结果未覆盖当前状态"
+                    ) from exc
                 if failure is exc:
                     raise
                 raise failure from exc
 
             finished_at = result.completed_at or datetime.now(ZoneInfo(self.settings.timezone))
             next_run_at = next_schedule_time(spec.schedule, finished_at)
-            self.db.finish_subscription_attempt(
+            persisted = self.db.finish_subscription_attempt(
                 subscription_id,
+                worker_id=lease_owner,
                 last_run_at=finished_at,
                 next_run_at=next_run_at,
-                status=result.status,
+                status=self._retrieval_status_from_diagnostics(result.diagnostics),
                 message=result.delivery_message or f"运行完成，新增 {result.new_count} 条。",
                 new_count=result.new_count,
                 run_id=result.run_id,
                 success=True,
+                disable=spec.schedule.kind == ScheduleKind.ONCE and next_run_at is None,
             )
-            if spec.schedule.kind == ScheduleKind.ONCE and next_run_at is None:
-                self.db.set_subscription_due(subscription_id, None, enabled=False)
+            if not persisted:
+                raise SubscriptionBusyError(
+                    "订阅租约已被其他 worker 接管；旧执行者的完成结果未覆盖当前状态"
+                )
             return result
+        except asyncio.CancelledError:
+            if execution is not None and not execution.done():
+                execution.cancel()
+                with suppress(asyncio.CancelledError):
+                    await execution
+            self.db.cancel_subscription_run(
+                subscription_id,
+                worker_id=lease_owner,
+                run_id=attempt_run_id,
+                cancelled_at=datetime.now(ZoneInfo(self.settings.timezone)),
+                message="本轮运行已取消；原执行者的订阅租约已释放，可立即重新领取。",
+            )
+            raise
         finally:
             if renewal:
-                renewal.cancel()
-                with suppress(asyncio.CancelledError):
-                    await renewal
+                if not renewal.done():
+                    renewal.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await renewal
+                else:
+                    renewal.exception()
 
     def repair_subscription_schedules(self) -> int:
         now = datetime.now(ZoneInfo(self.settings.timezone))
@@ -1076,13 +1185,21 @@ class BidPilotService:
     def _subscription_from_row(self, row: dict) -> Subscription:
         lease_until = datetime.fromisoformat(row["lease_until"]) if row.get("lease_until") else None
         now = datetime.now(ZoneInfo(self.settings.timezone))
+        targets = self._delivery_targets_from_row(row)
+        delivery_status = None
+        delivery_message = None
+        if row.get("last_run_id"):
+            _, _, delivery_status, delivery_message = self._run_delivery_state(
+                row["last_run_id"],
+                targets,
+            )
         return Subscription(
             id=row["id"],
             name=row["name"],
             spec=TenderQuerySpec.model_validate_json(row["spec_json"]),
             enabled=bool(row["enabled"]),
             delivery_channel=row["delivery_channel"],
-            delivery_targets=self._delivery_targets_from_row(row),
+            delivery_targets=targets,
             delivery_policy=DeliveryPolicy(row.get("delivery_policy", "always")),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]) if row.get("updated_at") else None,
@@ -1097,6 +1214,8 @@ class BidPilotService:
             last_new_count=int(row.get("last_new_count", 0)),
             consecutive_failures=int(row.get("consecutive_failures", 0)),
             last_run_id=row.get("last_run_id"),
+            last_delivery_status=delivery_status,
+            last_delivery_message=delivery_message,
             in_progress=bool(row.get("lease_owner") and lease_until and lease_until > now),
         )
 
@@ -1155,7 +1274,10 @@ class BidPilotService:
         next_run_at = None
         query_changed = update.query is not None
         if update.query is not None:
-            spec = self.parser.parse(update.query, now=now)
+            if update.intent_snapshot is not None:
+                spec = self.intent_snapshots.verify(update.query, update.intent_snapshot, now=now)
+            else:
+                spec = self.parser.parse(update.query, now=now)
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
             if current.spec.buyer_keywords:
@@ -1212,7 +1334,11 @@ class BidPilotService:
         next_run_at = None
         query_changed = update.query is not None
         if update.query is not None:
-            spec = await self.parse_intent(update.query, now=now)
+            if update.intent_snapshot is not None:
+                spec = self.intent_snapshots.verify(update.query, update.intent_snapshot, now=now)
+            else:
+                spec = await self.parse_intent(update.query, now=now)
+                spec.confirmation_snapshot = None
             if spec.schedule.kind == ScheduleKind.IMMEDIATE:
                 raise ValueError("订阅规则必须包含每天、每周或明确的未来发送时间")
             if current.spec.buyer_keywords:
@@ -1294,6 +1420,15 @@ class BidPilotService:
             row["opportunity_assessments"] = (
                 json.loads(row.pop("assessment_json", "{}") or "{}") or None
             )
+            preferred = row["spec"].get("delivery_targets") or [
+                row["spec"].get("delivery_channel", "local")
+            ]
+            _, _, delivery_status, delivery_message = self._run_delivery_state(
+                row["id"],
+                preferred,
+            )
+            row["delivery_status"] = delivery_status
+            row["delivery_message"] = delivery_message
         return rows
 
     def list_delivery_attempts(self, subscription_id: str | None = None) -> list[dict]:

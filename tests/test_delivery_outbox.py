@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from bidpilot.api import create_app
@@ -384,6 +385,169 @@ async def test_fifth_failure_enters_dead_letter_and_manual_retry_recovers(
     recovered = service.db.get_delivery_outbox(row["id"])
     assert recovered["status"] == "succeeded"
     assert recovered["attempt_count"] == 1
+
+
+async def test_cancelled_outbox_dispatch_requeues_for_immediate_takeover(
+    tmp_path: Path, monkeypatch
+):
+    service = BidPilotService(make_settings(tmp_path), sources=[])
+    spec = scheduled_spec()
+    service.db.create_run("cancelled-outbox-run", spec)
+    row = service.db.create_delivery_outbox_item(
+        run_id="cancelled-outbox-run",
+        subscription_id=None,
+        channel="local",
+        report_path=None,
+        new_count=0,
+        subscription_name="取消恢复测试",
+    )
+    started = asyncio.Event()
+
+    async def block(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("blocked delivery should only finish through cancellation")
+
+    monkeypatch.setattr(service.delivery, "deliver", block)
+    task = asyncio.create_task(
+        service.dispatch_delivery_outbox(row["id"], worker_id="stopping-worker", claim_new=True)
+    )
+    await asyncio.wait_for(started.wait(), timeout=3)
+    sending = service.db.get_delivery_outbox(row["id"])
+    assert sending is not None
+    assert sending["status"] == "sending"
+    assert sending["lease_owner"] == "stopping-worker"
+
+    cancelled_at = datetime.now(UTC)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    queued = service.db.get_delivery_outbox(row["id"])
+    assert queued is not None
+    assert queued["status"] == "retrying"
+    assert queued["lease_owner"] is None
+    assert queued["lease_token"] is None
+    assert queued["lease_until"] is None
+    assert datetime.fromisoformat(queued["next_attempt_at"]) >= cancelled_at
+    assert datetime.fromisoformat(queued["next_attempt_at"]) <= datetime.now(UTC)
+
+    async def succeed(path, channel, **kwargs):
+        return DeliveryReceipt(channel, True, "新 worker 接管成功")
+
+    monkeypatch.setattr(service.delivery, "deliver", succeed)
+    assert await service.process_due_delivery_outbox(worker_id="replacement-worker") is True
+    recovered = service.db.get_delivery_outbox(row["id"])
+    assert recovered is not None
+    assert recovered["status"] == "succeeded"
+
+
+async def test_cancelled_outbox_dispatch_cannot_release_replacement_lease(
+    tmp_path: Path, monkeypatch
+):
+    service = BidPilotService(make_settings(tmp_path), sources=[])
+    spec = scheduled_spec()
+    service.db.create_run("fenced-cancelled-outbox-run", spec)
+    row = service.db.create_delivery_outbox_item(
+        run_id="fenced-cancelled-outbox-run",
+        subscription_id=None,
+        channel="local",
+        report_path=None,
+        new_count=0,
+        subscription_name="取消栅栏测试",
+    )
+    started = asyncio.Event()
+
+    async def block(*args, **kwargs):
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("blocked delivery should only finish through cancellation")
+
+    monkeypatch.setattr(service.delivery, "deliver", block)
+    task = asyncio.create_task(
+        service.dispatch_delivery_outbox(row["id"], worker_id="old-worker", claim_new=True)
+    )
+    await asyncio.wait_for(started.wait(), timeout=3)
+    replacement_until = datetime.now(UTC) + timedelta(minutes=5)
+    with service.db.connection() as conn:
+        conn.execute(
+            """
+            UPDATE delivery_outbox SET lease_owner=?, lease_token=?, lease_until=?
+            WHERE id=? AND status='sending'
+            """,
+            ("replacement-worker", "replacement-token", replacement_until.isoformat(), row["id"]),
+        )
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    fenced = service.db.get_delivery_outbox(row["id"])
+    assert fenced is not None
+    assert fenced["status"] == "sending"
+    assert fenced["lease_owner"] == "replacement-worker"
+    assert fenced["lease_token"] == "replacement-token"
+    assert fenced["lease_until"] == replacement_until.isoformat()
+
+
+@pytest.mark.parametrize(
+    ("source_status", "expected_status"),
+    [
+        (SourceStatus.OK, RunStatus.COMPLETED),
+        (SourceStatus.PARTIAL, RunStatus.PARTIAL),
+    ],
+)
+async def test_dead_letter_recovery_preserves_retrieval_state_and_diagnostics(
+    tmp_path: Path,
+    monkeypatch,
+    source_status: SourceStatus,
+    expected_status: RunStatus,
+):
+    class RetrievalStatusSource(StableTenderSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            result = await super().search(spec, fetcher)
+            return result.model_copy(update={"status": source_status})
+
+    service = BidPilotService(make_settings(tmp_path), sources=[RetrievalStatusSource()])
+    subscription = service.create_subscription(
+        "检索与投递分离日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        delivery_targets=["local"],
+    )
+
+    async def reject(*args, **kwargs):
+        raise DeliveryPermanentError("模拟永久投递错误")
+
+    monkeypatch.setattr(service.delivery, "deliver", reject)
+    first = await service.run_subscription(subscription.id)
+    outbox = service.db.list_delivery_outbox(run_id=first.run_id)
+    assert len(outbox) == 1
+    assert outbox[0]["status"] == "dead_letter"
+    stored_before = service.db.get_run(first.run_id)
+    assert stored_before is not None
+    diagnostics_before = stored_before["diagnostics_json"]
+    assert json.loads(diagnostics_before)[0]["status"] == source_status.value
+    subscription_before = service.get_subscription(subscription.id)
+    assert subscription_before is not None
+    assert subscription_before.last_status == expected_status
+    assert subscription_before.last_delivery_status == "partial"
+
+    service.retry_dead_letter(outbox[0]["id"])
+
+    async def succeed(path, channel, **kwargs):
+        return DeliveryReceipt(channel, True, "恢复成功")
+
+    monkeypatch.setattr(service.delivery, "deliver", succeed)
+    assert await service.process_due_delivery_outbox(worker_id="recovery-worker") is True
+
+    stored_after = service.db.get_run(first.run_id)
+    assert stored_after is not None
+    assert stored_after["status"] == expected_status.value
+    assert stored_after["diagnostics_json"] == diagnostics_before
+    subscription_after = service.get_subscription(subscription.id)
+    assert subscription_after is not None
+    assert subscription_after.last_status == expected_status
+    assert subscription_after.last_delivery_status == "success"
 
 
 async def test_missing_staged_report_goes_directly_to_dead_letter(tmp_path: Path):

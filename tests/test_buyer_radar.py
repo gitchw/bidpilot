@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
@@ -283,6 +284,13 @@ def test_buyer_radar_api_is_local_only_and_documents_every_boundary(tmp_path: Pa
             ):
                 assert section in operation["description"]
 
+        buyer_subscription_operation = schema["paths"]["/api/v1/buyers/{buyer_id}/subscriptions"][
+            "post"
+        ]
+        assert "intent_snapshot" in buyer_subscription_operation["description"]
+        assert "409" in buyer_subscription_operation["responses"]
+        assert "重新解析" in buyer_subscription_operation["responses"]["409"]["description"]
+
         spec_schema = schema["components"]["schemas"]["TenderQuerySpec"]
         buyer_field = spec_schema["properties"]["buyer_keywords"]
         assert "精确过滤" in buyer_field["description"]
@@ -390,6 +398,117 @@ def test_buyer_subscription_api_uses_unified_path_and_preserves_filter_on_edit(t
         )
         assert no_schedule.status_code == 422
         assert source.calls == 0
+
+
+def test_buyer_subscription_honors_intent_snapshot_and_keeps_legacy_path(tmp_path: Path):
+    app = create_app(make_settings(tmp_path), sources=[CountingBuyerSource()])
+    seed_radar(app.state.service)
+    service = app.state.service
+    buyer_id = buyer_identity("安徽大学")
+    legacy_query = "每周一8点汇总最近2周服务器采购公告"
+    confirmed_query = "每天9点汇总最近1个月深圳服务器采购公告"
+
+    with TestClient(app) as client:
+        original_resolve = service.intent_engine.resolve
+        tracked_resolve = AsyncMock(wraps=original_resolve)
+        service.intent_engine.resolve = tracked_resolve
+
+        legacy = client.post(
+            f"/api/v1/buyers/{buyer_id}/subscriptions",
+            json={
+                "name": "无快照兼容订阅",
+                "query": legacy_query,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert legacy.status_code == 200, legacy.text
+        assert legacy.json()["spec"]["buyer_keywords"] == ["安徽大学"]
+        assert tracked_resolve.await_count == 1
+
+        preview = client.post("/api/v1/intent/parse", json={"query": confirmed_query})
+        assert preview.status_code == 200, preview.text
+        intent_snapshot = preview.json()["confirmation_snapshot"]
+        assert tracked_resolve.await_count == 2
+
+        forbidden_resolve = AsyncMock(side_effect=AssertionError("有效快照不得二次调用意图模型"))
+        service.intent_engine.resolve = forbidden_resolve
+        confirmed = client.post(
+            f"/api/v1/buyers/{buyer_id}/subscriptions",
+            json={
+                "name": "已确认的买方订阅",
+                "query": confirmed_query,
+                "intent_snapshot": intent_snapshot,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        confirmed_spec = confirmed.json()["spec"]
+        assert confirmed_spec["region"] == "深圳"
+        assert confirmed_spec["buyer_keywords"] == ["安徽大学"]
+        assert confirmed_spec["confirmation_snapshot"] is None
+        assert forbidden_resolve.await_count == 0
+
+        changed = client.post(
+            f"/api/v1/buyers/{buyer_id}/subscriptions",
+            json={
+                "name": "问题已改变",
+                "query": "每天9点汇总最近1个月广州服务器采购公告",
+                "intent_snapshot": intent_snapshot,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert changed.status_code == 409
+        assert "问题内容已改变" in changed.json()["detail"]
+
+        empty_snapshot = client.post(
+            f"/api/v1/buyers/{buyer_id}/subscriptions",
+            json={
+                "name": "空快照不得降级重解析",
+                "query": confirmed_query,
+                "intent_snapshot": "",
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert empty_snapshot.status_code == 409
+        assert "格式无效" in empty_snapshot.json()["detail"]
+
+        payload, signature = intent_snapshot.split(".", 1)
+        replacement = "A" if signature[0] != "A" else "B"
+        tampered = client.post(
+            f"/api/v1/buyers/{buyer_id}/subscriptions",
+            json={
+                "name": "签名已被修改",
+                "query": confirmed_query,
+                "intent_snapshot": f"{payload}.{replacement}{signature[1:]}",
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert tampered.status_code == 409
+        assert "签名不匹配" in tampered.json()["detail"]
+
+        confirmed_spec_model = TenderQuerySpec.model_validate(preview.json())
+        expired_snapshot = service.intent_snapshots.issue(
+            confirmed_spec_model,
+            now=datetime.now(TIMEZONE) - timedelta(minutes=16),
+        )
+        expired = client.post(
+            f"/api/v1/buyers/{buyer_id}/subscriptions",
+            json={
+                "name": "已过期快照",
+                "query": confirmed_query,
+                "intent_snapshot": expired_snapshot,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert expired.status_code == 409
+        assert "已过期" in expired.json()["detail"]
+        assert forbidden_resolve.await_count == 0
 
 
 async def test_buyer_subscription_run_hard_filters_other_buyers_and_uses_ledger(tmp_path: Path):

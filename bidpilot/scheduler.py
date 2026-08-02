@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import os
+import secrets
 import socket
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -57,10 +58,27 @@ def next_schedule_time(schedule: IntentSchedule, after: datetime) -> datetime | 
     return None
 
 
-def retry_time(after: datetime, consecutive_failures: int) -> datetime:
+def retry_time(
+    after: datetime,
+    consecutive_failures: int,
+    *,
+    random_fraction: float | None = None,
+) -> datetime:
+    """Return capped exponential backoff with a bounded positive jitter.
+
+    Positive-only jitter avoids retrying earlier than the documented base delay;
+    callers that also receive a platform Retry-After continue to take the later time.
+    """
     delays = (60, 300, 900, 3600, 10800)
     index = min(max(consecutive_failures, 0), len(delays) - 1)
-    return after + timedelta(seconds=delays[index])
+    base_delay = delays[index]
+    fraction = (
+        secrets.randbelow(1001) / 1000
+        if random_fraction is None
+        else min(max(float(random_fraction), 0.0), 1.0)
+    )
+    jitter = min(base_delay * 0.1, 60.0) * fraction
+    return after + timedelta(seconds=base_delay + jitter)
 
 
 async def maintain_subscription_lease(
@@ -150,19 +168,41 @@ class SubscriptionWorker:
             ),
             name=f"bidpilot-lease:{row['id']}",
         )
-        try:
-            await self.service.run_subscription(
+        execution = asyncio.create_task(
+            self.service.run_subscription(
                 row["id"],
                 trigger_reason="schedule",
                 lease_owner=self.worker_id,
+            ),
+            name=f"bidpilot-subscription-run:{row['id']}",
+        )
+        try:
+            done, _ = await asyncio.wait(
+                {execution, renewal},
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        except Exception:
-            # Service persistence contains the actionable failure and retry time.
-            pass
+            if renewal in done and not execution.done():
+                lease_error = renewal.exception()
+                execution.cancel()
+                with suppress(asyncio.CancelledError):
+                    await execution
+                if lease_error is not None:
+                    raise lease_error
+                return True
+            try:
+                await execution
+            except Exception:
+                # Service persistence contains the actionable failure and retry time.
+                pass
         finally:
-            renewal.cancel()
-            with suppress(asyncio.CancelledError):
-                await renewal
+            if not execution.done():
+                execution.cancel()
+                with suppress(asyncio.CancelledError):
+                    await execution
+            if not renewal.done():
+                renewal.cancel()
+                with suppress(asyncio.CancelledError):
+                    await renewal
         return True
 
     async def run_forever(self) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -146,24 +147,100 @@ class RuntimeConfigUpdate(BaseModel):
 
     revision: int = Field(ge=0, description="读取配置时返回的版本号；旧版本写入会返回 409")
 
-    llm_base_url: str | None = Field(default=None, max_length=2000)
-    llm_api_key: SecretStr | None = None
-    llm_model: str | None = Field(default=None, max_length=200)
-    llm_timeout: float | None = Field(default=None, ge=3, le=120)
-    intent_llm_mode: Literal["off", "auto", "always"] | None = None
-    intent_llm_confidence_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
-    retrieval_llm_mode: Literal["off", "auto"] | None = None
-    retrieval_max_rounds: int | None = Field(default=None, ge=1, le=2)
-    retrieval_query_budget_per_source: int | None = Field(default=None, ge=1, le=5)
-    retrieval_semantic_review: bool | None = None
-    retrieval_semantic_threshold: float | None = Field(default=None, ge=0.5, le=0.99)
-    retrieval_semantic_candidate_limit: int | None = Field(default=None, ge=1, le=30)
-    record_summary_mode: Literal["off", "auto"] | None = None
-    record_summary_max_records: int | None = Field(default=None, ge=0, le=30)
-    record_summary_concurrency: int | None = Field(default=None, ge=1, le=8)
-    record_summary_max_chars: int | None = Field(default=None, ge=500, le=12000)
-    intelligence_brief_mode: Literal["off", "auto"] | None = None
-    intelligence_brief_max_records: int | None = Field(default=None, ge=3, le=25)
+    llm_base_url: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="OpenAI-compatible 服务根地址，例如 http://127.0.0.1:8045/v1；普通字段，保存后立即生效",
+    )
+    llm_api_key: SecretStr | None = Field(
+        default=None,
+        description="模型服务 API Key；只写入本机加密存储，读取、日志和错误均不回显",
+    )
+    llm_model: str | None = Field(
+        default=None,
+        max_length=200,
+        description="发送给兼容接口的模型 ID；需与服务端实际开放名称完全一致，保存后立即生效",
+    )
+    llm_timeout: float | None = Field(
+        default=None,
+        ge=3,
+        le=120,
+        description="单次模型请求最长等待秒数，范围 3～120；越长越能容忍慢模型，也会延长页面等待",
+    )
+    intent_llm_mode: Literal["off", "auto", "always"] | None = Field(
+        default=None,
+        description="意图 LLM 模式：off 只用规则，auto 仅低置信/冲突时调用，always 每次都复核；可能产生模型费用",
+    )
+    intent_llm_confidence_threshold: float | None = Field(
+        default=None,
+        ge=0.5,
+        le=0.99,
+        description="auto 模式触发阈值，范围 0.50～0.99；规则字段最低置信度低于该值才请求模型",
+    )
+    retrieval_llm_mode: Literal["off", "auto"] | None = Field(
+        default=None,
+        description="检索规划模型开关：auto 可提议发现词，off 只用本地受控扩展；模型词不会直接成为可信命中词",
+    )
+    retrieval_max_rounds: int | None = Field(
+        default=None,
+        ge=1,
+        le=2,
+        description="单次任务最多检索轮数，范围 1～2；第二轮仅在覆盖缺口明确时触发，会增加网络请求",
+    )
+    retrieval_query_budget_per_source: int | None = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="每个来源每轮最多使用的查询变体数，范围 1～5；增大可能提升召回，也会增加耗时和站点负载",
+    )
+    retrieval_semantic_review: bool | None = Field(
+        default=None,
+        description="是否让模型复核通过地域/日期等硬过滤后的主题边界候选；关闭后只使用确定性字面规则",
+    )
+    retrieval_semantic_threshold: float | None = Field(
+        default=None,
+        ge=0.5,
+        le=0.99,
+        description="语义复核最低接受分，范围 0.50～0.99；分数只是辅助，仍必须提供候选正文中的逐字证据引句",
+    )
+    retrieval_semantic_candidate_limit: int | None = Field(
+        default=None,
+        ge=1,
+        le=30,
+        description="单轮最多送模型复核的边界候选数，范围 1～30；超过预算的候选不会被模型放行",
+    )
+    record_summary_mode: Literal["off", "auto"] | None = Field(
+        default=None,
+        description="逐公告摘要角色：auto 在模型可用时生成受证据约束的短摘要，off 使用本地结构化摘要",
+    )
+    record_summary_max_records: int | None = Field(
+        default=None,
+        ge=0,
+        le=30,
+        description="单轮最多调用模型摘要的公告数，范围 0～30；0 等同不调用，可直接控制费用上限",
+    )
+    record_summary_concurrency: int | None = Field(
+        default=None,
+        ge=1,
+        le=8,
+        description="逐公告模型摘要并发数，范围 1～8；过高可能触发模型服务限流或占满本地推理资源",
+    )
+    record_summary_max_chars: int | None = Field(
+        default=None,
+        ge=500,
+        le=12000,
+        description="每条公告送入摘要模型的最大正文字符数，范围 500～12000；截断状态会在结果中诚实披露",
+    )
+    intelligence_brief_mode: Literal["off", "auto"] | None = Field(
+        default=None,
+        description="情报简报模型开关：auto 从本轮固定证据生成需求、风险和行动建议，off 使用确定性回退",
+    )
+    intelligence_brief_max_records: int | None = Field(
+        default=None,
+        ge=3,
+        le=25,
+        description="情报简报最多使用的高优先证据数，范围 3～25；不会改变最终检索保留数量",
+    )
     decision_assessment_mode: Literal["off", "auto"] | None = Field(
         default=None,
         description="关闭或启用企业画像语义复核；关闭后仍使用本地计分和推荐",
@@ -175,30 +252,101 @@ class RuntimeConfigUpdate(BaseModel):
         description="单轮最多发送给模型做语义复核的证据数；其余结果仍由本地规则逐条判断",
     )
 
-    feishu_webhook_url: SecretStr | None = None
-    feishu_webhook_secret: SecretStr | None = None
-    feishu_app_id: str | None = Field(default=None, max_length=200)
-    feishu_app_secret: SecretStr | None = None
-    feishu_receive_id: str | None = Field(default=None, max_length=300)
-    feishu_receive_id_type: Literal["chat_id", "open_id", "user_id", "union_id", "email"] | None = (
-        None
+    feishu_webhook_url: SecretStr | None = Field(
+        default=None,
+        description="飞书群机器人 Webhook 完整地址；加密保存且不回显，用于发送文字卡片和安全报告链接",
     )
-    public_base_url: str | None = Field(default=None, max_length=2000)
+    feishu_webhook_secret: SecretStr | None = Field(
+        default=None,
+        description="飞书群机器人可选签名密钥；配置后每次请求附加时间戳签名，只写不回显",
+    )
+    feishu_app_id: str | None = Field(
+        default=None,
+        max_length=200,
+        description="飞书自建应用 App ID；与 App Secret、接收 ID 同时配置后可上传并发送 Word 文件",
+    )
+    feishu_app_secret: SecretStr | None = Field(
+        default=None,
+        description="飞书自建应用 App Secret；仅用于换取 tenant token，本机加密保存且永不回显",
+    )
+    feishu_receive_id: str | None = Field(
+        default=None,
+        max_length=300,
+        description="飞书应用消息接收者 ID，其格式必须与 receive_id_type 对应，例如 chat_id 或 open_id",
+    )
+    feishu_receive_id_type: Literal["chat_id", "open_id", "user_id", "union_id", "email"] | None = (
+        Field(
+            default=None,
+            description="飞书接收 ID 类型：群聊 chat_id，或 open_id/user_id/union_id/email；填错会导致平台拒绝",
+        )
+    )
+    public_base_url: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="已有 TLS 与访问控制的报告公开根地址；供只支持链接的渠道或超大文件使用，留空绝不虚构公网下载",
+    )
 
-    smtp_host: str | None = Field(default=None, max_length=500)
-    smtp_port: int | None = Field(default=None, ge=1, le=65535)
-    smtp_security: Literal["ssl", "starttls", "plain"] | None = None
-    smtp_username: str | None = Field(default=None, max_length=500)
-    smtp_password: SecretStr | None = None
-    smtp_from: str | None = Field(default=None, max_length=500)
-    smtp_to: str | None = Field(default=None, max_length=2000)
-    smtp_timeout: float | None = Field(default=None, ge=3, le=120)
+    smtp_host: str | None = Field(
+        default=None,
+        max_length=500,
+        description="SMTP 服务器主机名，例如 smtp.example.com；与端口和安全模式共同决定邮件连接方式",
+    )
+    smtp_port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        description="SMTP 端口，范围 1～65535；常见 SSL 为 465、STARTTLS 为 587，以邮件服务商文档为准",
+    )
+    smtp_security: Literal["ssl", "starttls", "plain"] | None = Field(
+        default=None,
+        description="SMTP 加密方式：ssl 建连即加密，starttls 建连后升级，plain 不加密且只建议受控内网",
+    )
+    smtp_username: str | None = Field(
+        default=None,
+        max_length=500,
+        description="SMTP 登录账号，通常是完整邮箱地址；某些服务商要求专用账号名",
+    )
+    smtp_password: SecretStr | None = Field(
+        default=None,
+        description="SMTP 密码或应用专用授权码；本机加密保存，读取和错误均不回显",
+    )
+    smtp_from: str | None = Field(
+        default=None,
+        max_length=500,
+        description="邮件 From 发件地址；需符合服务商授权，否则可能被拒绝或改写",
+    )
+    smtp_to: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="收件人列表，可用逗号、分号或换行分隔；每轮会向全部解析成功的地址发送同一报告",
+    )
+    smtp_timeout: float | None = Field(
+        default=None,
+        ge=3,
+        le=120,
+        description="SMTP 建连、登录和发送的最长等待秒数，范围 3～120；超时会进入该目标的有限重试",
+    )
 
-    dingtalk_webhook_url: SecretStr | None = None
-    dingtalk_webhook_secret: SecretStr | None = None
-    wecom_webhook_url: SecretStr | None = None
-    generic_webhook_url: SecretStr | None = None
-    generic_webhook_bearer_token: SecretStr | None = None
+    dingtalk_webhook_url: SecretStr | None = Field(
+        default=None,
+        description="钉钉群机器人 Webhook 完整地址；本机加密保存，用于 Markdown 消息和报告链接",
+    )
+    dingtalk_webhook_secret: SecretStr | None = Field(
+        default=None,
+        description="钉钉机器人可选加签密钥；配置后生成官方时间戳签名，只写不回显",
+    )
+    wecom_webhook_url: SecretStr | None = Field(
+        default=None,
+        description="企业微信群机器人 Webhook 完整地址；加密保存，用于 Markdown 消息和安全报告链接",
+    )
+    generic_webhook_url: SecretStr | None = Field(
+        default=None,
+        description="用户自有自动化平台的 HTTP/HTTPS Webhook；发送结构化 JSON，必须由用户确认接收方可信",
+    )
+    generic_webhook_bearer_token: SecretStr | None = Field(
+        default=None,
+        description="通用 Webhook 可选 Bearer Token；仅放入 Authorization 请求头，加密保存且错误中脱敏",
+    )
     telegram_bot_token: SecretStr | None = Field(
         default=None,
         description="Telegram 官方 BotFather 签发的 Bot Token；仅加密保存且永不回显",
@@ -225,15 +373,55 @@ class RuntimeConfigUpdate(BaseModel):
         default=None,
         description="Slack 官方 Incoming Webhook HTTPS 地址；只支持消息和报告链接",
     )
-    delivery_webhook_timeout: float | None = Field(default=None, ge=3, le=120)
+    delivery_webhook_timeout: float | None = Field(
+        default=None,
+        ge=3,
+        le=120,
+        description="飞书/钉钉/企微/通用/Telegram/Slack 等 HTTP 投递最长等待秒数，范围 3～120；保存后立即生效",
+    )
 
-    request_timeout: float | None = Field(default=None, ge=3, le=120)
-    request_interval: float | None = Field(default=None, ge=0.1, le=10)
-    max_results_per_source: int | None = Field(default=None, ge=1, le=100)
-    ccgp_max_pages: int | None = Field(default=None, ge=1, le=20)
-    worker_poll_interval: float | None = Field(default=None, ge=0.2, le=300)
-    worker_lease_seconds: int | None = Field(default=None, ge=30, le=7200)
-    worker_heartbeat_ttl: int | None = Field(default=None, ge=5, le=600)
+    request_timeout: float | None = Field(
+        default=None,
+        ge=3,
+        le=120,
+        description="单个来源 HTTP 请求最长等待秒数，范围 3～120；超时只隔离该来源，不让其他来源一起失败",
+    )
+    request_interval: float | None = Field(
+        default=None,
+        ge=0.1,
+        le=10,
+        description="同一来源相邻请求的最小礼貌间隔秒数，范围 0.1～10；调小会增加被限流风险",
+    )
+    max_results_per_source: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="每个来源进入统一过滤前的候选上限，范围 1～100；不是最终可信结果数量",
+    )
+    ccgp_max_pages: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="中国政府采购网单次查询最多读取页数，范围 1～20；页数越多越慢且请求量越大",
+    )
+    worker_poll_interval: float | None = Field(
+        default=None,
+        ge=0.2,
+        le=300,
+        description="长期 worker 空闲时检查到期订阅和 Outbox 的间隔秒数，范围 0.2～300；保存后立即生效",
+    )
+    worker_lease_seconds: int | None = Field(
+        default=None,
+        ge=30,
+        le=7200,
+        description="worker 单次领取订阅的租约秒数，范围 30～7200；运行中会续租，过短会增加误接管风险",
+    )
+    worker_heartbeat_ttl: int | None = Field(
+        default=None,
+        ge=5,
+        le=600,
+        description="网页判断 worker 在线的心跳有效秒数，范围 5～600；只影响状态判断，不删除任务",
+    )
     network_access_mode: Literal["local", "lan"] | None = Field(
         default=None,
         description="重启后的监听范围：local 仅本机，lan 允许局域网设备连接",
@@ -258,8 +446,15 @@ class RuntimeConfigUpdate(BaseModel):
         description="LAN 管理员令牌，仅写入不回显；令牌模式至少 16 个字符",
     )
 
-    clear_secrets: list[SecretField] = Field(default_factory=list)
-    reset_fields: list[str] = Field(default_factory=list, max_length=len(RESETTABLE_FIELDS))
+    clear_secrets: list[SecretField] = Field(
+        default_factory=list,
+        description="要显式清除的敏感字段名；清除不可恢复，留空或省略敏感输入表示保持原值",
+    )
+    reset_fields: list[str] = Field(
+        default_factory=list,
+        max_length=len(RESETTABLE_FIELDS),
+        description="要恢复到环境变量或程序默认值的普通字段名；敏感字段不允许通过此列表恢复",
+    )
 
     @field_validator("reset_fields")
     @classmethod
@@ -543,11 +738,23 @@ class RuntimeConfiguration:
         self._effective_restart_values = {
             field: getattr(settings, field) for field in RESTART_REQUIRED_FIELDS
         }
+        self._effective_bind_host = settings.host
 
     def effective_restart_value(self, field: str) -> object:
         if field not in RESTART_REQUIRED_FIELDS:
             raise KeyError(f"{field} 不是需重启生效的配置")
         return self._effective_restart_values[field]
+
+    def set_effective_endpoint(self, *, host: str, port: int) -> None:
+        """Record the endpoint this process actually bound, including CLI overrides."""
+        normalized = host.strip("[]").lower()
+        try:
+            loopback = normalized == "localhost" or ipaddress.ip_address(normalized).is_loopback
+        except ValueError:
+            loopback = False
+        self._effective_restart_values["network_access_mode"] = "local" if loopback else "lan"
+        self._effective_restart_values["port"] = int(port)
+        self._effective_bind_host = host
 
     def load_persisted(self) -> None:
         rows = self.db.get_runtime_config()
@@ -683,11 +890,7 @@ class RuntimeConfiguration:
                 effective_access_policy=self.effective_restart_value("lan_access_policy"),
                 effective_trusted_networks=self.effective_restart_value("lan_trusted_networks"),
                 effective_port=self.effective_restart_value("port"),
-                effective_bind_host=(
-                    "0.0.0.0"
-                    if self.effective_restart_value("network_access_mode") == "lan"
-                    else "127.0.0.1"
-                ),
+                effective_bind_host=self._effective_bind_host,
                 lan_admin_token=secret("lan_admin_token"),
                 effective_lan_admin_token=SecretState(
                     configured=bool(self.effective_restart_value("lan_admin_token"))

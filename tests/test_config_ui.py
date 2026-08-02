@@ -26,6 +26,28 @@ def test_graphical_config_fields_match_backend_allowlist_exactly():
     assert set(clear_fields) == SECRET_FIELDS
 
 
+def test_every_graphical_config_field_has_beginner_help_text():
+    document = _document()
+    missing = []
+    for control in document.select("[data-config]"):
+        label = control.find_parent("label")
+        help_text = label.select_one("small") if label else None
+        minimum_length = 1 if control.get("type") == "password" else 8
+        if help_text is None or len(help_text.get_text(" ", strip=True)) < minimum_length:
+            missing.append(control.get("data-config"))
+
+    assert missing == []
+    assert "范围 0.2～300 秒" in document.select_one(
+        '[data-config="worker_poll_interval"]'
+    ).find_parent("label").get_text(" ", strip=True)
+    assert "过短可能在机器繁忙时误报" in document.select_one(
+        '[data-config="worker_heartbeat_ttl"]'
+    ).find_parent("label").get_text(" ", strip=True)
+    assert "重复风险" in document.select_one(
+        '[data-config="delivery_webhook_timeout"]'
+    ).find_parent("label").get_text(" ", strip=True)
+
+
 def test_config_cards_have_scoped_save_and_safe_initial_state():
     document = _document()
     groups = {card.get("data-config-group") for card in document.select("[data-config-group]")}
@@ -38,6 +60,7 @@ def test_config_cards_have_scoped_save_and_safe_initial_state():
         "ai",
         "retrieval",
         "system",
+        "publishing",
         "feishu",
         "email",
         "dingtalk",
@@ -67,6 +90,17 @@ def test_connection_tests_do_not_implicitly_save_other_drafts():
     assert "有未保存修改" in channel_block
 
 
+def test_config_save_locks_inputs_and_unready_tests_stay_disabled():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+
+    assert "function syncConfigInputAvailability()" in script
+    assert "const locked = !state.configLoaded || state.configSaving" in script
+    assert "输入已暂时锁定" in script
+    assert "function savedDeliveryChannelReady(channel)" in script
+    assert "!state.configLoaded || !ready || dirtyConfigFields(group).length" in script
+    assert "请先完整配置并保存此渠道" in script
+
+
 def test_network_card_exposes_safe_and_frictionless_lan_modes():
     document = _document()
     policy = document.select_one('[data-config="lan_access_policy"]')
@@ -92,6 +126,36 @@ def test_network_card_exposes_safe_and_frictionless_lan_modes():
     assert "window.prompt" not in script
 
 
+def test_service_port_help_distinguishes_native_python_from_compose():
+    document = _document()
+    port_control = document.select_one('[data-config="port"]')
+    port_help = port_control.find_parent("label").get_text(" ", strip=True)
+
+    assert "原生 Python 服务" in port_help
+    assert "Docker Compose" in port_help
+    assert "容器内固定监听 8000" in port_help
+    assert "BIDPILOT_PORT" in port_help
+    assert "这里不会改变端口" in port_help
+
+    readme = Path("README.md").read_text(encoding="utf-8")
+    configuration_guide = Path("docs/CONFIGURATION_GUIDE.md").read_text(encoding="utf-8")
+
+    for documentation in (readme, configuration_guide):
+        assert "BIDPILOT_PORT=8012" in documentation
+        assert "docker compose up -d --force-recreate" in documentation
+        assert "docker compose stop" in documentation
+        assert "docker compose restart" in documentation
+        assert ".venv\\Scripts\\python.exe -m bidpilot restart" in documentation
+        assert ".venv\\Scripts\\python.exe -m bidpilot stop" in documentation
+        assert ".venv/bin/python -m bidpilot restart" in documentation
+        assert ".venv/bin/python -m bidpilot stop" in documentation
+
+    assert "网页“服务端口”只控制原生 Python `bidpilot serve`" in readme
+    assert "容器内 Web 服务固定监听 `8000`" in readme
+    assert "网页修改“服务端口”不会修改 `.env`、`compose.yaml` 或已创建容器" in (configuration_guide)
+    assert "容器内部仍然监听 8000" in configuration_guide
+
+
 def test_telegram_and_slack_cards_expose_masked_scoped_configuration():
     document = _document()
     telegram = document.select_one('[data-config-group="telegram"]')
@@ -111,6 +175,10 @@ def test_telegram_and_slack_cards_expose_masked_scoped_configuration():
     assert slack.select_one('[data-test-channel="slack_webhook"]')
     assert "超过 50 MB" in telegram.get_text(" ", strip=True)
     assert "不能上传 Word" in slack.get_text(" ", strip=True)
+    publishing = document.select_one('[data-config-group="publishing"]')
+    assert publishing.select_one('[data-config="public_base_url"]')
+    assert len(document.select('[data-config="public_base_url"]')) == 1
+    assert document.select('[data-open-config-group="publishing"]')
 
 
 def test_multitarget_ui_covers_all_creation_and_editing_flows():
@@ -125,7 +193,8 @@ def test_multitarget_ui_covers_all_creation_and_editing_flows():
     assert "supports_file" in script
     assert "supports_link" in script
     assert "configuration_group" in script
-    assert script.count("...deliveryPayload(targets)") >= 3
+    assert script.count("...deliveryPayload(targets)") >= 2
+    assert "...deliveryPayload(currentTargets)" in script
     assert "Object.assign(payload, deliveryPayload(targets))" in script
     assert 'root.id === "run-delivery-targets" ? "delivery-channel"' in script
     assert "buyer-monitor-targets" in script
@@ -145,9 +214,49 @@ def test_delivery_receipts_outbox_and_dead_letter_recovery_are_visible():
     assert "/delivery-outbox?limit=100" in script
     assert "/api/v1/delivery-outbox/${encodeURIComponent(outboxId)}/retry" in script
     assert "只重试此渠道" in script
+    assert "retry-run-outbox" in script
+    assert "DELIVERY CONTROL TOWER" in script
+    assert "当前没有死信" in script
     assert "subscriptionExpandedLogs" in script
     assert ".subscription-editor:not(.hidden), .subscription-log:not(.hidden)" in script
-    assert 'row.last_status === "partial"' in script
+    assert 'row.last_delivery_status === "partial"' in script
+    assert 'run.delivery_status === "partial"' in script
+    assert "function refreshRunDeliveryStatus" in script
+    assert "function scheduleRunDeliveryPolling" in script
+    assert "function scheduleSubscriptionLogPolling" in script
+    assert "refresh-run-delivery" in script
+    assert "refresh-subscription-outbox" in script
+    assert "每 4 秒自动刷新" in script
+    assert "api(`/api/v1/runs/${encodeURIComponent(runId)}`" in script
+    assert "后台任务不会因此丢失" in script
+
+
+def test_errors_and_subscription_drafts_have_beginner_recovery_guards():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+
+    assert "function humanFieldPath" in script
+    assert "function humanValidationMessage" in script
+    assert "humanizeErrorMessage(data.detail)" in script
+    assert "subscriptionDrafts: new Set()" in script
+    assert "尚未保存；离开或重新打开会丢弃这些草稿" in script
+    assert "state.configDirty.size || state.subscriptionDrafts.size" in script
+    assert "任务仍保存在后台，请到订阅中心点击“刷新状态”" in script
+
+
+def test_confirmed_intent_snapshot_follows_run_and_subscription_requests():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+
+    assert "intent_snapshot: state.spec.confirmation_snapshot" in script
+    assert "intent_snapshot: spec.confirmation_snapshot" in script
+    assert "function parseScheduledIntentForConfirmation" in script
+    assert "确认前不会创建或立即运行" in script
+    assert "确认前不会保存或立即运行" in script
+    assert "保存前会先展示主题、地域、时间和计划供你确认" in script
+    assert "intent_snapshot: confirmedIntent.confirmation_snapshot" in script
+    assert "payload.intent_snapshot = confirmedIntent.confirmation_snapshot" in script
+    assert "更新订阅规则" in script
+    assert "error.status === 409" in script
+    assert "创建订阅前请重新解析" in script
 
 
 def test_frontend_cache_key_and_mobile_recovery_contract_are_current():
@@ -160,6 +269,51 @@ def test_frontend_cache_key_and_mobile_recovery_contract_are_current():
     assert stylesheet.get("href").endswith("?v=0.8.0")
     assert script_asset.get("src").endswith("?v=0.8.0")
     assert "min-height:44px" in css
+    assert ".checkbox-config > .config-origin { grid-column:1/-1; }" in css
+    assert "@media (max-width: 1660px)" in css
     assert ".delivery-outbox-row p" in css
     assert "white-space:normal" in css
     assert "opportunityLoadSequence" in script
+
+
+def test_main_navigation_resets_scroll_before_and_after_async_panel_load():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+    reset_block = script.split("function resetPageScroll()", 1)[1].split(
+        "function waitForLayout", 1
+    )[0]
+    wait_block = script.split("function waitForLayout()", 1)[1].split(
+        "function revealConfigCard", 1
+    )[0]
+    activate_block = script.split("async function activateTab(tab)", 1)[1].split(
+        '\n}\n\n$$(".nav-link")', 1
+    )[0]
+
+    assert 'behavior: "instant"' in reset_block
+    assert "window.setTimeout(resolve, 0)" in wait_block
+    assert "requestAnimationFrame" not in wait_block
+    assert activate_block.count("resetPageScroll();") == 2
+    assert "await waitForLayout();" in activate_block
+    assert "return false;" in activate_block
+    assert "return true;" in activate_block
+
+
+def test_delivery_config_links_reveal_and_focus_the_requested_card():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+    reveal_block = script.split("function revealConfigCard(card)", 1)[1].split(
+        "async function openDeliveryConfiguration", 1
+    )[0]
+    open_block = script.split("async function openDeliveryConfiguration(group)", 1)[1].split(
+        "function bindDeliveryTargetPicker", 1
+    )[0]
+
+    assert "targetTop" in reveal_block
+    assert 'behavior: "instant"' in reveal_block
+    assert 'card.setAttribute("tabindex", "-1")' in reveal_block
+    assert "card.focus({ preventScroll: true });" in reveal_block
+    assert 'card.classList.add("attention-card")' in reveal_block
+    assert 'const activated = await activateTab("config");' in open_block
+    assert "if (!activated) return;" in open_block
+    assert "await waitForLayout();" in open_block
+    assert "await loadConfig(false);" not in open_block
+    assert 'article.config-card[data-config-group="${group}"]' in open_block
+    assert "revealConfigCard(card);" in open_block

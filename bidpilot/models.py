@@ -542,6 +542,15 @@ class TenderQuerySpec(BaseModel):
         default_factory=IntentResolution,
         description="规则与 LLM 的安全合并轨迹；历史数据缺失时自动补默认值",
     )
+    confirmation_snapshot: str | None = Field(
+        default=None,
+        max_length=100_000,
+        description=(
+            "服务端签名且限时有效的解析确认快照；网页运行或创建订阅时原样回传，"
+            "后端验证原问题、签名和时效后执行同一结构化意图"
+        ),
+        repr=False,
+    )
 
     @field_validator("keywords")
     @classmethod
@@ -959,6 +968,14 @@ class SubscriptionCreate(BaseModel):
 
     name: str = Field(description="用户可读的订阅名称", min_length=1, max_length=100)
     query: str = Field(description="必须包含可识别计划的中文规则", min_length=2, max_length=500)
+    intent_snapshot: str | None = Field(
+        default=None,
+        max_length=100_000,
+        description=(
+            "解析预览返回的限时签名快照；网页确认后原样回传，问题变化、签名错误或过期会拒绝创建"
+        ),
+        repr=False,
+    )
     delivery_channel: str = Field(default="local", description="已配置的投递通道 ID")
     delivery_targets: list[str] | None = Field(
         default=None,
@@ -1009,6 +1026,15 @@ class SubscriptionUpdate(BaseModel):
         min_length=2,
         max_length=500,
     )
+    intent_snapshot: str | None = Field(
+        default=None,
+        max_length=100_000,
+        description=(
+            "新规则解析预览返回的限时签名快照；显式提交后会校验问题、签名和有效期，"
+            "避免编辑保存时再次调用模型并产生意图漂移"
+        ),
+        repr=False,
+    )
     delivery_channel: str | None = Field(default=None, description="新投递通道 ID")
     delivery_targets: list[str] | None = Field(
         default=None,
@@ -1019,6 +1045,8 @@ class SubscriptionUpdate(BaseModel):
 
     @model_validator(mode="after")
     def normalize_delivery_compatibility(self) -> SubscriptionUpdate:
+        if self.intent_snapshot is not None and self.query is None:
+            raise ValueError("意图确认快照必须与新自然语言规则同时提交")
         if self.delivery_targets is not None:
             self.delivery_targets = normalize_delivery_targets(self.delivery_targets)
             self.delivery_channel = self.delivery_targets[0]
@@ -1044,6 +1072,8 @@ class Subscription(BaseModel):
     last_new_count: int = 0
     consecutive_failures: int = 0
     last_run_id: str | None = None
+    last_delivery_status: Literal["success", "partial", "skipped"] | None = None
+    last_delivery_message: str | None = None
     in_progress: bool = False
 
     @model_validator(mode="after")

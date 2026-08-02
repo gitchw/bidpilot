@@ -88,10 +88,10 @@ def test_real_cli_serve_status_restart_and_stop_share_control_directory(tmp_path
     )
     restart = None
     try:
-        assert wait_for_health(port)["version"] == "0.7.0"
+        assert wait_for_health(port)["version"] == "0.8.0"
         status = run_cli(env, "status")
         assert status.returncode == 0, status.stdout + status.stderr
-        assert "v0.7.0" in status.stdout
+        assert "v0.8.0" in status.stdout
         state = json.loads((tmp_path / "control" / "runtime" / "server.json").read_text())
         assert state["port"] == port
 
@@ -103,7 +103,7 @@ def test_real_cli_serve_status_restart_and_stop_share_control_directory(tmp_path
             stderr=subprocess.DEVNULL,
         )
         assert serve.wait(timeout=15) == 0
-        assert wait_for_health(port)["version"] == "0.7.0"
+        assert wait_for_health(port)["version"] == "0.8.0"
 
         stopped = run_cli(env, "stop", "--wait-seconds", "15")
         assert stopped.returncode == 0, stopped.stdout + stopped.stderr
@@ -115,6 +115,44 @@ def test_real_cli_serve_status_restart_and_stop_share_control_directory(tmp_path
         stop_process(serve)
         if restart is not None:
             stop_process(restart)
+
+
+def test_second_serve_cannot_overwrite_live_control_state(tmp_path: Path):
+    first_port = available_port()
+    second_port = available_port()
+    env = lifecycle_environment(tmp_path, first_port)
+    first = subprocess.Popen(
+        [sys.executable, "-m", "bidpilot", "serve", "--port", str(first_port)],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert wait_for_health(first_port)["version"] == "0.8.0"
+        state_path = tmp_path / "control" / "runtime" / "server.json"
+        original = json.loads(state_path.read_text(encoding="utf-8"))
+
+        second = run_cli(env, "serve", "--port", str(second_port))
+
+        assert second.returncode != 0
+        assert "已经存在受管实例" in second.stdout + second.stderr
+        assert json.loads(state_path.read_text(encoding="utf-8")) == original
+        assert wait_for_health(first_port)["status"] == "ok"
+        stopped = run_cli(env, "stop", "--wait-seconds", "15")
+        assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+        assert first.wait(timeout=15) == 0
+    finally:
+        stop_process(first)
+
+
+def test_compose_loopback_publish_enables_container_bridge_mutations():
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+
+    assert '"127.0.0.1:${BIDPILOT_PORT:-8000}:8000"' in compose
+    assert "BIDPILOT_NETWORK_ACCESS_MODE: lan" in compose
+    assert "BIDPILOT_LAN_ACCESS_POLICY: trusted_lan" in compose
+    assert "BIDPILOT_LAN_TRUSTED_NETWORKS: auto" in compose
 
 
 def test_local_mode_rejects_non_loopback_host_override(tmp_path: Path):

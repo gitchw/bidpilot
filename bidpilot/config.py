@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
-        "BidPilot/0.7.0"
+        "BidPilot/0.8.0"
     )
 
     llm_base_url: str = ""

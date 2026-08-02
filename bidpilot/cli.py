@@ -79,9 +79,30 @@ def parse_command(query: str = typer.Argument(..., help="自然语言查询")) -
 @app.command("run")
 def run_command(
     query: str = typer.Argument(..., help="自然语言查询"),
-    channel: str = typer.Option("local", help="local / feishu / feishu_app / email"),
+    channel: str = typer.Option(
+        "local",
+        help="兼容旧脚本的单目标；同时提供 --target 时忽略此项",
+    ),
+    target: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--target",
+            "-t",
+            help=(
+                "交付目标，可重复：local / feishu_webhook / feishu_app / email / "
+                "dingtalk_webhook / wecom_webhook / generic_webhook / telegram_bot / "
+                "slack_webhook"
+            ),
+        ),
+    ] = None,
 ) -> None:
-    result = asyncio.run(BidPilotService(get_settings()).run_query(query, delivery_channel=channel))
+    result = asyncio.run(
+        BidPilotService(get_settings()).run_query(
+            query,
+            delivery_channel=channel,
+            delivery_targets=target,
+        )
+    )
     console.print(f"[bold green]完成[/bold green]：{result.new_count} 条结果")
     if result.report_path:
         console.print(f"报告：{result.report_path}")
@@ -100,7 +121,7 @@ def run_command(
 @app.command("serve")
 def serve_command(
     host: str | None = typer.Option(None, help="监听地址"),
-    port: int | None = typer.Option(None, help="端口"),
+    port: int | None = typer.Option(None, min=1, max=65535, help="端口（1～65535）"),
     reload: bool = typer.Option(False, help="开发模式自动重载"),
 ) -> None:
     """前台启动 Web 与内嵌长期任务 worker；Ctrl+C 可随时优雅停止。"""
@@ -111,6 +132,13 @@ def serve_command(
         )
     settings = _load_service_settings()
     bind_host = host or settings.host
+
+    _validate_bind_host(settings, bind_host)
+    _serve(settings, bind_host, port or settings.port)
+
+
+def _validate_bind_host(settings, bind_host: str) -> None:
+    """Apply the same network exposure rule to serve and restart."""
     try:
         loopback_bind = (
             bind_host.lower() == "localhost"
@@ -123,38 +151,58 @@ def serve_command(
             "当前访问范围为“仅本机”，不能用 --host 暴露到其他设备。请先在网页配置中心"
             "或 .env 设置 BIDPILOT_NETWORK_ACCESS_MODE=lan，保存后再启动。"
         )
-    _serve(settings, bind_host, port or settings.port)
 
 
 def _serve(settings, host: str, port: int) -> None:
     control = ControlPlane(settings)
     control.ensure_token()
-    web_app = create_app(settings)
-    config = uvicorn.Config(web_app, host=host, port=port, log_level="info")
-    server = uvicorn.Server(config)
-
-    def request_shutdown() -> None:
-        server.should_exit = True
-
-    web_app.state.shutdown_callback = request_shutdown
-    state = control.write_state(host=host, port=port, version=__version__)
-    url = local_control_url(host, port)
-    console.print(f"[bold green]标擎服务正在启动[/bold green]：{url}")
-    if settings.network_access_mode == "lan":
-        lan_urls = _lan_access_urls(port)
-        if lan_urls:
-            console.print("局域网设备可尝试打开：" + "  ·  ".join(lan_urls))
-        else:
-            console.print("局域网模式已开启；请在系统网络设置中查看这台电脑的 IPv4 地址。")
-    console.print(f"版本：v{__version__} · 数据库：{settings.database_path.resolve()}")
-    console.print(
-        f"报告目录：{settings.report_dir.resolve()} · 控制目录：{settings.control_dir.resolve()}"
-    )
-    console.print(
-        "停止方法：在本窗口按 [bold]Ctrl+C[/bold]，或在同一项目的另一个终端运行 "
-        f"`{_python_module_command('stop')}`。"
-    )
     try:
+        state = control.write_state(host=host, port=port, version=__version__)
+    except FileExistsError:
+        existing = control.read_state()
+        if existing:
+            existing_url = local_control_url(str(existing["host"]), int(existing["port"]))
+            detail = (
+                f"PID {existing['pid']} · {existing_url} · "
+                f"启动于 {existing.get('started_at', '未知时间')}"
+            )
+        else:
+            detail = f"控制记录正在由另一个启动进程写入：{control.state_path.resolve()}"
+        console.print(
+            f"[bold red]标擎服务未启动：已经存在受管实例或启动进程。[/bold red]\n{detail}"
+        )
+        console.print(
+            f"请先运行 `{_python_module_command('status')}` 确认状态；若记录对应的服务已经退出，"
+            f"运行 `{_python_module_command('stop')}` 清理旧记录后再启动。"
+        )
+        raise typer.Exit(code=1) from None
+
+    url = local_control_url(host, port)
+    try:
+        web_app = create_app(settings)
+        web_app.state.service.runtime_config.set_effective_endpoint(host=host, port=port)
+        config = uvicorn.Config(web_app, host=host, port=port, log_level="info")
+        server = uvicorn.Server(config)
+
+        def request_shutdown() -> None:
+            server.should_exit = True
+
+        web_app.state.shutdown_callback = request_shutdown
+        console.print(f"[bold green]标擎服务正在启动[/bold green]：{url}")
+        if settings.network_access_mode == "lan":
+            lan_urls = _lan_access_urls(port)
+            if lan_urls:
+                console.print("局域网设备可尝试打开：" + "  ·  ".join(lan_urls))
+            else:
+                console.print("局域网模式已开启；请在系统网络设置中查看这台电脑的 IPv4 地址。")
+        console.print(f"版本：v{__version__} · 数据库：{settings.database_path.resolve()}")
+        console.print(
+            f"报告目录：{settings.report_dir.resolve()} · 控制目录：{settings.control_dir.resolve()}"
+        )
+        console.print(
+            "停止方法：在本窗口按 [bold]Ctrl+C[/bold]，或在同一项目的另一个终端运行 "
+            f"`{_python_module_command('stop')}`。"
+        )
         server.run()
     finally:
         control.clear_state(pid=state["pid"])
@@ -224,7 +272,25 @@ def _stop_service(settings, wait_seconds: float, *, quiet_if_stopped: bool = Fal
             health = client.get(f"{base_url}/health")
             health.raise_for_status()
     except httpx.HTTPError:
-        control.clear_state()
+        if state and control.process_is_alive(int(state["pid"])):
+            console.print(
+                "[yellow]服务进程仍存在，但健康接口暂时不可访问。[/yellow]"
+                "它可能仍在启动，或端口被防火墙/代理拦截；为保护单实例声明，stop 不会删除运行记录。"
+            )
+            console.print(
+                f"请稍后重试 status/stop；若确认 PID {state['pid']} 已不是 BidPilot，"
+                f"再人工检查 {control.state_path.resolve()}。"
+            )
+            return False
+        if state:
+            control.clear_state(pid=int(state["pid"]))
+        elif control.state_path.exists():
+            console.print(
+                "[red]发现无法读取的运行声明，且健康接口不可访问。[/red]"
+                "系统不会在所有者未知时自动删除它。"
+            )
+            console.print(f"请人工检查：{control.state_path.resolve()}")
+            return False
         if not quiet_if_stopped:
             console.print("[green]服务本来就没有运行，无需停止。[/green]")
         return True
@@ -280,13 +346,20 @@ def stop_command(
 @app.command("restart")
 def restart_command(
     host: str | None = typer.Option(None, help="重新启动后的监听地址"),
-    port: int | None = typer.Option(None, help="重新启动后的端口"),
+    port: int | None = typer.Option(
+        None,
+        min=1,
+        max=65535,
+        help="重新启动后的端口（1～65535）",
+    ),
 ) -> None:
     """先优雅停止现有服务，再在当前终端前台启动新服务。"""
     settings = _load_service_settings()
+    bind_host = host or settings.host
+    _validate_bind_host(settings, bind_host)
     if not _stop_service(settings, 15.0, quiet_if_stopped=True):
         raise typer.Exit(code=1)
-    _serve(settings, host or settings.host, port or settings.port)
+    _serve(settings, bind_host, port or settings.port)
 
 
 @app.command("worker")

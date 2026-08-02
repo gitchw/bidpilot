@@ -170,6 +170,12 @@ async def test_smtp_starttls_sends_no_change_receipt_without_attachment(
 def test_email_channel_is_only_available_when_required_fields_are_configured(tmp_path: Path):
     unconfigured = DeliveryManager(Settings()).channel_status()
     assert next(item for item in unconfigured if item["id"] == "email")["configured"] is False
+    telegram = next(item for item in unconfigured if item["id"] == "telegram_bot")
+    assert telegram["supports_file"] is True
+    assert telegram["supports_link"] is True
+    assert "50 MB" in telegram["message"]
+    assert "报告根地址" in telegram["message"]
+    assert "死信" in telegram["message"]
 
     configured = DeliveryManager(email_settings(tmp_path)).channel_status()
     email = next(item for item in configured if item["id"] == "email")
@@ -355,6 +361,13 @@ async def test_telegram_permanent_error_never_echoes_token(monkeypatch):
         await manager.deliver(None, "telegram_bot")
     assert "TOP_SECRET" not in str(error.value)
     assert "403" in str(error.value)
+
+    FakeWebhookClient.response = FakeWebhookResponse(
+        {"ok": False, "error_code": 413},
+        status_code=413,
+    )
+    with pytest.raises(DeliveryPermanentError, match="413"):
+        await manager.deliver(None, "telegram_bot")
 
 
 async def test_telegram_rejects_malformed_success_and_non_json_auth_failure(monkeypatch):

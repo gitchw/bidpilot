@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import httpx
+import pytest
 from docx import Document
 from fastapi.testclient import TestClient
 
@@ -28,7 +29,7 @@ from bidpilot.models import (
     TenderQuerySpec,
 )
 from bidpilot.runtime_config import RuntimeConfigUpdate
-from bidpilot.scheduler import SubscriptionWorker, next_schedule_time
+from bidpilot.scheduler import SubscriptionWorker, next_schedule_time, retry_time
 from bidpilot.service import BidPilotService, SubscriptionBusyError
 from bidpilot.sources.base import SourceAdapter
 
@@ -113,6 +114,14 @@ def make_settings(tmp_path: Path) -> Settings:
     )
 
 
+def test_retry_time_uses_capped_positive_jitter():
+    now = datetime(2026, 7, 24, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    assert retry_time(now, 0, random_fraction=0) == now + timedelta(seconds=60)
+    assert retry_time(now, 0, random_fraction=1) == now + timedelta(seconds=66)
+    assert retry_time(now, 99, random_fraction=1) == now + timedelta(seconds=10860)
+
+
 def test_api_query_to_docx_flow(tmp_path: Path):
     app = create_app(make_settings(tmp_path), sources=[FakeSource()])
     with TestClient(app) as client:
@@ -172,6 +181,132 @@ def test_api_query_to_docx_flow(tmp_path: Path):
         assert health.json()["summary"]["source_count"] == 1
         assert health.json()["sources"][0]["sample_count"] == 1
         assert health.json()["sources"][0]["health_level"] == "healthy"
+
+
+def test_confirmed_intent_snapshot_prevents_second_llm_parse_and_rejects_drift(tmp_path: Path):
+    app = create_app(make_settings(tmp_path), sources=[FakeSource()])
+    immediate_query = "最近1个月安徽服务器招标信息"
+    scheduled_query = "最近1个月安徽服务器招标信息，请每天9:00发送给我"
+    updated_query = "最近2周深圳服务器中标公告，请每周一8:30发送给我"
+    with TestClient(app) as client:
+        immediate = client.post("/api/v1/intent/parse", json={"query": immediate_query})
+        scheduled = client.post("/api/v1/intent/parse", json={"query": scheduled_query})
+        updated = client.post("/api/v1/intent/parse", json={"query": updated_query})
+        assert immediate.status_code == 200
+        assert scheduled.status_code == 200
+        assert updated.status_code == 200
+        immediate_token = immediate.json()["confirmation_snapshot"]
+        scheduled_token = scheduled.json()["confirmation_snapshot"]
+        updated_token = updated.json()["confirmation_snapshot"]
+
+        app.state.service.intent_engine.resolve = AsyncMock(
+            side_effect=AssertionError("confirmed actions must not parse with the LLM again")
+        )
+        run = client.post(
+            "/api/v1/runs",
+            json={
+                "query": immediate_query,
+                "intent_snapshot": immediate_token,
+                "delivery_targets": ["local"],
+            },
+        )
+        assert run.status_code == 200, run.text
+        assert run.json()["spec"]["region"] == "安徽"
+
+        subscription = client.post(
+            "/api/v1/subscriptions",
+            json={
+                "name": "安徽服务器日报",
+                "query": scheduled_query,
+                "intent_snapshot": scheduled_token,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert subscription.status_code == 200, subscription.text
+        assert subscription.json()["spec"]["region"] == "安徽"
+        assert subscription.json()["spec"]["confirmation_snapshot"] is None
+
+        updated_subscription = client.patch(
+            f"/api/v1/subscriptions/{subscription.json()['id']}",
+            json={"query": updated_query, "intent_snapshot": updated_token},
+        )
+        assert updated_subscription.status_code == 200, updated_subscription.text
+        assert updated_subscription.json()["spec"]["region"] == "深圳"
+        assert updated_subscription.json()["spec"]["schedule"]["kind"] == "weekly"
+        assert updated_subscription.json()["spec"]["confirmation_snapshot"] is None
+
+        empty_update_snapshot = client.patch(
+            f"/api/v1/subscriptions/{subscription.json()['id']}",
+            json={"query": updated_query, "intent_snapshot": ""},
+        )
+        assert empty_update_snapshot.status_code == 409
+        assert "格式无效" in empty_update_snapshot.json()["detail"]
+
+        drifted_update_snapshot = client.patch(
+            f"/api/v1/subscriptions/{subscription.json()['id']}",
+            json={
+                "query": "最近2周广州服务器中标公告，请每周一8:30发送给我",
+                "intent_snapshot": updated_token,
+            },
+        )
+        assert drifted_update_snapshot.status_code == 409
+        assert "问题内容已改变" in drifted_update_snapshot.json()["detail"]
+
+        orphan_update_snapshot = client.patch(
+            f"/api/v1/subscriptions/{subscription.json()['id']}",
+            json={"intent_snapshot": updated_token},
+        )
+        assert orphan_update_snapshot.status_code == 422
+        assert "必须与新自然语言规则同时提交" in orphan_update_snapshot.text
+
+        empty_run_snapshot = client.post(
+            "/api/v1/runs",
+            json={
+                "query": immediate_query,
+                "intent_snapshot": "",
+                "delivery_targets": ["local"],
+            },
+        )
+        assert empty_run_snapshot.status_code == 409
+        assert "格式无效" in empty_run_snapshot.json()["detail"]
+
+        empty_subscription_snapshot = client.post(
+            "/api/v1/subscriptions",
+            json={
+                "name": "空快照不得降级重解析",
+                "query": scheduled_query,
+                "intent_snapshot": "",
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert empty_subscription_snapshot.status_code == 409
+        assert "格式无效" in empty_subscription_snapshot.json()["detail"]
+
+        changed_subscription = client.post(
+            "/api/v1/subscriptions",
+            json={
+                "name": "错误复用的订阅",
+                "query": "最近1个月深圳服务器招标信息，请每天9:00发送给我",
+                "intent_snapshot": scheduled_token,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert changed_subscription.status_code == 409
+        assert "问题内容已改变" in changed_subscription.json()["detail"]
+
+        changed = client.post(
+            "/api/v1/runs",
+            json={
+                "query": "最近1个月深圳服务器招标信息",
+                "intent_snapshot": immediate_token,
+                "delivery_targets": ["local"],
+            },
+        )
+        assert changed.status_code == 409
+        assert "问题内容已改变" in changed.json()["detail"]
 
 
 def test_source_health_tracks_partial_skipped_and_failed_runs(tmp_path: Path, sample_spec):
@@ -442,6 +577,10 @@ async def test_durable_worker_continues_after_service_restart(tmp_path: Path):
     second_row = restarted_service.db.get_subscription(subscription.id)
     assert second_row["last_status"] == "completed"
     assert second_row["last_new_count"] == 0
+    subscription_state = restarted_service.get_subscription(subscription.id)
+    assert subscription_state is not None
+    assert subscription_state.last_delivery_status == "success"
+    assert "全部目标均已确认" in subscription_state.last_delivery_message
     attempts = restarted_service.db.list_delivery_attempts(subscription_id=subscription.id)
     assert len(attempts) == 2
     assert all(attempt["success"] for attempt in attempts)
@@ -467,7 +606,11 @@ async def test_delivery_failure_keeps_increment_uncommitted_and_queues_target_re
     row = service.db.get_subscription(subscription.id)
     assert result.status == RunStatus.PARTIAL
     assert result.delivery_status == "partial"
-    assert row["last_status"] == "partial"
+    assert row["last_status"] == "completed"
+    subscription_state = service.get_subscription(subscription.id)
+    assert subscription_state is not None
+    assert subscription_state.last_delivery_status == "partial"
+    assert "重试" in subscription_state.last_delivery_message
     assert row["consecutive_failures"] == 0
     with service.db.connection() as conn:
         delivered = conn.execute(
@@ -518,6 +661,71 @@ def test_subscription_lease_blocks_duplicate_claim_and_recovers_after_expiry(tmp
     assert recovered and recovered["id"] == subscription.id
 
 
+@pytest.mark.parametrize(
+    ("status", "success"),
+    [(RunStatus.COMPLETED, True), (RunStatus.FAILED, False)],
+)
+def test_stale_worker_cannot_finish_after_replacement_lease(
+    tmp_path: Path,
+    status: RunStatus,
+    success: bool,
+):
+    service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
+    subscription = service.create_subscription(
+        "服务器日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    now = datetime.now(ZoneInfo("Asia/Shanghai"))
+    assert service.db.claim_due_subscription(
+        worker_id="worker-a",
+        now=now,
+        lease_until=now + timedelta(seconds=1),
+    )
+    assert service.db.claim_due_subscription(
+        worker_id="worker-b",
+        now=now + timedelta(seconds=2),
+        lease_until=now + timedelta(minutes=5),
+    )
+
+    stale_finished = service.db.finish_subscription_attempt(
+        subscription.id,
+        worker_id="worker-a",
+        last_run_at=now + timedelta(seconds=3),
+        next_run_at=now + timedelta(days=1),
+        status=status,
+        message="旧执行者不得覆盖",
+        new_count=99,
+        run_id="old-run",
+        success=success,
+    )
+
+    assert stale_finished is False
+    after_stale = service.db.get_subscription(subscription.id)
+    assert after_stale is not None
+    assert after_stale["lease_owner"] == "worker-b"
+    assert after_stale["last_run_id"] is None
+    assert after_stale["last_new_count"] == 0
+
+    replacement_finished = service.db.finish_subscription_attempt(
+        subscription.id,
+        worker_id="worker-b",
+        last_run_at=now + timedelta(seconds=4),
+        next_run_at=now + timedelta(days=1),
+        status=status,
+        message="新执行者结果",
+        new_count=1,
+        run_id="new-run",
+        success=success,
+    )
+    assert replacement_finished is True
+    after_replacement = service.db.get_subscription(subscription.id)
+    assert after_replacement is not None
+    assert after_replacement["lease_owner"] is None
+    assert after_replacement["last_run_id"] == "new-run"
+    assert after_replacement["last_new_count"] == 1
+
+
 async def test_manual_run_is_rejected_while_worker_owns_subscription(tmp_path: Path):
     service = BidPilotService(make_settings(tmp_path), sources=[FakeSource()])
     subscription = service.create_subscription(
@@ -559,7 +767,7 @@ async def test_worker_renews_lease_during_long_running_subscription(tmp_path: Pa
 
     settings = make_settings(tmp_path)
     # Production validation enforces >=30s. A short interval keeps this concurrency test fast.
-    settings.worker_lease_seconds = 0.3
+    settings.worker_lease_seconds = 1
     service = BidPilotService(settings, sources=[SlowSource()])
     service.create_subscription(
         "服务器日报",
@@ -582,6 +790,300 @@ async def test_worker_renews_lease_during_long_running_subscription(tmp_path: Pa
     assert await task is True
 
 
+async def test_worker_stops_old_execution_when_replacement_takes_lease(
+    tmp_path: Path,
+    monkeypatch,
+):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class LeaseLossSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            raise AssertionError("租约丢失后旧来源调用不应继续完成")
+
+    settings = make_settings(tmp_path)
+    settings.worker_lease_seconds = 1
+    service = BidPilotService(settings, sources=[LeaseLossSource()])
+    subscription = service.create_subscription(
+        "租约接管日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    worker = SubscriptionWorker(service, kind="lease-loss-test")
+
+    def replace_lease(subscription_id, *, worker_id, lease_until):
+        replacement_until = datetime.now(ZoneInfo("Asia/Shanghai")) + timedelta(minutes=5)
+        with service.db.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE subscriptions SET lease_owner=?, lease_until=?, updated_at=?
+                WHERE id=? AND lease_owner=?
+                """,
+                (
+                    "replacement-worker",
+                    replacement_until.isoformat(),
+                    datetime.now(ZoneInfo("UTC")).isoformat(),
+                    subscription_id,
+                    worker_id,
+                ),
+            )
+        assert cursor.rowcount == 1
+        return False
+
+    monkeypatch.setattr(service.db, "renew_subscription_lease", replace_lease)
+    old_execution = asyncio.create_task(worker.run_once())
+    await asyncio.wait_for(started.wait(), timeout=3)
+
+    assert await asyncio.wait_for(old_execution, timeout=3) is True
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    after_loss = service.db.get_subscription(subscription.id)
+    assert after_loss is not None
+    assert after_loss["lease_owner"] == "replacement-worker"
+    with service.db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM delivery_outbox").fetchone()[0] == 0
+
+    replacement = BidPilotService(settings, sources=[FakeSource()])
+    result = await replacement.run_subscription(
+        subscription.id,
+        trigger_reason="schedule",
+        lease_owner="replacement-worker",
+    )
+
+    assert result.new_count == 1
+    final_row = replacement.db.get_subscription(subscription.id)
+    assert final_row is not None
+    assert final_row["lease_owner"] is None
+    assert final_row["last_run_id"] == result.run_id
+    with replacement.db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM delivery_outbox").fetchone()[0] == 1
+
+
+async def test_manual_run_stops_when_its_lease_is_replaced(tmp_path: Path, monkeypatch):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class LeaseLossSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            raise AssertionError("手动运行丢失租约后不应继续")
+
+    settings = make_settings(tmp_path)
+    settings.worker_lease_seconds = 1
+    service = BidPilotService(settings, sources=[LeaseLossSource()])
+    subscription = service.create_subscription(
+        "手动租约日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=False,
+    )
+
+    def replace_lease(subscription_id, *, worker_id, lease_until):
+        with service.db.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE subscriptions SET lease_owner=?, lease_until=?, updated_at=?
+                WHERE id=? AND lease_owner=?
+                """,
+                (
+                    "replacement-worker",
+                    (datetime.now(ZoneInfo("Asia/Shanghai")) + timedelta(minutes=5)).isoformat(),
+                    datetime.now(ZoneInfo("UTC")).isoformat(),
+                    subscription_id,
+                    worker_id,
+                ),
+            )
+        assert cursor.rowcount == 1
+        return False
+
+    monkeypatch.setattr(service.db, "renew_subscription_lease", replace_lease)
+    execution = asyncio.create_task(service.run_subscription(subscription.id))
+    await asyncio.wait_for(started.wait(), timeout=3)
+
+    with pytest.raises(SubscriptionBusyError, match="外发前停止"):
+        await asyncio.wait_for(execution, timeout=3)
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    row = service.db.get_subscription(subscription.id)
+    assert row is not None
+    assert row["lease_owner"] == "replacement-worker"
+    with service.db.connection() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM delivery_outbox").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("shutdown_mode", ["worker_stop", "ctrl_c"])
+async def test_worker_shutdown_releases_cancelled_run_for_immediate_takeover(
+    tmp_path: Path, shutdown_mode: str
+):
+    started = asyncio.Event()
+
+    class BlockingSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("blocking source should only finish through cancellation")
+
+    settings = make_settings(tmp_path)
+    service = BidPilotService(settings, sources=[BlockingSource()])
+    subscription = service.create_subscription(
+        "可接管日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    worker = SubscriptionWorker(service, kind="shutdown-test")
+    if shutdown_mode == "worker_stop":
+        worker.start()
+        runner = worker._task
+    else:
+        runner = asyncio.create_task(worker.run_forever())
+
+    assert runner is not None
+    await asyncio.wait_for(started.wait(), timeout=3)
+    before = service.db.get_subscription(subscription.id)
+    assert before is not None
+    assert before["lease_owner"] == worker.worker_id
+    with service.db.connection() as conn:
+        running = conn.execute(
+            "SELECT id FROM runs WHERE subscription_id=? AND status='running'",
+            (subscription.id,),
+        ).fetchone()
+    assert running is not None
+
+    if shutdown_mode == "worker_stop":
+        await worker.stop()
+    else:
+        runner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+        await worker.stop()
+
+    released = service.db.get_subscription(subscription.id)
+    assert released is not None
+    assert released["lease_owner"] is None
+    assert released["lease_until"] is None
+    cancelled_run = service.db.get_run(running["id"])
+    assert cancelled_run is not None
+    assert cancelled_run["status"] == "failed"
+    assert cancelled_run["completed_at"] is not None
+    assert "已取消" in cancelled_run["error"]
+
+    restarted = BidPilotService(settings, sources=[FakeSource()])
+    replacement = SubscriptionWorker(restarted, kind="replacement")
+    assert await replacement.run_once() is True
+    recovered = restarted.db.get_subscription(subscription.id)
+    assert recovered is not None
+    assert recovered["lease_owner"] is None
+    assert recovered["last_status"] == "completed"
+
+
+async def test_direct_subscription_cancellation_fails_run_and_releases_owned_lease(
+    tmp_path: Path,
+):
+    started = asyncio.Event()
+
+    class BlockingSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("blocking source should only finish through cancellation")
+
+    settings = make_settings(tmp_path)
+    service = BidPilotService(settings, sources=[BlockingSource()])
+    subscription = service.create_subscription(
+        "手动取消日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    task = asyncio.create_task(service.run_subscription(subscription.id))
+    await asyncio.wait_for(started.wait(), timeout=3)
+
+    leased = service.db.get_subscription(subscription.id)
+    assert leased is not None
+    assert leased["lease_owner"].startswith("manual:")
+    with service.db.connection() as conn:
+        running = conn.execute(
+            "SELECT id FROM runs WHERE subscription_id=? AND status='running'",
+            (subscription.id,),
+        ).fetchone()
+    assert running is not None
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    released = service.db.get_subscription(subscription.id)
+    assert released is not None
+    assert released["lease_owner"] is None
+    assert released["lease_until"] is None
+    assert released["last_run_id"] == running["id"]
+    assert released["last_status"] == "failed"
+    cancelled_run = service.db.get_run(running["id"])
+    assert cancelled_run is not None
+    assert cancelled_run["status"] == "failed"
+    assert cancelled_run["completed_at"] is not None
+    assert "已取消" in cancelled_run["error"]
+
+    replacement = BidPilotService(settings, sources=[FakeSource()])
+    assert await SubscriptionWorker(replacement, kind="replacement").run_once() is True
+
+
+async def test_subscription_cancellation_does_not_release_replacement_lease(tmp_path: Path):
+    started = asyncio.Event()
+
+    class BlockingSource(FakeSource):
+        async def search(self, spec: TenderQuerySpec, fetcher) -> SourceSearchResult:
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("blocking source should only finish through cancellation")
+
+    service = BidPilotService(make_settings(tmp_path), sources=[BlockingSource()])
+    subscription = service.create_subscription(
+        "租约栅栏日报",
+        "最近1个月安徽服务器招标信息，请每天9:00发送给我",
+        run_immediately=True,
+    )
+    task = asyncio.create_task(service.run_subscription(subscription.id))
+    await asyncio.wait_for(started.wait(), timeout=3)
+    with service.db.connection() as conn:
+        running = conn.execute(
+            "SELECT id FROM runs WHERE subscription_id=? AND status='running'",
+            (subscription.id,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE subscriptions SET lease_owner=?, lease_until=? WHERE id=?",
+            (
+                "replacement-worker",
+                (datetime.now(ZoneInfo("Asia/Shanghai")) + timedelta(minutes=5)).isoformat(),
+                subscription.id,
+            ),
+        )
+    assert running is not None
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    fenced = service.db.get_subscription(subscription.id)
+    assert fenced is not None
+    assert fenced["lease_owner"] == "replacement-worker"
+    assert fenced["lease_until"] is not None
+    cancelled_run = service.db.get_run(running["id"])
+    assert cancelled_run is not None
+    assert cancelled_run["status"] == "failed"
+    assert "已取消" in cancelled_run["error"]
+
+
 async def test_manual_run_renews_lease_during_long_running_subscription(tmp_path: Path):
     started = asyncio.Event()
 
@@ -592,7 +1094,7 @@ async def test_manual_run_renews_lease_during_long_running_subscription(tmp_path
             return await super().search(spec, fetcher)
 
     settings = make_settings(tmp_path)
-    settings.worker_lease_seconds = 0.3
+    settings.worker_lease_seconds = 1
     service = BidPilotService(settings, sources=[SlowSource()])
     subscription = service.create_subscription(
         "服务器日报",
@@ -1212,6 +1714,21 @@ async def test_remote_lan_writes_require_admin_token(tmp_path: Path):
         assert allowed.json()["edit_token"]
 
 
+async def test_compose_trusted_bridge_can_perform_browser_mutations(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    settings.network_access_mode = "lan"
+    settings.lan_access_policy = "trusted_lan"
+    settings.lan_trusted_networks = "auto"
+    app = create_app(settings, sources=[FakeSource()])
+    transport = httpx.ASGITransport(app=app, client=("172.18.0.1", 43123))
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+        response = await client.post("/api/v1/config/edit-token")
+
+    assert response.status_code == 200
+    assert response.json()["edit_token"]
+
+
 async def test_trusted_lan_can_manage_source_login_without_admin_token(tmp_path: Path):
     settings = make_settings(tmp_path)
     settings.network_access_mode = "lan"
@@ -1348,6 +1865,19 @@ def test_every_openapi_operation_has_detailed_chinese_usage_contract(tmp_path: P
         assert operation.get("tags"), f"{method} {path} 缺少中文分组"
         for section in required_sections:
             assert section in description, f"{method} {path} 缺少 {section}"
+
+
+def test_every_runtime_config_field_has_detailed_chinese_description(tmp_path: Path):
+    schema = create_app(make_settings(tmp_path), sources=[FakeSource()]).openapi()
+    properties = schema["components"]["schemas"]["RuntimeConfigUpdate"]["properties"]
+
+    assert len(properties) == len(RuntimeConfigUpdate.model_fields)
+    for name, field in properties.items():
+        description = field.get("description", "")
+        assert description, f"RuntimeConfigUpdate.{name} 缺少说明"
+        assert any("\u4e00" <= char <= "\u9fff" for char in description), (
+            f"RuntimeConfigUpdate.{name} 缺少中文解释"
+        )
 
 
 async def test_standalone_worker_reloads_web_runtime_config_before_run(tmp_path: Path):

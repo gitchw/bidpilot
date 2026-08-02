@@ -68,6 +68,12 @@ services:
       <<: *bidpilot-environment
       BIDPILOT_EMBEDDED_WORKER: "false"
       BIDPILOT_HOST: 0.0.0.0
+      # Docker bridge traffic is not loopback inside the container. The port is
+      # still published only on host 127.0.0.1, while this policy lets that host
+      # browser perform normal POST/PUT/PATCH/DELETE operations.
+      BIDPILOT_NETWORK_ACCESS_MODE: lan
+      BIDPILOT_LAN_ACCESS_POLICY: trusted_lan
+      BIDPILOT_LAN_TRUSTED_NETWORKS: auto
     ports:
       - "127.0.0.1:${BIDPILOT_PORT:-8000}:8000"
     volumes:

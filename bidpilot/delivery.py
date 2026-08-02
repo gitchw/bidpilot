@@ -186,7 +186,10 @@ class DeliveryManager:
                 supports_file=True,
                 supports_link=True,
                 configuration_group="telegram",
-                message="通过官方 Bot API 发送 Word 文件或纯文本回执。",
+                message=(
+                    "通过官方 Bot API 发送 Word 文件或纯文本回执；文件最大 50 MB，超限时仅在已配置"
+                    "可访问的报告根地址后改发链接，否则进入死信并提示处理。"
+                ),
             ),
             item(
                 "slack_webhook",
@@ -423,7 +426,7 @@ class DeliveryManager:
                 "report_url": report_url,
             },
         }
-        headers = {"Content-Type": "application/json", "User-Agent": "BidPilot/0.7.0"}
+        headers = {"Content-Type": "application/json", "User-Agent": "BidPilot/0.8.0"}
         if self.settings.generic_webhook_bearer_token:
             headers["Authorization"] = f"Bearer {self.settings.generic_webhook_bearer_token}"
         async with httpx.AsyncClient(timeout=self.settings.delivery_webhook_timeout) as client:
@@ -464,7 +467,7 @@ class DeliveryManager:
         try:
             data = response.json()
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            if response.status_code in {400, 401, 403, 404}:
+            if response.status_code in {400, 401, 403, 404, 413}:
                 raise DeliveryPermanentError(
                     f"Telegram 拒绝请求（HTTP {response.status_code}）"
                 ) from exc
@@ -495,11 +498,12 @@ class DeliveryManager:
                     "Telegram 群组已迁移，请在网页更新会话 ID 后手动重试死信"
                 )
             message = f"Telegram 拒绝请求（错误码 {error_code or response.status_code}）"
-            if response.status_code in {400, 401, 403, 404} or error_code in {
+            if response.status_code in {400, 401, 403, 404, 413} or error_code in {
                 400,
                 401,
                 403,
                 404,
+                413,
             }:
                 raise DeliveryPermanentError(message)
             raise DeliveryError(message)
