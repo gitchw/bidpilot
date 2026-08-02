@@ -61,8 +61,96 @@ def test_qianlima_public_feed_parser_is_structured():
     assert items[0].source_url == "https://wap.qianlima.com/zb/detail/QLM001.html"
 
 
-async def test_qianlima_public_search_never_replays_member_cookie(sample_spec):
-    settings = Settings(max_results_per_source=1, qianlima_cookie="member=must-not-send")
+def test_qianlima_foreground_first_page_rows_are_free_member_list_evidence():
+    rows = [
+        {
+            "title": "高性能服务器（8卡服务器）",
+            "href": "//www.qianlima.com/bid-612802321.html",
+            "published_at": "2026-07-10",
+            "event_label": "公告 - 招标公告",
+            "region": "北京-北京",
+            "category": "货物",
+        },
+        {
+            "title": "缺失日期的行不会导入",
+            "href": "//www.qianlima.com/bid-invalid.html",
+            "published_at": "",
+            "event_label": "公告 - 招标公告",
+            "region": "北京-北京",
+            "category": "货物",
+        },
+    ]
+
+    items = QianlimaSource.parse_foreground_rows(rows)
+
+    assert len(items) == 1
+    assert items[0].title == "高性能服务器(8卡服务器)"
+    assert items[0].source_url == "https://www.qianlima.com/bid-612802321.html"
+    assert items[0].event_type == EventType.TENDER
+    assert items[0].auth_level == "free_member"
+    assert items[0].source_metadata["coverage"] == "user_triggered_first_page"
+
+
+async def test_qianlima_reuses_live_browser_and_selects_the_authorized_search_page(tmp_path):
+    class FakeLocator:
+        def __init__(self, count):
+            self.value = count
+
+        async def count(self):
+            return self.value
+
+    class FakePage:
+        def __init__(self, url, *, search_count=0, member_count=0):
+            self.url = url
+            self.search_count = search_count
+            self.member_count = member_count
+            self.goto_calls = []
+
+        def locator(self, _selector):
+            return FakeLocator(self.search_count)
+
+        def get_by_text(self, _text, *, exact=False):
+            assert exact is True
+            return FakeLocator(self.member_count)
+
+        async def goto(self, url, **kwargs):
+            self.goto_calls.append((url, kwargs))
+
+    class FakeContext:
+        def __init__(self, pages):
+            self.pages = pages
+
+        async def new_page(self):
+            raise AssertionError("已有页面时不应新建页面")
+
+    first = FakePage("https://vip.qianlima.com/")
+    authorized = FakePage(
+        "https://search.vip.qianlima.com/index.html#?keywords=服务器",
+        search_count=1,
+        member_count=1,
+    )
+    context = FakeContext([first, authorized])
+    source = QianlimaSource(Settings(data_dir=tmp_path))
+    playwright = object()
+    source.adopt_live_context(playwright, context)
+
+    selected = await source._authorized_search_page(context)
+    reused_playwright, browser, reused_context = await source.launch_authorization_browser()
+
+    assert selected is authorized
+    assert reused_playwright is playwright
+    assert browser is None
+    assert reused_context is context
+    assert first.goto_calls == [
+        (
+            source.authorization_url,
+            {"wait_until": "domcontentloaded", "timeout": 30_000},
+        )
+    ]
+
+
+async def test_qianlima_public_search_never_replays_member_cookie(sample_spec, tmp_path):
+    settings = Settings(max_results_per_source=1, data_dir=tmp_path)
     source = QianlimaSource(settings)
     sample_spec.event_types = [EventType.TENDER]
 
@@ -89,6 +177,104 @@ async def test_qianlima_public_search_never_replays_member_cookie(sample_spec):
     assert result.items[0].auth_level == "public_snippet"
     assert fetcher.calls[0][0] == "https://wap.qianlima.com/zbgg/"
     assert "不会保存或重放会员 Cookie" in result.message
+
+
+def test_cecbid_current_search_contract_and_whitespace_member_gate(sample_spec):
+    source = CECBidSource(Settings())
+    params = source._params(sample_spec, time_value="one_month")
+
+    assert ("index_all", "1") in params
+    assert ("index[]", "tenders") not in params
+    assert ("time", "one_month") in params
+    assert CECBidSource._detail_requires_auth(
+        "<main>内容仅对 <strong>会员</strong> 开放 <a>立即登录</a></main>"
+    )
+    assert CECBidSource._is_login_page(
+        '<form action="/login"><input type="password"></form>',
+        "https://www.cecbid.org.cn/login",
+    )
+
+
+async def test_cecbid_verified_cookie_is_scoped_to_search_and_detail(sample_spec):
+    settings = Settings(
+        max_results_per_source=1,
+        cecbid_cookie="member_session=secret",
+    )
+    source = CECBidSource(settings)
+    sample_spec.topic = "购买"
+    sample_spec.keywords = ["购买"]
+
+    class AuthorizedFetcher:
+        calls: list[tuple[str, dict]] = []
+
+        async def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            assert kwargs["headers"]["Cookie"] == "member_session=secret"
+            assert kwargs["authorized_hosts"] == (
+                "www.cecbid.org.cn",
+                "cecbid.org.cn",
+            )
+            if url.endswith("/search"):
+                assert ("index_all", "1") in kwargs["params"]
+                assert ("index[]", "tenders") not in kwargs["params"]
+                return FetchedPage(
+                    requested_url=url,
+                    final_url="https://www.cecbid.org.cn/search?wd=购买",
+                    status_code=200,
+                    text=fixture("cecbid_search.html"),
+                    elapsed_ms=1,
+                    content_type="text/html",
+                )
+            return FetchedPage(
+                requested_url=url,
+                final_url=url,
+                status_code=200,
+                text=(
+                    "<html><article><p>"
+                    + "真实会员正文，包含采购需求、资格条件、时间安排与联系人信息。" * 12
+                    + "</p><a href='/files/spec.pdf'>采购文件</a></article></html>"
+                ),
+                elapsed_ms=1,
+                content_type="text/html",
+            )
+
+    fetcher = AuthorizedFetcher()
+    result = await source.search(sample_spec, fetcher)
+
+    assert result.status == SourceStatus.OK
+    assert len(result.items) == 1
+    assert result.items[0].auth_level == "free_member"
+    assert len(fetcher.calls) == 2
+
+
+async def test_cecbid_member_gate_marks_verified_session_as_auth_required(sample_spec):
+    settings = Settings(max_results_per_source=1, cecbid_cookie="member_session=expired")
+    source = CECBidSource(settings)
+
+    class GatedFetcher:
+        async def get(self, url, **kwargs):
+            if url.endswith("/search"):
+                return FetchedPage(
+                    requested_url=url,
+                    final_url=url,
+                    status_code=200,
+                    text=fixture("cecbid_search.html"),
+                    elapsed_ms=1,
+                    content_type="text/html",
+                )
+            return FetchedPage(
+                requested_url=url,
+                final_url=url,
+                status_code=200,
+                text="<main>内容仅对 <b>会员</b> 开放，请立即登录后查看</main>",
+                elapsed_ms=1,
+                content_type="text/html",
+            )
+
+    result = await source.search(sample_spec, GatedFetcher())
+
+    assert result.status == SourceStatus.AUTH_REQUIRED
+    assert result.items[0].auth_level == "public_snippet"
 
 
 def test_malformed_source_date_uses_old_sentinel_instead_of_today():

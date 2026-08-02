@@ -397,7 +397,7 @@ def sources_command() -> None:
 
 @app.command("auth")
 def auth_command(
-    source: str = typer.Argument("qianlima", help="qianlima 或 cecbid"),
+    source: str = typer.Argument("cecbid", help="当前支持 cecbid（中国招标投标网）"),
     test: bool = typer.Option(True, "--test/--no-test", help="保存后执行一次真实授权测试"),
 ) -> None:
     asyncio.run(_authorize_source(source.lower(), test=test))

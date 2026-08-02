@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import date, timedelta
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -44,12 +45,80 @@ class CECBidSource(SourceAdapter):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def _params(self, spec: TenderQuerySpec) -> list[tuple[str, str]]:
+    def _params(
+        self,
+        spec: TenderQuerySpec,
+        *,
+        time_value: str | None,
+    ) -> list[tuple[str, str]]:
         # CEC's relevance search is materially better than its time/region facet
         # combination. Add region as a search term and enforce both facets again
         # in our evidence-based filter.
         query = f"{spec.region} {spec.topic}" if spec.region else spec.topic
-        return [("wd", query), ("index[]", "tenders")]
+        params = [
+            ("wd", query),
+            ("index_all", "1"),
+            ("region_all", "1"),
+            ("project_all", "1"),
+        ]
+        if time_value:
+            params.append(("time", time_value))
+        return params
+
+    @staticmethod
+    def _time_values(spec: TenderQuerySpec) -> tuple[str | None, ...]:
+        """Map an exact local date range to the site's current coarse facets."""
+
+        today = date.today()
+        if spec.start_date.year == spec.end_date.year and spec.end_date.year < today.year:
+            year = spec.start_date.year
+            return (str(year) if year >= 2021 else "before_2020",)
+        if spec.start_date < today - timedelta(days=365):
+            years: list[str] = []
+            if spec.start_date.year <= 2020:
+                years.append("before_2020")
+            years.extend(
+                str(year)
+                for year in range(max(2021, spec.start_date.year), min(today.year, 2025) + 1)
+            )
+            if spec.end_date.year >= today.year:
+                years.append("year")
+            return tuple(dict.fromkeys(years)) or (None,)
+        days = max(0, (spec.end_date - spec.start_date).days)
+        if days <= 1:
+            return ("today",)
+        if days <= 31:
+            return ("one_month",)
+        if days <= 93:
+            return ("three_months",)
+        if days <= 184:
+            return ("half_year",)
+        return ("year",)
+
+    @staticmethod
+    def _page_text(html: str) -> str:
+        return BeautifulSoup(html, "lxml").get_text(" ", strip=True)
+
+    @classmethod
+    def _is_login_page(cls, html: str, final_url: str = "") -> bool:
+        if "/login" in final_url.lower():
+            return True
+        soup = BeautifulSoup(html, "lxml")
+        return bool(soup.select_one('form[action*="/login"] input[type="password"]'))
+
+    @classmethod
+    def _detail_requires_auth(cls, html: str, final_url: str = "") -> bool:
+        if cls._is_login_page(html, final_url):
+            return True
+        text = cls._page_text(html)
+        return bool(
+            re.search(r"内容\s*仅\s*对\s*会员\s*开放", text)
+            or re.search(r"(?:请|立即)\s*登录.{0,20}(?:查看|解锁|会员)", text)
+        )
+
+    @classmethod
+    def _explicit_no_results(cls, html: str) -> bool:
+        return bool(re.search(r"没有找到与\s*.+?\s*相关的结果", cls._page_text(html)))
 
     @classmethod
     def parse_search_page(cls, html: str, limit: int = 20) -> list[RawTender]:
@@ -107,11 +176,16 @@ class CECBidSource(SourceAdapter):
                 break
         return items
 
-    @staticmethod
-    def _parse_detail(html: str, item: RawTender) -> RawTender:
+    @classmethod
+    def _parse_detail(
+        cls,
+        html: str,
+        item: RawTender,
+        *,
+        final_url: str = "",
+    ) -> RawTender:
         soup = BeautifulSoup(html, "lxml")
-        page_text = normalize_space(soup.get_text(" ", strip=True))
-        if "内容仅对会员开放" in page_text:
+        if cls._detail_requires_auth(html, final_url):
             return item
 
         candidates = soup.select(
@@ -121,7 +195,7 @@ class CECBidSource(SourceAdapter):
         if root is None:
             root = soup
         body = clean_html(str(root))
-        if len(body) > len(item.body) + 80:
+        if len(body) > max(120, len(item.body) + 30):
             item.body = body
             item.auth_level = "free_member"
             item.project_id = item.project_id or extract_project_id(body)
@@ -140,30 +214,82 @@ class CECBidSource(SourceAdapter):
     async def search(self, spec: TenderQuerySpec, fetcher: HttpFetcher) -> SourceSearchResult:
         started = time.perf_counter()
         try:
-            page = await fetcher.get(f"{self.base_url}/search", params=self._params(spec))
-            items = self.parse_search_page(page.text, self.settings.max_results_per_source)
             cookie = self.settings.cecbid_cookie.strip()
+            auth_headers = {"Cookie": cookie, "Referer": f"{self.base_url}/"} if cookie else None
+            allowed_hosts = ("www.cecbid.org.cn", "cecbid.org.cn") if cookie else None
+            items_by_url: dict[str, RawTender] = {}
+            explicit_zero = False
+            for time_value in self._time_values(spec):
+                page = await fetcher.get(
+                    f"{self.base_url}/search",
+                    params=self._params(spec, time_value=time_value),
+                    headers=auth_headers,
+                    authorized_hosts=allowed_hosts,
+                )
+                if cookie and self._is_login_page(page.text, page.final_url):
+                    return SourceSearchResult(
+                        source=self.name,
+                        status=SourceStatus.AUTH_REQUIRED,
+                        message="授权会话已被站点重定向到登录页，请重新授权。",
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                    )
+                page_items = self.parse_search_page(
+                    page.text,
+                    self.settings.max_results_per_source,
+                )
+                explicit_zero = explicit_zero or self._explicit_no_results(page.text)
+                for item in page_items:
+                    items_by_url.setdefault(item.source_url, item)
+                    if len(items_by_url) >= self.settings.max_results_per_source:
+                        break
+                if len(items_by_url) >= self.settings.max_results_per_source:
+                    break
+            items = list(items_by_url.values())
+            if not items and not explicit_zero:
+                return SourceSearchResult(
+                    source=self.name,
+                    status=SourceStatus.FAILED,
+                    message="搜索页既没有结果也没有明确零结果提示，站点结构可能已变化。",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
             if cookie and items:
-                headers = {"Cookie": cookie, "Referer": page.final_url}
                 detailed: list[RawTender] = []
+                gated_count = 0
                 for item in items:
                     try:
                         detail = await fetcher.get(
                             item.source_url,
-                            headers=headers,
+                            headers={"Cookie": cookie, "Referer": f"{self.base_url}/search"},
                             retries=1,
                             authorized_hosts=("www.cecbid.org.cn", "cecbid.org.cn"),
                         )
-                        detailed.append(self._parse_detail(detail.text, item))
+                        if self._detail_requires_auth(detail.text, detail.final_url):
+                            gated_count += 1
+                            detailed.append(item)
+                        else:
+                            detailed.append(
+                                self._parse_detail(
+                                    detail.text,
+                                    item,
+                                    final_url=detail.final_url,
+                                )
+                            )
                     except FetchError:
                         detailed.append(item)
                 items = detailed
             latency = int((time.perf_counter() - started) * 1000)
             enhanced = any(item.auth_level == "free_member" for item in items)
-            status = SourceStatus.OK if enhanced else SourceStatus.PARTIAL
+            if cookie and items and not enhanced and gated_count:
+                status = SourceStatus.AUTH_REQUIRED
+            else:
+                status = SourceStatus.OK if enhanced else SourceStatus.PARTIAL
             message = (
                 "已使用授权会员态读取搜索与详情。"
                 if enhanced
+                else "站点仍返回会员门禁，授权会话可能已过期，请重新授权。"
+                if status == SourceStatus.AUTH_REQUIRED
+                else "已使用验证通过的会员态执行搜索；本轮没有匹配候选。"
+                if cookie and not items
                 else "已携带授权会话，但本轮没有证明会员正文已解锁；请在来源中心测试或重新授权。"
                 if cookie
                 else "已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"

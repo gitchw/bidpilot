@@ -1935,15 +1935,17 @@ class Database:
         *,
         status: str,
         message: str,
+        expires_at: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE source_authorizations
-                SET last_test_at=?, last_test_status=?, last_message=?
+                SET last_test_at=?, last_test_status=?, last_message=?,
+                    expires_at=COALESCE(?, expires_at)
                 WHERE source_id=?
                 """,
-                (utcnow_iso(), status, message, source_id),
+                (utcnow_iso(), status, message, expires_at, source_id),
             )
 
     def delete_source_authorization(self, source_id: str) -> bool:

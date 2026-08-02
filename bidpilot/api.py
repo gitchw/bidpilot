@@ -1441,7 +1441,7 @@ def create_app(
             tag="来源授权",
             summary="开始可见浏览器授权",
             purpose="在运行 BidPilot 服务的电脑上打开独立可见 Chromium，让用户本人登录、扫码、输入验证码或按原站要求使用 CA。局域网设备可以发起和管理流程，但浏览器窗口不会出现在手机上。",
-            parameters="路径 source_id 当前支持 cecbid；请求头必须含 X-BidPilot-Config-Token。局域网请求还遵循已生效的管理员令牌或可信网段策略；无请求体。",
+            parameters="路径 source_id 当前支持 cecbid 与 qianlima；请求头必须含 X-BidPilot-Config-Token。局域网请求还遵循已生效的管理员令牌或可信网段策略；无请求体。",
             returns="HTTP 200；返回一次性会话 ID、15 分钟截止时间和操作提示。",
             side_effects="【服务主机副作用】启动一个可见浏览器进程并打开官方登录页；不会自动输入账号、密码、验证码或点击提交。",
             errors="403：短期编辑令牌无效，或局域网访问策略未通过；409：来源不支持安全复用授权、浏览器组件缺失或 Chromium 无法启动。",
@@ -1493,10 +1493,10 @@ def create_app(
         **_api_docs(
             tag="来源授权",
             summary="完成并加密保存授权",
-            purpose="用户确认已完成登录后，读取临时浏览器中属于允许域名的 Cookie，加密写入 SQLite 并关闭授权浏览器。",
+            purpose="用户确认已完成登录后保存受控授权：中国招标投标网加密保存允许域名 Cookie；千里马保持同一个可见浏览器进程与独立配置，不导出 Cookie。",
             parameters="路径 session_id；请求头必须含短期编辑令牌；无请求体。",
             returns="HTTP 200；返回 completed 或 failed 及脱敏原因。不会返回 Cookie 名称和值。",
-            side_effects="【敏感写入】仅保存允许域名的会话 Cookie，使用本机 Fernet 密钥加密；不保存账号、密码、验证码或 CA。",
+            side_effects="【敏感写入】中国招标投标网 Cookie 使用本机 Fernet 加密；千里马写入浏览器配置与授权元数据并保持可见进程；均不保存账号、密码、验证码或 CA。",
             errors="403：编辑令牌无效或局域网访问策略未通过；404：会话不存在；409：未检测到允许域名会话。",
             example="POST /api/v1/sources/auth/sessions/<session_id>/complete\nX-BidPilot-Config-Token: <token>",
             responses={403: "编辑令牌或局域网访问策略未通过。", 404: "会话不存在。"},
@@ -1525,10 +1525,10 @@ def create_app(
         **_api_docs(
             tag="来源授权",
             summary="真实测试来源授权",
-            purpose="携带已加密保存的会话执行一次有界真实搜索，确认来源不再要求登录并实际读取到会员可见内容。",
+            purpose="执行一次有界真实搜索：中国招标投标网验证搜索与免费会员详情；千里马复用同一可见浏览器，只读取一次首屏免费会员列表。",
             parameters="路径 source_id；请求头必须含短期编辑令牌；无请求体。",
             returns="HTTP 200；返回 passed/failed、耗时和脱敏诊断，不返回请求 Cookie。",
-            side_effects="【外部调用】会访问来源的服务器关键词检索；遵守全局限速和重试上限，不下载付费文件。",
+            side_effects="【外部调用】会访问来源的验证关键词检索；千里马不翻页、不读付费详情且不进入定时任务；其他来源遵守全局限速和重试上限。",
             errors="403：编辑令牌无效或局域网访问策略未通过；409：尚未授权或来源不支持；502：授权测试失败。",
             example="POST /api/v1/sources/cecbid/auth/test\nX-BidPilot-Config-Token: <token>",
             responses={
@@ -1561,7 +1561,7 @@ def create_app(
         **_api_docs(
             tag="来源授权",
             summary="清除来源授权",
-            purpose="关闭该来源仍在进行的授权窗口，删除 SQLite 中的加密 Cookie，并立即停止后续会员增强检索。",
+            purpose="关闭该来源仍在进行的授权窗口；中国招标投标网删除加密 Cookie，千里马关闭可见浏览器并删除独立配置目录，立即停止会员增强。",
             parameters="路径 source_id；请求头必须含短期编辑令牌；无请求体。",
             returns="HTTP 200；返回 not_authorized 脱敏状态。",
             side_effects="【删除副作用】永久删除本机保存的该来源加密会话；不会注销原网站账号，也不会修改账号密码。",
