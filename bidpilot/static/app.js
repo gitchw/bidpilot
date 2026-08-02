@@ -1253,11 +1253,11 @@ function renderSourceHealth(row) {
 }
 
 function authStateLabel(auth) {
-  if (auth?.state === "authorized" && auth?.last_test_status === "failed") return "会话已保存，但验证失败";
   const labels = {
     not_supported: "无需/不可复用授权", not_authorized: "尚未授权",
-    authorizing: "等待你完成登录", authorized: "授权已保存",
-    expired: "授权已过期", failed: "授权失败",
+    authorizing: "等待你完成登录", captured_unverified: "会话已捕获，等待验证",
+    authorized: "授权已验证可用",
+    expired: "授权已过期", failed: "会话验证失败",
   };
   return labels[auth?.state] || "授权状态未知";
 }
@@ -1276,12 +1276,13 @@ function sourceAuthActions(row) {
   const auth = row.authorization || {};
   if (!auth.managed) {
     const loginUrl = safeUrl(auth.login_url || "");
-    return loginUrl ? `<a class="secondary-button compact" href="${escapeHtml(loginUrl)}" target="_blank" rel="noreferrer">打开原站工作台 ↗</a>` : "";
+    const label = row.authorization_action_label || "打开原站工作台 ↗";
+    return loginUrl ? `<a class="secondary-button compact" href="${escapeHtml(loginUrl)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>` : "";
   }
   if (auth.state === "authorizing") {
     return `<button class="primary-button compact source-auth-complete" data-source-id="${escapeHtml(row.id)}" data-session-id="${escapeHtml(auth.active_session_id || "")}">我已登录，完成授权</button><button class="secondary-button compact source-auth-clear" data-source-id="${escapeHtml(row.id)}">取消并清理</button>`;
   }
-  if (auth.state === "authorized") {
+  if (["authorized", "captured_unverified", "failed"].includes(auth.state)) {
     return `<button class="secondary-button compact source-auth-test" data-source-id="${escapeHtml(row.id)}">测试授权</button><button class="secondary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">重新授权</button><button class="danger-button source-auth-clear" data-source-id="${escapeHtml(row.id)}">清除</button>`;
   }
   return `<button class="primary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">打开浏览器授权</button>`;
@@ -1302,7 +1303,8 @@ function renderSourceCenter(rows) {
     const message = row.last_message || (row.configured ? "等待首轮真实查询验证" : "需要用户在本机完成授权或配置");
     const auth = row.authorization || { state: "not_supported", authorization_scope: "该公开来源无需授权。", message: "" };
     const rejection = Object.entries(row.last_rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)} ${count}</span>`).join("");
-    return `<article class="source-card" data-source-id="${escapeHtml(row.id)}"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span><span>${escapeHtml(row.query_mode || "列表检索")}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-capabilities">${sourceCapabilityTags(row)}</div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span><span><small>最近耗时</small><b>${row.last_latency_ms ? `${row.last_latency_ms} ms` : "暂无"}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p>${renderSourceHealth(row)}<details class="source-boundary"><summary>覆盖范围与限制</summary><p>${escapeHtml(row.coverage_note || "来源暂未提供覆盖说明。")}</p></details><div class="source-auth-panel ${escapeHtml(auth.state)}"><div><b>${escapeHtml(authStateLabel(auth))}</b><p>${escapeHtml(auth.authorization_scope || "")}</p><small>${escapeHtml(auth.message || "")}${auth.last_test_status === "passed" ? " · 最近测试通过" : auth.last_test_status === "failed" ? " · 最近测试失败" : ""}</small></div><div class="source-auth-actions">${sourceAuthActions(row)}</div></div></article>`;
+    const authTestLabel = auth.last_test_status === "passed" ? " · 最近测试通过" : auth.last_test_status === "failed" ? " · 最近测试失败" : auth.last_test_status === "inconclusive" ? " · 最近测试无法判定" : "";
+    return `<article class="source-card" data-source-id="${escapeHtml(row.id)}"><div class="source-card-head"><div><h3>${escapeHtml(row.name)}</h3><div class="source-tags"><span>${row.official ? "官方来源" : "行业来源"}</span><span>${escapeHtml(access)}</span><span>${escapeHtml(row.query_mode || "列表检索")}</span></div></div><span class="state-badge ${tone}">${label}</span></div><div class="source-capabilities">${sourceCapabilityTags(row)}</div><div class="source-stats"><span><small>最近检查</small><b>${checked}</b></span><span><small>扫描 / 候选 / 保留</small><b>${row.last_scanned_count || row.last_fetched_count || 0} / ${row.last_fetched_count || 0} / ${row.last_kept_count || 0}</b></span><span><small>最近耗时</small><b>${row.last_latency_ms ? `${row.last_latency_ms} ms` : "暂无"}</b></span></div>${rejection ? `<div class="source-rejections">${rejection}</div>` : ""}<p>${escapeHtml(message)}</p>${renderSourceHealth(row)}<details class="source-boundary"><summary>覆盖范围与限制</summary><p>${escapeHtml(row.coverage_note || "来源暂未提供覆盖说明。")}</p></details><div class="source-auth-panel ${escapeHtml(auth.state)}"><div><b>${escapeHtml(authStateLabel(auth))}</b><p>${escapeHtml(auth.authorization_scope || "")}</p><small>${escapeHtml(auth.message || "")}${authTestLabel}</small></div><div class="source-auth-actions">${sourceAuthActions(row)}</div></div></article>`;
   }).join("");
   bindSourceAuthActions();
 }
@@ -1325,7 +1327,9 @@ async function completeSourceAuth(sessionId, button) {
   try {
     const result = await configApi(`/api/v1/sources/auth/sessions/${encodeURIComponent(sessionId)}/complete`, { method: "POST" });
     if (result.status !== "completed") throw new Error(result.message || "授权没有完成，请继续登录或重新开始");
-    toast(result.message || "授权已加密保存。现在可以点击“测试授权”验证真实检索。", 6000);
+    toast("会话已加密捕获，正在验证真实搜索与会员详情…", 6000);
+    const verified = await configApi(`/api/v1/sources/${encodeURIComponent(result.source_id)}/auth/test`, { method: "POST" });
+    toast(verified.message, 8000);
     await loadSources();
   } catch (error) { toast(error.message, 7000); await loadSources(); }
   finally { button.disabled = false; button.textContent = originalLabel; }

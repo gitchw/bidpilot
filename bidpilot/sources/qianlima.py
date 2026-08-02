@@ -42,9 +42,11 @@ class QianlimaSource(SourceAdapter):
     supports_detail = False
     authorization_supported = True
     authorization_url = "https://search.vip.qianlima.com/"
+    authorization_action_label = "免费登录并在原站查询 ↗"
     coverage_note = (
         "自动任务只读取无需登录的公开分类列表，并在本地执行主题、地域和日期硬校验；"
-        "不保存或重放千里马会员 Cookie，不自动读取付费详情。需要完整站内能力时请主动打开原站。"
+        "不保存或重放千里马会员 Cookie，不自动读取付费详情。"
+        "需要免费会员检索时可一键打开原站，由用户本人登录并在前台查询。"
     )
 
     _EVENT_FEEDS = {

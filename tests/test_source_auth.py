@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from bidpilot.api import create_app
 from bidpilot.config import Settings
 from bidpilot.db import Database
+from bidpilot.models import RawTender, SourceSearchResult, SourceStatus
 from bidpilot.source_auth import SourceAuthManager
 from bidpilot.sources.cecbid import CECBidSource
 from bidpilot.sources.qianlima import QianlimaSource
@@ -52,7 +54,6 @@ def make_settings(tmp_path: Path) -> Settings:
         llm_base_url="",
         llm_api_key="",
         llm_model="",
-        qianlima_cookie_path=tmp_path / "data" / "legacy-cookie.txt",
     )
 
 
@@ -89,12 +90,12 @@ async def test_cecbid_auth_encrypts_scoped_cookies_and_clear_removes_session(tmp
     assert "运行 BidPilot 服务的电脑上打开" in started.message
     completed = await manager.complete(started.session_id)
     assert completed.status == "completed"
-    assert settings.cecbid_cookie == "member_session=secret-cookie-value"
+    assert settings.cecbid_cookie == ""
     row = manager.db.get_source_authorization("cecbid")
     assert row is not None
     assert "secret-cookie-value" not in row["encrypted_cookie"]
     assert "tracking" not in row["cookie_names_json"]
-    assert manager.status("cecbid").state == "authorized"
+    assert manager.status("cecbid").state == "captured_unverified"
     assert context.closed and browser.closed and playwright.stopped
 
     cleared = await manager.clear("cecbid")
@@ -126,8 +127,9 @@ async def test_complete_without_scoped_cookie_returns_failed_not_false_success(t
 
 async def test_legacy_qianlima_cookie_is_deleted_and_never_migrated(tmp_path: Path):
     settings = make_settings(tmp_path)
-    settings.qianlima_cookie_path.parent.mkdir(parents=True, exist_ok=True)
-    settings.qianlima_cookie_path.write_text("legacy=plaintext-secret", encoding="utf-8")
+    legacy_path = settings.data_dir / "secrets" / "qianlima_cookie.txt"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text("legacy=plaintext-secret", encoding="utf-8")
     manager = SourceAuthManager(
         Database(settings.database_path),
         settings,
@@ -135,8 +137,7 @@ async def test_legacy_qianlima_cookie_is_deleted_and_never_migrated(tmp_path: Pa
     )
     row = manager.db.get_source_authorization("qianlima")
     assert row is None
-    assert settings.qianlima_cookie == ""
-    assert not settings.qianlima_cookie_path.exists()
+    assert not legacy_path.exists()
 
 
 def test_source_auth_api_requires_token_and_never_returns_cookie(tmp_path: Path):
@@ -182,7 +183,7 @@ def test_source_auth_api_requires_token_and_never_returns_cookie(tmp_path: Path)
         body = statuses.text
         assert "api-secret-cookie" not in body
         assert "member_session" not in body
-        assert statuses.json()[0]["authorization"]["state"] == "authorized"
+        assert statuses.json()[0]["authorization"]["state"] == "captured_unverified"
 
 
 def test_qianlima_is_user_assisted_and_rejects_cookie_capture(tmp_path: Path):
@@ -199,3 +200,111 @@ def test_qianlima_is_user_assisted_and_rejects_cookie_capture(tmp_path: Path):
     assert status.state == "not_supported"
     assert status.login_url == "https://search.vip.qianlima.com/"
     assert "不会消费该会话" in status.authorization_scope
+
+
+def test_qianlima_exposes_current_user_controlled_free_login_handoff(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    service_source = QianlimaSource(settings)
+    capabilities = service_source.capabilities()
+
+    assert capabilities["authorization_action_label"] == "免费登录并在原站查询 ↗"
+    assert service_source.authorization_url == "https://search.vip.qianlima.com/"
+    assert service_source.authorization_action_label == "免费登录并在原站查询 ↗"
+    assert "用户本人登录" in service_source.coverage_note
+
+
+async def test_unverified_or_failed_session_is_never_loaded_for_background_search(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    source = CECBidSource(settings)
+    manager = SourceAuthManager(Database(settings.database_path), settings, [source])
+    encrypted = manager.vault.encrypt("member_session=secret")
+    manager.db.set_source_authorization(
+        source_id="cecbid",
+        encrypted_cookie=encrypted,
+        cookie_names=["member_session"],
+        domains=["cecbid.org.cn"],
+        authorized_at=datetime.now().astimezone().isoformat(),
+        expires_at=None,
+        message="captured",
+    )
+
+    manager.load_persisted()
+    assert settings.cecbid_cookie == ""
+    assert manager.status("cecbid").state == "captured_unverified"
+
+    manager.db.update_source_authorization_test(
+        "cecbid",
+        status="failed",
+        message="login gate",
+    )
+    manager.load_persisted()
+    assert settings.cecbid_cookie == ""
+    assert manager.status("cecbid").state == "failed"
+
+
+async def test_auth_test_distinguishes_passed_failed_and_inconclusive(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    source = CECBidSource(settings)
+    manager = SourceAuthManager(Database(settings.database_path), settings, [source])
+    manager.db.set_source_authorization(
+        source_id="cecbid",
+        encrypted_cookie=manager.vault.encrypt("member_session=secret"),
+        cookie_names=["member_session"],
+        domains=["cecbid.org.cn"],
+        authorized_at=datetime.now().astimezone().isoformat(),
+        expires_at=None,
+        message="captured",
+    )
+
+    async def inconclusive(_spec, _fetcher):
+        return SourceSearchResult(
+            source=source.name,
+            status=SourceStatus.PARTIAL,
+            items=[],
+        )
+
+    source.search = inconclusive  # type: ignore[method-assign]
+    result = await manager.test("cecbid")
+    assert result.status == "inconclusive"
+    assert result.success is False
+    assert settings.cecbid_cookie == ""
+    assert manager.status("cecbid").state == "captured_unverified"
+
+    async def passed(_spec, _fetcher):
+        assert settings.cecbid_cookie == "member_session=secret"
+        return SourceSearchResult(
+            source=source.name,
+            status=SourceStatus.OK,
+            items=[
+                RawTender(
+                    source=source.name,
+                    source_url="https://www.cecbid.org.cn/tenders/details/verified",
+                    title="真实会员候选",
+                    published_at=datetime.now(),
+                    body="会员正文",
+                    auth_level="free_member",
+                )
+            ],
+        )
+
+    source.search = passed  # type: ignore[method-assign]
+    result = await manager.test("cecbid")
+    assert result.status == "passed"
+    assert result.success is True
+    assert settings.cecbid_cookie == "member_session=secret"
+    assert manager.status("cecbid").state == "authorized"
+
+    async def failed(_spec, _fetcher):
+        return SourceSearchResult(
+            source=source.name,
+            status=SourceStatus.AUTH_REQUIRED,
+        )
+
+    source.search = failed  # type: ignore[method-assign]
+    result = await manager.test("cecbid")
+    assert result.status == "failed"
+    assert result.success is False
+    assert settings.cecbid_cookie == ""
+    assert manager.status("cecbid").state == "failed"

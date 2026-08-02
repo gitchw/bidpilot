@@ -21,6 +21,7 @@ class SourceAdapter(ABC):
     supports_detail: bool = True
     authorization_supported: bool = False
     authorization_url: str = ""
+    authorization_action_label: str = "打开原站工作台 ↗"
     coverage_note: str = ""
 
     def capabilities(self) -> dict[str, object]:
@@ -39,6 +40,7 @@ class SourceAdapter(ABC):
             "supports_detail": self.supports_detail,
             "requires_auth": self.requires_auth,
             "authorization_supported": self.authorization_supported,
+            "authorization_action_label": self.authorization_action_label,
             "coverage_note": self.coverage_note,
         }
 

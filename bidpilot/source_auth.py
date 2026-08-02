@@ -33,6 +33,7 @@ class SourceAuthView(BaseModel):
         "not_supported",
         "not_authorized",
         "authorizing",
+        "captured_unverified",
         "authorized",
         "expired",
         "failed",
@@ -42,7 +43,9 @@ class SourceAuthView(BaseModel):
     authorized_at: datetime | None = None
     expires_at: datetime | None = None
     last_test_at: datetime | None = None
-    last_test_status: Literal["not_tested", "passed", "failed"] = "not_tested"
+    last_test_status: Literal["not_tested", "passed", "failed", "inconclusive"] = (
+        "not_tested"
+    )
     active_session_id: str = Field(
         default="",
         description="仅在服务主机授权窗口进行中时返回的一次性会话 ID",
@@ -64,7 +67,7 @@ class SourceAuthSessionView(BaseModel):
 class SourceAuthTestResult(BaseModel):
     source_id: str
     success: bool
-    status: Literal["passed", "failed"]
+    status: Literal["passed", "failed", "inconclusive"]
     message: str
     latency_ms: int = Field(default=0, ge=0)
 
@@ -77,6 +80,7 @@ class SourceAuthSpec:
     allowed_domains: tuple[str, ...]
     setting_field: str
     authorization_scope: str
+    verification_queries: tuple[str, ...]
 
     @property
     def allowed_urls(self) -> list[str]:
@@ -119,6 +123,7 @@ class SourceAuthManager:
     """User-driven visible-browser authorization with encrypted scoped cookies."""
 
     session_ttl = timedelta(minutes=15)
+    verification_ttl = timedelta(days=7)
 
     def __init__(
         self,
@@ -144,7 +149,10 @@ class SourceAuthManager:
                 login_url="https://www.cecbid.org.cn/login",
                 allowed_domains=("www.cecbid.org.cn", "cecbid.org.cn"),
                 setting_field="cecbid_cookie",
-                authorization_scope="在公开搜索基础上尝试读取账号原本可见的会员详情。",
+                authorization_scope=(
+                    "经真实验证后，会员会话会同时用于站内搜索和账号原本可见的免费会员详情。"
+                ),
+                verification_queries=("购买", "服务", "工程"),
             ),
         )
         return {item.source_id: item for item in configured if item.source_id in self.sources}
@@ -166,9 +174,8 @@ class SourceAuthManager:
     def _disable_legacy_qianlima_replay(self) -> None:
         """Remove obsolete member sessions that background jobs must never replay."""
 
-        path: Path = self.settings.qianlima_cookie_path
+        path: Path = self.settings.data_dir / "secrets" / "qianlima_cookie.txt"
         self.db.delete_source_authorization("qianlima")
-        self.settings.qianlima_cookie = ""
         with suppress(OSError):
             path.unlink(missing_ok=True)
 
@@ -178,7 +185,10 @@ class SourceAuthManager:
             value = ""
             if row:
                 expires_at = self._parse_datetime(row.get("expires_at"))
-                if not expires_at or expires_at > self._now():
+                if (
+                    row.get("last_test_status") == "passed"
+                    and (not expires_at or expires_at > self._now())
+                ):
                     try:
                         value, _ = self.vault.decrypt(row["encrypted_cookie"])
                     except RuntimeConfigError:
@@ -234,7 +244,10 @@ class SourceAuthManager:
         if not safe:
             raise SourceAuthError("没有检测到允许域名的登录会话，请确认已在打开的浏览器中完成登录")
         header = "; ".join(f"{name}={safe[name]}" for name in sorted(safe))
-        return header, sorted(safe), max(expiries) if expiries else None
+        # A long-lived tracking/remember cookie must not make a shorter login
+        # session look valid for longer than it really is. The earliest declared
+        # expiry is deliberately conservative; session cookies remain test-gated.
+        return header, sorted(safe), min(expiries) if expiries else None
 
     async def _launch_visible_browser(
         self,
@@ -357,9 +370,11 @@ class SourceAuthManager:
                         "未保存账号、密码、验证码或 CA 信息。"
                     ),
                 )
-                setattr(self.settings, session.spec.setting_field, header)
                 session.status = "completed"
-                session.message = "授权会话已加密保存。建议立即点击“测试授权”确认站点仍认可该会话。"
+                session.message = (
+                    "已加密捕获允许域名的会话，正在等待真实验证；"
+                    "验证通过前不会用于后台检索。"
+                )
             except SourceAuthError as exc:
                 session.status = "failed"
                 session.message = str(exc)
@@ -421,9 +436,17 @@ class SourceAuthManager:
             )
         authorized_at = self._parse_datetime(row.get("authorized_at"))
         expires_at = self._parse_datetime(row.get("expires_at"))
-        state: Literal["authorized", "expired"] = (
-            "expired" if expires_at and expires_at <= self._now() else "authorized"
-        )
+        last_test_status = row.get("last_test_status") or "not_tested"
+        if expires_at and expires_at <= self._now():
+            state: Literal["captured_unverified", "authorized", "expired", "failed"] = (
+                "expired"
+            )
+        elif last_test_status == "passed":
+            state = "authorized"
+        elif last_test_status == "failed":
+            state = "failed"
+        else:
+            state = "captured_unverified"
         return SourceAuthView(
             source_id=source_id,
             source_name=name,
@@ -434,8 +457,8 @@ class SourceAuthManager:
             authorized_at=authorized_at,
             expires_at=expires_at,
             last_test_at=self._parse_datetime(row.get("last_test_at")),
-            last_test_status=row.get("last_test_status") or "not_tested",
-            message=row.get("last_message") or "授权会话已加密保存。",
+            last_test_status=last_test_status,
+            message=row.get("last_message") or "会话已捕获，等待真实验证。",
         )
 
     def list_status(self) -> list[SourceAuthView]:
@@ -451,42 +474,86 @@ class SourceAuthManager:
         row = self._authorization_row(source_id)
         if not row:
             raise SourceAuthError("尚未保存授权会话，请先开始并完成授权")
-        self.load_persisted()
+        expires_at = self._parse_datetime(row.get("expires_at"))
+        if expires_at and expires_at <= self._now():
+            setattr(self.settings, spec.setting_field, "")
+            raise SourceAuthError("授权会话已过期，请重新登录")
+        try:
+            cookie, _ = self.vault.decrypt(row["encrypted_cookie"])
+        except RuntimeConfigError as exc:
+            setattr(self.settings, spec.setting_field, "")
+            raise SourceAuthError("本机无法解密授权会话，请清除后重新登录") from exc
+        setattr(self.settings, spec.setting_field, cookie)
         started = perf_counter()
         today = date.today()
-        query = TenderQuerySpec(
-            raw_query="授权连接测试：服务器",
-            topic="服务器",
-            keywords=["服务器"],
-            start_date=today - timedelta(days=365),
-            end_date=today,
-            schedule=IntentSchedule(kind=ScheduleKind.IMMEDIATE),
-        )
+        success = False
+        outcome: Literal["passed", "failed", "inconclusive"] = "inconclusive"
+        message = ""
+        saw_reachable_probe = False
+        saw_candidates = False
         try:
             async with HttpFetcher(self.settings) as fetcher:
-                result = await source.search(query, fetcher)
-            authenticated_items = [
-                item for item in result.items if item.auth_level != "public_snippet"
-            ]
-            success = result.status not in {
-                SourceStatus.AUTH_REQUIRED,
-                SourceStatus.FAILED,
-            } and bool(authenticated_items)
-            if success:
-                message = f"授权有效，真实检索读取到 {len(authenticated_items)} 条会员可见候选。"
-            elif result.status == SourceStatus.AUTH_REQUIRED:
-                message = "站点要求重新登录，当前会话可能已过期。"
-            else:
-                message = "站点可访问，但本次没有证明会员详情已解锁；请重新授权后再试。"
+                for probe in spec.verification_queries:
+                    query = TenderQuerySpec(
+                        raw_query=f"授权连接测试：{probe}",
+                        topic=probe,
+                        keywords=[probe],
+                        start_date=today - timedelta(days=365),
+                        end_date=today,
+                        schedule=IntentSchedule(kind=ScheduleKind.IMMEDIATE),
+                    )
+                    result = await source.search(query, fetcher)
+                    if result.status == SourceStatus.FAILED:
+                        continue
+                    saw_reachable_probe = True
+                    if result.status == SourceStatus.AUTH_REQUIRED:
+                        outcome = "failed"
+                        message = "站点仍显示登录或会员门禁，当前会话没有通过验证。"
+                        break
+                    saw_candidates = saw_candidates or bool(result.items)
+                    authenticated_items = [
+                        item for item in result.items if item.auth_level == "free_member"
+                    ]
+                    if authenticated_items:
+                        success = True
+                        outcome = "passed"
+                        message = (
+                            "授权有效：真实站内搜索与会员详情均已解锁，"
+                            f"本次验证读取到 {len(authenticated_items)} 条会员可见候选。"
+                        )
+                        break
+                else:
+                    if not saw_reachable_probe:
+                        outcome = "failed"
+                        message = "授权测试无法访问站点，请检查网络或站点可用性。"
+                    elif not saw_candidates:
+                        outcome = "inconclusive"
+                        message = (
+                            "站点可访问，但多个验证词均没有候选，暂时无法判断登录是否有效；"
+                            "会话不会用于后台检索，请稍后重试。"
+                        )
+                    else:
+                        outcome = "failed"
+                        message = "检索有候选，但会员详情仍未解锁，请重新登录后再试。"
         except Exception:
-            success = False
+            outcome = "failed"
             message = "授权测试未通过，请检查网络、登录状态或站点结构是否变化。"
-        status: Literal["passed", "failed"] = "passed" if success else "failed"
-        self.db.update_source_authorization_test(source_id, status=status, message=message)
+        if outcome != "passed":
+            setattr(self.settings, spec.setting_field, "")
+        verified_until = None
+        if outcome == "passed":
+            verification_cap = self._now() + self.verification_ttl
+            verified_until = min(expires_at, verification_cap) if expires_at else verification_cap
+        self.db.update_source_authorization_test(
+            source_id,
+            status=outcome,
+            message=message,
+            expires_at=verified_until.isoformat() if verified_until else None,
+        )
         return SourceAuthTestResult(
             source_id=source_id,
             success=success,
-            status=status,
+            status=outcome,
             message=message,
             latency_ms=round((perf_counter() - started) * 1000),
         )

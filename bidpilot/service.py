@@ -1884,6 +1884,7 @@ class BidPilotService:
             capabilities = source.capabilities()
             authorization = self.source_auth.status(source.source_id)
             configured = True
+            latest_status = latest.get(source.name, {}).get("status")
             rows.append(
                 {
                     **capabilities,
@@ -1892,6 +1893,8 @@ class BidPilotService:
                     "configured": configured,
                     "member_enhanced": (
                         authorization.state == "authorized"
+                        and authorization.last_test_status == "passed"
+                        and latest_status != SourceStatus.AUTH_REQUIRED.value
                         if isinstance(source, CECBidSource)
                         else False
                     ),
@@ -1905,7 +1908,7 @@ class BidPilotService:
                     "official": source.official,
                     "authorization_state": (authorization.state),
                     "authorization": authorization.model_dump(mode="json"),
-                    "last_status": latest.get(source.name, {}).get("status"),
+                    "last_status": latest_status,
                     "last_checked_at": latest.get(source.name, {}).get("started_at"),
                     "last_message": latest.get(source.name, {}).get("message"),
                     "last_scanned_count": latest.get(source.name, {}).get("scanned_count", 0),
@@ -2045,10 +2048,7 @@ class BidPilotService:
     ) -> tuple[str, str]:
         if not samples:
             return "no_data", "尚无真实运行样本；完成一次检索后才会计算趋势。"
-        if (
-            latest_status == SourceStatus.AUTH_REQUIRED.value
-            and authorization_state != "authorized"
-        ):
+        if latest_status == SourceStatus.AUTH_REQUIRED.value:
             return "auth_required", "最近运行需要用户授权；来源本身未被判定为故障。"
         failed = statuses.get(SourceStatus.FAILED.value, 0)
         latest_two_failed = len(samples) >= 2 and all(

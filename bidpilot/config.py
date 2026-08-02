@@ -10,7 +10,6 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bidpilot.network_access import parse_trusted_networks
-from bidpilot.private_files import harden_private_path
 
 
 class Settings(BaseSettings):
@@ -74,8 +73,6 @@ class Settings(BaseSettings):
     decision_assessment_max_records: int = Field(default=15, ge=3, le=25)
 
     cecbid_cookie: str = ""
-    qianlima_cookie: str = ""
-    qianlima_cookie_path: Path = Path("data/secrets/qianlima_cookie.txt")
 
     feishu_webhook_url: str = ""
     feishu_webhook_secret: str = ""
@@ -172,15 +169,6 @@ class Settings(BaseSettings):
         self.control_dir.mkdir(parents=True, exist_ok=True)
         self.report_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self.qianlima_cookie_path.parent.mkdir(parents=True, exist_ok=True)
-        harden_private_path(self.qianlima_cookie_path.parent, directory=True)
-
-    def load_qianlima_cookie(self) -> str:
-        if self.qianlima_cookie.strip():
-            return self.qianlima_cookie.strip()
-        if self.qianlima_cookie_path.exists():
-            return self.qianlima_cookie_path.read_text(encoding="utf-8").strip()
-        return ""
 
 
 @lru_cache(maxsize=1)
