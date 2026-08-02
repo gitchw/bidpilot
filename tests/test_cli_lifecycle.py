@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 from bidpilot.cli import _lan_access_urls
 
 ROOT = Path(__file__).resolve().parents[1]
+ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
 
 def available_port() -> int:
@@ -63,6 +65,11 @@ def run_cli(env: dict[str, str], *arguments: str) -> subprocess.CompletedProcess
         errors="replace",
         timeout=20,
     )
+
+
+def plain_cli_output(result: subprocess.CompletedProcess[str]) -> str:
+    """Normalize Rich/Typer terminal styling before asserting user-visible text."""
+    return ANSI_ESCAPE.sub("", result.stdout + result.stderr)
 
 
 def stop_process(process: subprocess.Popen) -> None:
@@ -160,7 +167,7 @@ def test_local_mode_rejects_non_loopback_host_override(tmp_path: Path):
     env["BIDPILOT_NETWORK_ACCESS_MODE"] = "local"
     result = run_cli(env, "serve", "--host", "0.0.0.0")
     assert result.returncode != 0
-    output = result.stdout + result.stderr
+    output = plain_cli_output(result)
     assert "--host" in output
     assert "BIDPILOT_NETWORK_ACCESS_MODE=lan" in output
 

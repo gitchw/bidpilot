@@ -1,0 +1,26 @@
+[Unit]
+Description=BidPilot durable subscription worker
+After=network-online.target bidpilot-web.service
+Wants=network-online.target
+Requires=bidpilot-web.service
+
+[Service]
+Type=simple
+User=bidpilot
+Group=bidpilot
+WorkingDirectory=/opt/bidpilot
+EnvironmentFile=/etc/bidpilot/bidpilot.env
+ExecStart=/opt/bidpilot/.venv/bin/python -m bidpilot worker
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bidpilot/data /opt/bidpilot/outputs/reports
+
+[Install]
+WantedBy=multi-user.target

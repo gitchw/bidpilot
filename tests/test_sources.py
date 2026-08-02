@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -89,6 +90,39 @@ def test_qianlima_foreground_first_page_rows_are_free_member_list_evidence():
     assert items[0].event_type == EventType.TENDER
     assert items[0].auth_level == "free_member"
     assert items[0].source_metadata["coverage"] == "user_triggered_first_page"
+
+
+def test_qianlima_auto_browser_mode_is_headless_on_linux_without_display(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    source = QianlimaSource(Settings(data_dir=tmp_path, qianlima_browser_mode="auto"))
+
+    assert source.search_browser_headless() is True
+
+
+def test_qianlima_auto_browser_mode_stays_visible_on_desktop_linux(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+
+    source = QianlimaSource(Settings(data_dir=tmp_path, qianlima_browser_mode="auto"))
+
+    assert source.search_browser_headless() is False
+
+
+def test_qianlima_visible_mode_fails_closed_without_linux_display(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    source = QianlimaSource(Settings(data_dir=tmp_path, qianlima_browser_mode="visible"))
+
+    try:
+        source.search_browser_headless()
+    except RuntimeError as exc:
+        assert "DISPLAY/WAYLAND_DISPLAY" in str(exc)
+    else:
+        raise AssertionError("visible mode must reject a Linux service without a display")
 
 
 async def test_qianlima_reuses_live_browser_and_selects_the_authorized_search_page(tmp_path):

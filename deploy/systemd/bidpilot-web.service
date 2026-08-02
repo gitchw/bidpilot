@@ -1,0 +1,25 @@
+[Unit]
+Description=BidPilot web and API service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bidpilot
+Group=bidpilot
+WorkingDirectory=/opt/bidpilot
+EnvironmentFile=/etc/bidpilot/bidpilot.env
+ExecStart=/opt/bidpilot/.venv/bin/python -m bidpilot serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bidpilot/data /opt/bidpilot/outputs/reports
+
+[Install]
+WantedBy=multi-user.target

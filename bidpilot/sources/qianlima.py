@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
+import sys
 import time
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -52,7 +54,8 @@ class QianlimaSource(SourceAdapter):
     authorization_action_label = "在系统内免费登录"
     coverage_note = (
         "定时任务只读取无需登录的公开分类列表。用户本人在来源中心完成免费登录后，"
-        "即时任务可通过同一个可见浏览器配置文件执行一次首屏检索；不导出或后台重放 Cookie，"
+        "即时任务可通过系统托管的同一个持久浏览器配置执行一次首屏检索；不导出或后台重放 Cookie，"
+        "也不把 Cookie 交给 HTTP 客户端，"
         "不自动翻页、不读取付费详情，也不把会员检索接入定时任务。"
     )
 
@@ -123,7 +126,51 @@ class QianlimaSource(SourceAdapter):
             return parsed > datetime.now(UTC)
         return False
 
+    @staticmethod
+    def graphical_session_available() -> bool:
+        """Return whether a visible Chromium window can be presented to the operator."""
+        if sys.platform in {"win32", "darwin"}:
+            return True
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+    def search_browser_headless(self) -> bool:
+        """Resolve the persistent search browser mode without weakening login boundaries."""
+        mode = self.settings.qianlima_browser_mode
+        if mode == "headless":
+            return True
+        if mode == "visible":
+            if not self.graphical_session_available():
+                raise RuntimeError(
+                    "千里马浏览器模式设为 visible，但当前 Linux 服务没有 DISPLAY/WAYLAND_DISPLAY；"
+                    "请通过本机桌面或受 SSH 隧道保护的图形会话登录，或改为 auto/headless 复用已验证配置。"
+                )
+            return False
+        return not self.graphical_session_available()
+
+    async def _launch_persistent_browser(self, *, headless: bool):
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "尚未安装网页授权组件。请在项目目录运行 `python bootstrap.py --auth`。"
+            ) from exc
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        playwright = await async_playwright().start()
+        try:
+            context = await playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self.profile_dir),
+                headless=headless,
+                locale="zh-CN",
+            )
+            page = context.pages[0] if context.pages else await context.new_page()
+            await page.goto(self.authorization_url, wait_until="domcontentloaded", timeout=30_000)
+            return playwright, None, context
+        except Exception:
+            await playwright.stop()
+            raise
+
     async def launch_authorization_browser(self):
+        """Launch the operator-visible browser used only for interactive login."""
         if self._live_playwright is not None and self._live_context is not None:
             try:
                 page = (
@@ -139,26 +186,17 @@ class QianlimaSource(SourceAdapter):
                 return self._live_playwright, None, self._live_context
             except Exception:
                 await self.close_live_browser()
-        try:
-            from playwright.async_api import async_playwright
-        except ImportError as exc:
+        if not self.graphical_session_available():
             raise RuntimeError(
-                "尚未安装网页授权组件。请在项目目录运行 `python bootstrap.py --auth`。"
-            ) from exc
-        self.profile_dir.mkdir(parents=True, exist_ok=True)
-        playwright = await async_playwright().start()
-        try:
-            context = await playwright.chromium.launch_persistent_context(
-                user_data_dir=str(self.profile_dir),
-                headless=False,
-                locale="zh-CN",
+                "当前 Linux 服务没有可见图形会话，不能让用户安全完成登录。请在桌面会话中运行授权，"
+                "或按 Linux 部署手册通过仅监听 127.0.0.1 的 noVNC/VNC 并使用 SSH 隧道操作；"
+                "系统不会在不可见窗口中代填账号、验证码或冒充登录成功。"
             )
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto(self.authorization_url, wait_until="domcontentloaded", timeout=30_000)
-            return playwright, None, context
-        except Exception:
-            await playwright.stop()
-            raise
+        return await self._launch_persistent_browser(headless=False)
+
+    async def launch_search_browser(self):
+        """Open the verified profile for one bounded search, headless on servers when needed."""
+        return await self._launch_persistent_browser(headless=self.search_browser_headless())
 
     def adopt_live_context(self, playwright, context) -> None:
         self._live_playwright = playwright
@@ -278,12 +316,15 @@ class QianlimaSource(SourceAdapter):
             owns_context = self._live_context is None
             if owns_context:
                 try:
-                    playwright, _browser, context = await self.launch_authorization_browser()
-                except Exception:
+                    playwright, _browser, context = await self.launch_search_browser()
+                except Exception as exc:
                     return SourceSearchResult(
                         source=self.name,
                         status=SourceStatus.FAILED,
-                        message="未能打开千里马持久浏览器，请检查 Playwright/Chromium 安装。",
+                        message=(
+                            "未能打开千里马持久浏览器，请检查 Playwright/Chromium、浏览器模式与 Linux 图形会话。"
+                            f"（{type(exc).__name__}）"
+                        ),
                         latency_ms=int((time.perf_counter() - started) * 1000),
                     )
             else:
@@ -330,8 +371,8 @@ class QianlimaSource(SourceAdapter):
                     items=items,
                     scanned_count=len(rows) if isinstance(rows, list) else 0,
                     message=(
-                        f"已在用户本人登录的可见浏览器中执行 1 次首屏查询，读取 {len(items)} 条免费会员列表结果；"
-                        "未翻页、未读取付费详情、未导出或后台重放 Cookie。"
+                        f"已在用户本人登录的系统托管持久浏览器中执行 1 次首屏查询，读取 {len(items)} 条免费会员列表结果；"
+                        "未翻页、未读取付费详情、未导出或通过 HTTP 重放 Cookie。"
                     ),
                     latency_ms=int((time.perf_counter() - started) * 1000),
                 )

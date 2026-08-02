@@ -321,3 +321,11 @@
 - 新增首屏结构解析、持久浏览器状态和清理回归；旧版千里马明文/加密 Cookie 仍会删除且不迁移。
 - 真实重新登录验证通过：来源中心显示“授权已验证可用”，验证词“服务器”首屏读取 20 条免费会员列表候选；未翻页、未读取付费详情、未导出或后台重放 Cookie。
 - 随后通过普通网页任务运行 `8eb35f8c2747410c8d564ecb4fb8cf9a` 再次验证：千里马扫描/读取 20 条、通过本地时间硬校验保留 3 条，3 条落库记录均标记 `auth_level=free_member`，原文链接为 qianlima.com；报告保存为 `outputs/reports/服务器招标信息_202608021338_8eb35f8c.docx`。功能清单 F54 据此标记通过。
+
+## 2026-08-02 — 跨平台后台运行修复（v0.8.1 候选）
+
+- GitHub Actions 失败根因确认为 Rich/Typer 在 POSIX 终端插入 ANSI 样式，导致安全拒绝测试对裸 `--host` 的平台相关误报；业务拒绝行为本身正常。测试现统一剥离 ANSI 后再核验用户可见语义。
+- 千里马首次授权仍强制使用用户可见图形会话；已验证的持久浏览器配置可在 Linux 无显示后台服务中以 headless Chromium 执行一次用户主动首屏查询，不导出 Cookie、不交给 HTTP 客户端、不定时、不翻页、不访问付费详情。
+- 新增 `auto/visible/headless` 浏览器运行策略：Windows/macOS 与 Linux 桌面默认可见，Linux 无 DISPLAY/WAYLAND_DISPLAY 时自动无头；显式 visible 在无图形会话中失败关闭并返回可操作说明。
+- 新增 hardened systemd web/worker 单元与生产环境样例；保留 Docker Compose 双服务、健康检查、回环端口发布和优雅停止。CI 升级至 Actions v7，新增格式、compileall、结构化配置、Compose 模型与 Ubuntu 镜像构建检查。
+- Windows 最终代码状态完成 287 项 Pytest，Ruff lint/format、compileall、JavaScript、JSON/YAML/TOML 和 `git diff --check` 全部通过；Linux WSL 与 GitHub Actions 结果将在同一交付批次继续记录。
