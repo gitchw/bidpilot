@@ -1895,11 +1895,14 @@ class BidPilotService:
                         authorization.state == "authorized"
                         and authorization.last_test_status == "passed"
                         and latest_status != SourceStatus.AUTH_REQUIRED.value
-                        if isinstance(source, CECBidSource)
+                        if isinstance(source, (CECBidSource, QianlimaSource))
                         else False
                     ),
                     "mode": (
-                        "公开分类 + 原站辅助"
+                        "公开分类 + 前台免费会员"
+                        if isinstance(source, QianlimaSource)
+                        and authorization.state == "authorized"
+                        else "公开分类 + 待前台登录"
                         if isinstance(source, QianlimaSource)
                         else "公开 + 会员增强"
                         if isinstance(source, CECBidSource)

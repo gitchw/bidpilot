@@ -1285,7 +1285,8 @@ function sourceAuthActions(row) {
   if (["authorized", "captured_unverified", "failed"].includes(auth.state)) {
     return `<button class="secondary-button compact source-auth-test" data-source-id="${escapeHtml(row.id)}">测试授权</button><button class="secondary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">重新授权</button><button class="danger-button source-auth-clear" data-source-id="${escapeHtml(row.id)}">清除</button>`;
   }
-  return `<button class="primary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">打开浏览器授权</button>`;
+  const label = row.authorization_action_label || "打开浏览器授权";
+  return `<button class="primary-button compact source-auth-start" data-source-id="${escapeHtml(row.id)}">${escapeHtml(label)}</button>`;
 }
 
 function renderSourceCenter(rows) {
@@ -1323,11 +1324,11 @@ async function startSourceAuth(sourceId, button) {
 async function completeSourceAuth(sessionId, button) {
   if (!sessionId) return toast("授权会话已失效，请重新开始", 5000);
   const originalLabel = button.textContent;
-  button.disabled = true; button.textContent = "正在加密保存…";
+  button.disabled = true; button.textContent = "正在确认登录态…";
   try {
     const result = await configApi(`/api/v1/sources/auth/sessions/${encodeURIComponent(sessionId)}/complete`, { method: "POST" });
     if (result.status !== "completed") throw new Error(result.message || "授权没有完成，请继续登录或重新开始");
-    toast("会话已加密捕获，正在验证真实搜索与会员详情…", 6000);
+    toast("登录态已确认，正在执行一次有界真实检索验证…", 6000);
     const verified = await configApi(`/api/v1/sources/${encodeURIComponent(result.source_id)}/auth/test`, { method: "POST" });
     toast(verified.message, 8000);
     await loadSources();

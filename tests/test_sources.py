@@ -61,8 +61,96 @@ def test_qianlima_public_feed_parser_is_structured():
     assert items[0].source_url == "https://wap.qianlima.com/zb/detail/QLM001.html"
 
 
-async def test_qianlima_public_search_never_replays_member_cookie(sample_spec):
-    settings = Settings(max_results_per_source=1)
+def test_qianlima_foreground_first_page_rows_are_free_member_list_evidence():
+    rows = [
+        {
+            "title": "高性能服务器（8卡服务器）",
+            "href": "//www.qianlima.com/bid-612802321.html",
+            "published_at": "2026-07-10",
+            "event_label": "公告 - 招标公告",
+            "region": "北京-北京",
+            "category": "货物",
+        },
+        {
+            "title": "缺失日期的行不会导入",
+            "href": "//www.qianlima.com/bid-invalid.html",
+            "published_at": "",
+            "event_label": "公告 - 招标公告",
+            "region": "北京-北京",
+            "category": "货物",
+        },
+    ]
+
+    items = QianlimaSource.parse_foreground_rows(rows)
+
+    assert len(items) == 1
+    assert items[0].title == "高性能服务器(8卡服务器)"
+    assert items[0].source_url == "https://www.qianlima.com/bid-612802321.html"
+    assert items[0].event_type == EventType.TENDER
+    assert items[0].auth_level == "free_member"
+    assert items[0].source_metadata["coverage"] == "user_triggered_first_page"
+
+
+async def test_qianlima_reuses_live_browser_and_selects_the_authorized_search_page(tmp_path):
+    class FakeLocator:
+        def __init__(self, count):
+            self.value = count
+
+        async def count(self):
+            return self.value
+
+    class FakePage:
+        def __init__(self, url, *, search_count=0, member_count=0):
+            self.url = url
+            self.search_count = search_count
+            self.member_count = member_count
+            self.goto_calls = []
+
+        def locator(self, _selector):
+            return FakeLocator(self.search_count)
+
+        def get_by_text(self, _text, *, exact=False):
+            assert exact is True
+            return FakeLocator(self.member_count)
+
+        async def goto(self, url, **kwargs):
+            self.goto_calls.append((url, kwargs))
+
+    class FakeContext:
+        def __init__(self, pages):
+            self.pages = pages
+
+        async def new_page(self):
+            raise AssertionError("已有页面时不应新建页面")
+
+    first = FakePage("https://vip.qianlima.com/")
+    authorized = FakePage(
+        "https://search.vip.qianlima.com/index.html#?keywords=服务器",
+        search_count=1,
+        member_count=1,
+    )
+    context = FakeContext([first, authorized])
+    source = QianlimaSource(Settings(data_dir=tmp_path))
+    playwright = object()
+    source.adopt_live_context(playwright, context)
+
+    selected = await source._authorized_search_page(context)
+    reused_playwright, browser, reused_context = await source.launch_authorization_browser()
+
+    assert selected is authorized
+    assert reused_playwright is playwright
+    assert browser is None
+    assert reused_context is context
+    assert first.goto_calls == [
+        (
+            source.authorization_url,
+            {"wait_until": "domcontentloaded", "timeout": 30_000},
+        )
+    ]
+
+
+async def test_qianlima_public_search_never_replays_member_cookie(sample_spec, tmp_path):
+    settings = Settings(max_results_per_source=1, data_dir=tmp_path)
     source = QianlimaSource(settings)
     sample_spec.event_types = [EventType.TENDER]
 

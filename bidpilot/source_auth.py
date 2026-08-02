@@ -17,6 +17,7 @@ from bidpilot.fetch import HttpFetcher
 from bidpilot.models import IntentSchedule, ScheduleKind, SourceStatus, TenderQuerySpec
 from bidpilot.runtime_config import LocalSecretVault, RuntimeConfigError
 from bidpilot.sources.base import SourceAdapter
+from bidpilot.sources.qianlima import QianlimaSource
 
 _COOKIE_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
@@ -43,9 +44,7 @@ class SourceAuthView(BaseModel):
     authorized_at: datetime | None = None
     expires_at: datetime | None = None
     last_test_at: datetime | None = None
-    last_test_status: Literal["not_tested", "passed", "failed", "inconclusive"] = (
-        "not_tested"
-    )
+    last_test_status: Literal["not_tested", "passed", "failed", "inconclusive"] = "not_tested"
     active_session_id: str = Field(
         default="",
         description="仅在服务主机授权窗口进行中时返回的一次性会话 ID",
@@ -78,9 +77,10 @@ class SourceAuthSpec:
     source_name: str
     login_url: str
     allowed_domains: tuple[str, ...]
-    setting_field: str
+    setting_field: str | None
     authorization_scope: str
     verification_queries: tuple[str, ...]
+    session_mode: Literal["cookie", "persistent_browser"] = "cookie"
 
     @property
     def allowed_urls(self) -> list[str]:
@@ -88,6 +88,8 @@ class SourceAuthSpec:
 
 
 class _BrowserContext(Protocol):
+    pages: list[Any]
+
     async def cookies(self, urls: list[str] | None = None) -> list[dict[str, Any]]: ...
 
     async def new_page(self) -> Any: ...
@@ -110,7 +112,7 @@ class _LiveSession:
     started_at: datetime
     expires_at: datetime
     playwright: _Playwright
-    browser: _Browser
+    browser: _Browser | None
     context: _BrowserContext
     status: Literal["authorizing", "completed", "failed", "expired"] = "authorizing"
     message: str = (
@@ -120,7 +122,7 @@ class _LiveSession:
 
 
 class SourceAuthManager:
-    """User-driven visible-browser authorization with encrypted scoped cookies."""
+    """User-driven source authorization with explicit per-source session boundaries."""
 
     session_ttl = timedelta(minutes=15)
     verification_ttl = timedelta(days=7)
@@ -154,6 +156,19 @@ class SourceAuthManager:
                 ),
                 verification_queries=("购买", "服务", "工程"),
             ),
+            SourceAuthSpec(
+                source_id="qianlima",
+                source_name="千里马招标网",
+                login_url="https://search.vip.qianlima.com/",
+                allowed_domains=("search.vip.qianlima.com", "vip.qianlima.com"),
+                setting_field=None,
+                authorization_scope=(
+                    "保留用户本人登录的独立浏览器配置文件；只允许即时任务执行一次首屏免费会员检索，"
+                    "不导出 Cookie、不定时抓取、不翻页、不读取付费详情。"
+                ),
+                verification_queries=("服务器",),
+                session_mode="persistent_browser",
+            ),
         )
         return {item.source_id: item for item in configured if item.source_id in self.sources}
 
@@ -172,28 +187,44 @@ class SourceAuthManager:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
     def _disable_legacy_qianlima_replay(self) -> None:
-        """Remove obsolete member sessions that background jobs must never replay."""
+        """Remove obsolete Cookie replay while preserving the new browser-profile marker."""
 
         path: Path = self.settings.data_dir / "secrets" / "qianlima_cookie.txt"
-        self.db.delete_source_authorization("qianlima")
         with suppress(OSError):
             path.unlink(missing_ok=True)
+        row = self.db.get_source_authorization("qianlima")
+        if not row:
+            return
+        try:
+            value, _ = self.vault.decrypt(row["encrypted_cookie"])
+        except RuntimeConfigError:
+            value = ""
+        source = self.sources.get("qianlima")
+        keep = (
+            value == QianlimaSource.profile_marker_value
+            and isinstance(source, QianlimaSource)
+            and source.profile_available(allow_unverified=True)
+        )
+        if not keep:
+            self.db.delete_source_authorization("qianlima")
 
     def load_persisted(self) -> None:
         for spec in self.specs.values():
             row = self.db.get_source_authorization(spec.source_id)
+            if spec.session_mode == "persistent_browser":
+                continue
             value = ""
             if row:
                 expires_at = self._parse_datetime(row.get("expires_at"))
-                if (
-                    row.get("last_test_status") == "passed"
-                    and (not expires_at or expires_at > self._now())
+                if row.get("last_test_status") == "passed" and (
+                    not expires_at or expires_at > self._now()
                 ):
                     try:
                         value, _ = self.vault.decrypt(row["encrypted_cookie"])
                     except RuntimeConfigError:
                         value = ""
-            setattr(self.settings, spec.setting_field, value)
+            if spec.setting_field:
+                setattr(self.settings, spec.setting_field, value)
 
     @staticmethod
     def _cookie_names_from_header(header: str) -> list[str]:
@@ -252,7 +283,19 @@ class SourceAuthManager:
     async def _launch_visible_browser(
         self,
         spec: SourceAuthSpec,
-    ) -> tuple[_Playwright, _Browser, _BrowserContext]:
+    ) -> tuple[_Playwright, _Browser | None, _BrowserContext]:
+        if spec.session_mode == "persistent_browser":
+            source = self.sources.get(spec.source_id)
+            if not isinstance(source, QianlimaSource):
+                raise SourceAuthError("千里马持久浏览器来源没有正确加载")
+            try:
+                return await source.launch_authorization_browser()
+            except RuntimeError as exc:
+                raise SourceAuthError(str(exc)) from exc
+            except Exception as exc:
+                raise SourceAuthError(
+                    "未能打开千里马持久浏览器，请检查 Chromium 安装或关闭占用该配置文件的窗口"
+                ) from exc
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
@@ -274,10 +317,16 @@ class SourceAuthManager:
             ) from exc
 
     async def _close_session(self, session: _LiveSession) -> None:
+        if session.spec.session_mode == "persistent_browser":
+            source = self.sources.get(session.spec.source_id)
+            if isinstance(source, QianlimaSource):
+                await source.close_live_browser()
+                return
         with suppress(Exception):
             await session.context.close()
-        with suppress(Exception):
-            await session.browser.close()
+        if session.browser is not None:
+            with suppress(Exception):
+                await session.browser.close()
         with suppress(Exception):
             await session.playwright.stop()
 
@@ -352,34 +401,60 @@ class SourceAuthManager:
             if session.status != "authorizing":
                 return self._session_view(session)
             try:
-                cookies = await session.context.cookies(session.spec.allowed_urls)
-                header, names, expires_at = self._serialize_cookies(
-                    cookies,
-                    session.spec.allowed_domains,
-                )
                 now = self._now()
-                self.db.set_source_authorization(
-                    source_id=session.spec.source_id,
-                    encrypted_cookie=self.vault.encrypt(header),
-                    cookie_names=names,
-                    domains=list(session.spec.allowed_domains),
-                    authorized_at=now.isoformat(),
-                    expires_at=expires_at.isoformat() if expires_at else None,
-                    message=(
-                        f"已加密保存 {len(names)} 个允许域名的会话 Cookie；"
-                        "未保存账号、密码、验证码或 CA 信息。"
-                    ),
-                )
+                if session.spec.session_mode == "persistent_browser":
+                    source = self.sources.get(session.spec.source_id)
+                    if not isinstance(source, QianlimaSource):
+                        raise SourceAuthError("千里马持久浏览器来源没有正确加载")
+                    if not await source.authorization_context_ready(session.context):
+                        raise SourceAuthError(
+                            "没有检测到千里马免费会员登录态；请在打开的浏览器中完成登录后再点完成"
+                        )
+                    source.mark_profile("captured_unverified")
+                    source.adopt_live_context(session.playwright, session.context)
+                    self.db.set_source_authorization(
+                        source_id=session.spec.source_id,
+                        encrypted_cookie=self.vault.encrypt(source.profile_marker_value),
+                        cookie_names=[],
+                        domains=list(session.spec.allowed_domains),
+                        authorized_at=now.isoformat(),
+                        expires_at=None,
+                        message=(
+                            "已保留独立浏览器配置文件；没有导出 Cookie，也没有保存账号、密码或验证码。"
+                        ),
+                    )
+                    session.message = (
+                        "已识别免费会员登录态且没有导出 Cookie，正在等待一次首屏真实检索验证；"
+                        "验证通过前不会用于普通即时任务。"
+                    )
+                else:
+                    cookies = await session.context.cookies(session.spec.allowed_urls)
+                    header, names, expires_at = self._serialize_cookies(
+                        cookies,
+                        session.spec.allowed_domains,
+                    )
+                    self.db.set_source_authorization(
+                        source_id=session.spec.source_id,
+                        encrypted_cookie=self.vault.encrypt(header),
+                        cookie_names=names,
+                        domains=list(session.spec.allowed_domains),
+                        authorized_at=now.isoformat(),
+                        expires_at=expires_at.isoformat() if expires_at else None,
+                        message=(
+                            f"已加密保存 {len(names)} 个允许域名的会话 Cookie；"
+                            "未保存账号、密码、验证码或 CA 信息。"
+                        ),
+                    )
+                    session.message = (
+                        "已加密捕获允许域名的会话，正在等待真实验证；验证通过前不会用于后台检索。"
+                    )
                 session.status = "completed"
-                session.message = (
-                    "已加密捕获允许域名的会话，正在等待真实验证；"
-                    "验证通过前不会用于后台检索。"
-                )
             except SourceAuthError as exc:
                 session.status = "failed"
                 session.message = str(exc)
             finally:
-                await self._close_session(session)
+                if session.spec.session_mode != "persistent_browser" or session.status == "failed":
+                    await self._close_session(session)
             return self._session_view(session)
 
     def _authorization_row(self, source_id: str) -> dict[str, Any] | None:
@@ -438,9 +513,7 @@ class SourceAuthManager:
         expires_at = self._parse_datetime(row.get("expires_at"))
         last_test_status = row.get("last_test_status") or "not_tested"
         if expires_at and expires_at <= self._now():
-            state: Literal["captured_unverified", "authorized", "expired", "failed"] = (
-                "expired"
-            )
+            state: Literal["captured_unverified", "authorized", "expired", "failed"] = "expired"
         elif last_test_status == "passed":
             state = "authorized"
         elif last_test_status == "failed":
@@ -476,14 +549,24 @@ class SourceAuthManager:
             raise SourceAuthError("尚未保存授权会话，请先开始并完成授权")
         expires_at = self._parse_datetime(row.get("expires_at"))
         if expires_at and expires_at <= self._now():
-            setattr(self.settings, spec.setting_field, "")
+            if spec.setting_field:
+                setattr(self.settings, spec.setting_field, "")
             raise SourceAuthError("授权会话已过期，请重新登录")
         try:
-            cookie, _ = self.vault.decrypt(row["encrypted_cookie"])
+            session_value, _ = self.vault.decrypt(row["encrypted_cookie"])
         except RuntimeConfigError as exc:
-            setattr(self.settings, spec.setting_field, "")
+            if spec.setting_field:
+                setattr(self.settings, spec.setting_field, "")
             raise SourceAuthError("本机无法解密授权会话，请清除后重新登录") from exc
-        setattr(self.settings, spec.setting_field, cookie)
+        if spec.session_mode == "persistent_browser":
+            if (
+                not isinstance(source, QianlimaSource)
+                or session_value != source.profile_marker_value
+                or not source.profile_available(allow_unverified=True)
+            ):
+                raise SourceAuthError("千里马浏览器配置文件不可用，请清除后重新登录")
+        elif spec.setting_field:
+            setattr(self.settings, spec.setting_field, session_value)
         started = perf_counter()
         today = date.today()
         success = False
@@ -502,7 +585,11 @@ class SourceAuthManager:
                         end_date=today,
                         schedule=IntentSchedule(kind=ScheduleKind.IMMEDIATE),
                     )
-                    result = await source.search(query, fetcher)
+                    result = (
+                        await source.search_foreground(query, allow_unverified=True)
+                        if isinstance(source, QianlimaSource)
+                        else await source.search(query, fetcher)
+                    )
                     if result.status == SourceStatus.FAILED:
                         continue
                     saw_reachable_probe = True
@@ -518,8 +605,14 @@ class SourceAuthManager:
                         success = True
                         outcome = "passed"
                         message = (
-                            "授权有效：真实站内搜索与会员详情均已解锁，"
-                            f"本次验证读取到 {len(authenticated_items)} 条会员可见候选。"
+                            "千里马免费登录态有效：已在可见浏览器执行一次首屏检索，"
+                            f"读取到 {len(authenticated_items)} 条免费会员列表候选；"
+                            "未翻页、未读取付费详情。"
+                            if isinstance(source, QianlimaSource)
+                            else (
+                                "授权有效：真实站内搜索与会员详情均已解锁，"
+                                f"本次验证读取到 {len(authenticated_items)} 条会员可见候选。"
+                            )
                         )
                         break
                 else:
@@ -538,12 +631,14 @@ class SourceAuthManager:
         except Exception:
             outcome = "failed"
             message = "授权测试未通过，请检查网络、登录状态或站点结构是否变化。"
-        if outcome != "passed":
+        if outcome != "passed" and spec.setting_field:
             setattr(self.settings, spec.setting_field, "")
         verified_until = None
         if outcome == "passed":
             verification_cap = self._now() + self.verification_ttl
             verified_until = min(expires_at, verification_cap) if expires_at else verification_cap
+            if isinstance(source, QianlimaSource):
+                source.mark_profile("authorized", expires_at=verified_until)
         self.db.update_source_authorization_test(
             source_id,
             status=outcome,
@@ -568,7 +663,13 @@ class SourceAuthManager:
                 await self._close_session(session)
                 self._sessions.pop(session.session_id, None)
             self.db.delete_source_authorization(source_id)
-            setattr(self.settings, spec.setting_field, "")
+            if isinstance(self.sources.get(source_id), QianlimaSource):
+                try:
+                    await self.sources[source_id].clear_profile()  # type: ignore[attr-defined]
+                except RuntimeError as exc:
+                    raise SourceAuthError(str(exc)) from exc
+            elif spec.setting_field:
+                setattr(self.settings, spec.setting_field, "")
             return self.status(source_id)
 
     async def close_all(self) -> None:

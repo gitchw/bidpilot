@@ -31,9 +31,10 @@ class FakeBrowser:
 
 
 class FakeContext:
-    def __init__(self, cookies, expected_urls):
+    def __init__(self, cookies, expected_urls, pages=None):
         self.cookie_rows = cookies
         self.expected_urls = expected_urls
+        self.pages = pages or []
         self.closed = False
 
     async def cookies(self, urls=None):
@@ -186,7 +187,7 @@ def test_source_auth_api_requires_token_and_never_returns_cookie(tmp_path: Path)
         assert statuses.json()[0]["authorization"]["state"] == "captured_unverified"
 
 
-def test_qianlima_is_user_assisted_and_rejects_cookie_capture(tmp_path: Path):
+def test_qianlima_is_managed_as_persistent_browser_without_cookie_replay(tmp_path: Path):
     settings = make_settings(tmp_path)
     manager = SourceAuthManager(
         Database(settings.database_path),
@@ -196,10 +197,11 @@ def test_qianlima_is_user_assisted_and_rejects_cookie_capture(tmp_path: Path):
 
     status = manager.status("qianlima")
 
-    assert status.managed is False
-    assert status.state == "not_supported"
+    assert status.managed is True
+    assert status.state == "not_authorized"
     assert status.login_url == "https://search.vip.qianlima.com/"
-    assert "不会消费该会话" in status.authorization_scope
+    assert "不导出 Cookie" in status.authorization_scope
+    assert "不定时抓取" in status.authorization_scope
 
 
 def test_qianlima_exposes_current_user_controlled_free_login_handoff(tmp_path: Path):
@@ -207,10 +209,71 @@ def test_qianlima_exposes_current_user_controlled_free_login_handoff(tmp_path: P
     service_source = QianlimaSource(settings)
     capabilities = service_source.capabilities()
 
-    assert capabilities["authorization_action_label"] == "免费登录并在原站查询 ↗"
+    assert capabilities["authorization_action_label"] == "在系统内免费登录"
     assert service_source.authorization_url == "https://search.vip.qianlima.com/"
-    assert service_source.authorization_action_label == "免费登录并在原站查询 ↗"
-    assert "用户本人登录" in service_source.coverage_note
+    assert service_source.authorization_action_label == "在系统内免费登录"
+    assert "用户本人" in service_source.coverage_note
+    assert "不导出或后台重放 Cookie" in service_source.coverage_note
+
+
+async def test_qianlima_persistent_profile_completes_tests_and_clears_without_cookie_export(
+    tmp_path: Path,
+):
+    settings = make_settings(tmp_path)
+    source = QianlimaSource(settings)
+    manager = SourceAuthManager(Database(settings.database_path), settings, [source])
+    playwright = FakePlaywright()
+    context = FakeContext([], [], pages=[object()])
+
+    async def fake_launch(_spec):
+        return playwright, None, context
+
+    async def ready(_context):
+        return True
+
+    manager._launch_visible_browser = fake_launch  # type: ignore[method-assign]
+    source.authorization_context_ready = ready  # type: ignore[method-assign]
+    started = await manager.start("qianlima")
+    completed = await manager.complete(started.session_id)
+
+    assert completed.status == "completed"
+    assert "没有导出 Cookie" in completed.message
+    assert source.profile_available(allow_unverified=True)
+    row = manager.db.get_source_authorization("qianlima")
+    assert row is not None
+    assert row["cookie_names_json"] == "[]"
+    assert "qianlima-persistent-browser-v1" not in row["encrypted_cookie"]
+    assert manager.status("qianlima").state == "captured_unverified"
+
+    async def foreground_passed(_spec, *, allow_unverified=False):
+        assert allow_unverified is True
+        return SourceSearchResult(
+            source=source.name,
+            status=SourceStatus.PARTIAL,
+            items=[
+                RawTender(
+                    source=source.name,
+                    source_url="https://www.qianlima.com/bid-123.html",
+                    title="服务器采购公告",
+                    published_at=datetime.now(),
+                    body="服务器采购公告 北京 货物",
+                    auth_level="free_member",
+                )
+            ],
+        )
+
+    source.search_foreground = foreground_passed  # type: ignore[method-assign]
+    tested = await manager.test("qianlima")
+    assert tested.success is True
+    assert tested.status == "passed"
+    assert "免费登录态有效" in tested.message
+    assert source.profile_available()
+    assert manager.status("qianlima").state == "authorized"
+
+    cleared = await manager.clear("qianlima")
+    assert cleared.state == "not_authorized"
+    assert not source.profile_dir.exists()
+    assert manager.db.get_source_authorization("qianlima") is None
 
 
 async def test_unverified_or_failed_session_is_never_loaded_for_background_search(
