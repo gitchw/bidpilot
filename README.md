@@ -1,6 +1,6 @@
 # 标擎 BidPilot
 
-当前稳定版本：**v0.7.0** · 默认本机地址：<http://127.0.0.1:8000>
+当前稳定版本：**v0.8.0** · 默认本机地址：<http://127.0.0.1:8000>
 
 标擎是一个证据优先的招投标情报 Agent：把中文自然语言编译成可审计的检索或长期订阅任务，并从真实来源采集、筛选、去重、生成 Word 报告，再按用户选择的渠道投递。
 
@@ -16,14 +16,16 @@
 - DOCX 报告：保留查询口径、来源覆盖、原文链接、附件和证据片段。
 - 持久订阅：SQLite 保存下次执行时间、运行历史、投递尝试、失败次数、worker 心跳和租约。
 - 故障恢复：重启补跑、失败退避、长任务续租、多 worker 互斥、手动/自动执行防重入。
-- 用户管理：编辑自然语言规则、暂停/恢复、立即执行、通知策略、投递渠道、日志和二次确认删除。
+- 多目标交付：即时任务、普通订阅和买方监控可同时选择最多 10 个目标，网页明确展示文字、Word、链接能力和未配置引导。
+- 交付控制塔：报告与逐目标 Outbox 先原子落库；成功目标独立记账，失败目标按平台 `Retry-After` 或有限退避重试，死信可只重试一个渠道。
+- 用户管理：编辑自然语言规则、暂停/恢复、立即执行、通知策略、多目标列表、逐目标日志、死信恢复和二次确认删除。
 - 决策中心：网页管理企业画像；每条结果展示证据约束的适配分、建议、风险、下一步和可编辑反馈记忆。
 - 本轮证据追问：模型只选择 E 编号与结构化字段/逐字片段，标题、采购人、日期、地域、编号和链接均由本地固定快照回填；失败时确定性降级。
 - 机会工作台：把真实标讯按项目归并为线索，持久保存阶段、负责人、下一步、标签、备注和已读状态；支持归档保留与二次确认删除卡片。
 - 买方雷达：只聚合本机真实公告中的采购单位活动、生命周期和高频主题，并可创建采购单位锁定的精准长期监控。
 - 生命周期跟进：同日招标/更正按业务阶段择新；后续更正、中标或合同事件自动刷新卡片并重新标为未读。
-- 网页配置中心：OpenAI-compatible 模型、检索/worker 参数、局域网、飞书、SMTP、钉钉、企业微信和通用 Webhook 均可图形化管理；敏感值加密且不回显。
-- 投递渠道：本地报告中心、飞书群机器人、飞书应用文件、SMTP 邮件附件、钉钉、企业微信和通用 Webhook。
+- 网页配置中心：OpenAI-compatible 模型、检索/worker 参数、局域网、飞书、SMTP、钉钉、企业微信、通用 Webhook、Telegram 和 Slack 均可图形化管理；敏感值加密且不回显。
+- 投递渠道：本地报告中心、飞书群机器人、飞书应用文件、SMTP 邮件附件、钉钉、企业微信、通用 Webhook、Telegram Bot 文件和 Slack Incoming Webhook 链接。
 - 来源中心：展示接入模式、授权边界、最近状态、实际抓取数和保留数。
 - 零结果解释：展示扫描 → 候选 → 保留漏斗、逐项排除原因、覆盖缺口和只填入不自动执行的安全放宽建议。
 
@@ -41,7 +43,8 @@ flowchart LR
     P --> A["10 个真实来源适配器"]
     P --> N["筛选 / 去重 / 生命周期 / 摘要"]
     N --> R["DOCX 报告"]
-    S --> D["本地 / 飞书 / SMTP / 钉钉 / 企微 / Webhook"]
+    R --> O["逐目标持久 Outbox"]
+    O --> D["本地 / 飞书 / 邮件 / 钉钉 / 企微 / Telegram / Slack / Webhook"]
     C["网页配置中心"] -->|"加密持久化"| DB
     C --> S
     S <--> DB[("SQLite 状态与投递账本")]
@@ -98,6 +101,22 @@ python bootstrap.py --dev
 
 `serve` 是前台服务：启动它的终端窗口需要保持打开。停止时可在该窗口按 `Ctrl+C`，也可在另一个终端运行启动画面打印的准确 `stop` 命令。服务会显示版本、数据库、报告目录和控制目录；`stop` 使用控制目录中的本机令牌优雅退出，不按 PID 强杀进程。业务数据库可迁移到其他目录，但控制记录默认固定在项目的 `data/`，所以正常情况下无需重复设置临时环境变量。完整到逐点击级别的说明见 [零基础操作说明书](docs/BEGINNER_MANUAL.md)。
 
+### 原生 Python 怎样改端口、重启和停止
+
+只有使用上面的 `.venv` 命令启动时，网页“配置中心 → 长期任务与局域网 → 服务端口”才控制监听端口。把端口从 8000 改为 8012 并保存后，页面会提示“等待重启”；然后执行：
+
+```text
+# Windows：让新端口生效 / 停止服务
+.venv\Scripts\python.exe -m bidpilot restart
+.venv\Scripts\python.exe -m bidpilot stop
+
+# macOS / Linux：让新端口生效 / 停止服务
+.venv/bin/python -m bidpilot restart
+.venv/bin/python -m bidpilot stop
+```
+
+重启完成后访问 `http://127.0.0.1:8012`。如果只是想临时停止，也可以回到运行 `serve` 的终端按 `Ctrl+C`。
+
 ## Docker Compose
 
 安装 Docker Desktop 或 Docker Engine + Compose 后：
@@ -106,6 +125,32 @@ python bootstrap.py --dev
 docker compose up -d --build
 docker compose ps
 docker compose logs -f worker
+```
+
+Docker Compose 有两层端口：容器内 Web 服务固定监听 `8000`，宿主机入口由项目根目录 `.env` 中的 `BIDPILOT_PORT` 映射。网页“服务端口”只控制原生 Python `bidpilot serve`；它不会修改 `.env` 或 `compose.yaml`，也不会改变已经创建的 Compose 容器。
+
+例如要让 Docker 版从 `http://127.0.0.1:8000` 改到 `http://127.0.0.1:8012`：
+
+1. 用文本编辑器打开项目根目录的 `.env`，加入或修改一行 `BIDPILOT_PORT=8012`。
+2. 保存文件，在项目根目录执行 `docker compose up -d --force-recreate`。端口映射只在重新创建容器后改变。
+3. 打开 `http://127.0.0.1:8012`。不要再用网页端口字段覆盖它。
+
+Docker 版的停止与重启命令：
+
+```text
+# 暂停全部容器；数据仍保留
+docker compose stop
+
+# 继续运行已暂停的容器；端口映射不变
+docker compose start
+
+# 配置没有变化时，普通重启
+docker compose restart
+
+# 改过 BIDPILOT_PORT 后，必须重新创建容器
+docker compose up -d --force-recreate
+
+# 停止并移除容器和项目网络；不要加 -v，命名卷中的数据会保留
 docker compose down
 ```
 
@@ -118,9 +163,10 @@ Compose 使用命名卷持久化 `/app/data` 与 `/app/outputs/reports`，并对
 1. 创建订阅时先把规则和 `next_run_at` 写入 SQLite。
 2. worker 定期心跳，并通过原子事务领取到期任务。
 3. 执行期间持续续租，其他 worker 无法重复领取。
-4. 报告和渠道确认成功后，才把公告版本写入投递账本。
-5. 失败不会写账本，并按 1 分钟、5 分钟、15 分钟、1 小时、3 小时退避重试。
-6. 进程重启后，新的 worker 从 SQLite 恢复到期任务；过期租约可被安全接管。
+4. 报告记录、全部目标 Outbox 和各目标公告集合在首次外发前一次性写入 SQLite。
+5. 每个目标单独领取、发送和确认；成功目标与该目标公告账本在同一事务提交。
+6. 临时失败只重试该目标；平台给出 `Retry-After` 时绝不提前，五次失败进入可见死信。
+7. 进程重启后，新的 worker 继续未完成 Outbox；过期租约可接管，旧 lease token 不能覆盖新状态。
 
 这套机制不依赖操作系统计划任务。单机可运行 `serve` 的内嵌 worker；生产建议使用 Compose 的独立 worker。
 
@@ -129,10 +175,11 @@ Compose 使用命名卷持久化 `/app/data` 与 `/app/outputs/reports`，并对
 Web 的“订阅中心”支持：
 
 - 查看长期任务服务是否在线、当前执行数、到期等待数；
-- 编辑订阅名称和完整自然语言规则，自动重算下次时间；
-- 切换“每轮回执 / 仅变化通知”和已配置投递渠道；
+- 编辑订阅名称和完整自然语言规则；规则变化时先确认主题、地域、时间与计划，再用签名快照保存并重算下次时间，避免二次模型解析漂移；
+- 切换“每轮回执 / 仅变化通知”，并同时选择多个已配置目标；
 - 暂停后续、恢复、立即执行；
-- 查看每次自动/手动运行、发现数、新增数、错误和报告链接；
+- 查看每次自动/手动运行、发现数、新增数、报告链接以及每个目标的成功、等待重试、死信和平台回执；
+- 修复渠道配置后，只把该死信目标重新排队，不重新抓取，也不重发已成功目标；
 - 两次点击确认后删除订阅及其增量账本。
 
 Web 的“机会工作台”支持：
@@ -168,8 +215,10 @@ Web 的“机会工作台”支持：
 
 ```text
 python bootstrap.py --auth
-python -m playwright install chromium
-python -m bidpilot auth cecbid
+# Windows
+.venv\Scripts\python.exe -m bidpilot auth cecbid
+# macOS / Linux
+.venv/bin/python -m bidpilot auth cecbid
 ```
 
 也可在 Web“来源中心”点击授权。登录窗口始终在运行 BidPilot 的电脑上打开，局域网手机可以管理开始/完成/测试/清除，但不会把平台 Cookie 传给手机。登录会话仅加密保存在本机数据库与 `data/secrets/` 密钥中；该目录已被 Git 忽略。
@@ -184,13 +233,16 @@ python -m bidpilot auth cecbid
 - AI 情报简报模式与单轮处理上限；
 - 企业适配判断模式与单轮处理上限；
 - 默认 8000 端口、本机/LAN 访问范围、管理员令牌保护或可信私网免令牌模式；
+- 独立“报告发布与下载链接”卡：为飞书、钉钉、企微、Slack 和超大 Telegram 文件共用安全 HTTPS 地址；
 - 飞书群机器人与签名、飞书应用与接收 ID；
 - SMTP SSL/STARTTLS、发件人与多收件人；
 - 钉钉群机器人与加签；
 - 企业微信群机器人；
 - 通用 Webhook 与可选 Bearer Token。
+- Telegram Bot Token、Chat ID、可选话题 ID、静默发送和内容保护；
+- Slack 官方 Incoming Webhook（消息与报告链接，不伪装支持附件）。
 
-保存后立即生效，重启后仍保留。密钥、密码和 Webhook 使用本机密钥加密后写入 SQLite，读取接口只返回“已配置”；敏感输入留空表示保持原值，清除必须显式勾选。模型和每个通道都有真实连通性测试，其中通道测试会在二次确认后真实外发。
+普通字段保存后立即生效，网络范围、LAN 策略、可信网段、管理员令牌和端口在重启后生效；所有网页配置重启后仍保留。密钥、密码和 Webhook 使用本机密钥加密后写入 SQLite，读取接口只返回“已配置”；敏感输入留空表示保持原值，清除必须显式勾选。模型和每个通道都有真实连通性测试，其中通道测试会在二次确认后真实外发。
 
 环境变量和 `.env` 仍可用于容器/自动部署，但不再是日常配置的必经步骤。详见 [配置中心指南](docs/CONFIGURATION_GUIDE.md) 和 [投递渠道指南](docs/DELIVERY_CHANNELS.md)。
 
@@ -201,7 +253,7 @@ python -m bidpilot auth cecbid
 - 管理员令牌保护（推荐）：远端写操作首次要求令牌；
 - 可信局域网免令牌：仅直连私网设备可完整管理查询、订阅、配置和来源授权。
 
-保存后页面会同时显示当前值和重启后值；运行 `python -m bidpilot restart` 后生效。LAN 使用普通 HTTP，不要端口映射到公网。自动部署可在 `.env` 设置 `BIDPILOT_NETWORK_ACCESS_MODE`、`BIDPILOT_LAN_ACCESS_POLICY`、`BIDPILOT_LAN_TRUSTED_NETWORKS` 和可选管理员令牌。
+保存后页面会同时显示当前值和重启后值。Windows 运行 `.venv\Scripts\python.exe -m bidpilot restart`，macOS/Linux 运行 `.venv/bin/python -m bidpilot restart`。LAN 使用普通 HTTP，不要端口映射到公网。自动部署可在 `.env` 设置 `BIDPILOT_NETWORK_ACCESS_MODE`、`BIDPILOT_LAN_ACCESS_POLICY`、`BIDPILOT_LAN_TRUSTED_NETWORKS` 和可选管理员令牌。
 
 ## 开发与验证
 
@@ -223,9 +275,10 @@ node --check bidpilot/static/app.js
 
 ## 完整文档
 
+- [零基础项目交接手册](docs/交接手册_v0.8.0.md)
 - [零基础操作说明书](docs/BEGINNER_MANUAL.md)
 - [用户操作手册](docs/USER_GUIDE.md)
-- [API 参考：50 个操作逐条说明](docs/API_REFERENCE.md)
+- [API 参考：52 个操作逐条说明](docs/API_REFERENCE.md)
 - [配置中心指南](docs/CONFIGURATION_GUIDE.md)
 - [投递渠道与成功语义](docs/DELIVERY_CHANNELS.md)
 - [产品与验收范围](SPEC.md)

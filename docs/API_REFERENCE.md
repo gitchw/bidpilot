@@ -1,4 +1,4 @@
-# 标擎 BidPilot API 参考（v0.7.0）
+# 标擎 BidPilot API 参考（v0.8.0）
 
 本文档对应当前代码中的 52 个 OpenAPI 操作。启动服务后，可在 `http://127.0.0.1:8000/docs` 使用同样的中文说明和交互式调试界面，也可访问 `/openapi.json` 获取机器可读定义。每个接口均说明用途、输入、返回、副作用、常见错误和示例；“副作用”不是警告装饰，而是告诉调用者该请求是否会抓取外部站点、写数据、真实推送、打开可见浏览器或停止进程。
 
@@ -9,7 +9,7 @@
 - 默认只监听本机。网页或环境变量可选择 LAN：`admin_token` 要求远端写操作提供管理员令牌；`trusted_lan` 只对直连私网免令牌。两种 LAN 模式都不是公网账号系统；公网发布必须在前置网关增加 TLS、身份认证、限流和审计。
 - JSON 请求应使用 `Content-Type: application/json`。
 - 日期使用 ISO 8601；调度时区默认是 `Asia/Shanghai`。
-- `400/422` 表示输入问题，`403` 表示配置编辑令牌无效，`404` 表示资源不存在，`409` 表示订阅正在执行，`502` 表示真实来源、模型或投递链路失败。
+- `400/422` 表示输入问题，`403` 表示配置编辑令牌或 LAN 管理权限无效，`404` 表示资源不存在，`409` 表示资源正在执行、配置 revision 冲突，或意图确认快照因原问题变化、篡改或过期而不能继续使用，`502` 表示真实来源、模型或投递链路失败。
 - 密钥、密码、Webhook 完整地址、签名密钥和 Bearer Token 永远不会从配置读取接口、系统状态、运行日志或错误详情返回。
 
 ## 2. 系统与来源
@@ -27,7 +27,7 @@
 
 - 用途：读取 worker 心跳、启用/到期/执行中订阅数量、时区和投递通道就绪状态。
 - 参数：无。
-- 返回：调度状态、订阅计数、`delivery_channels` 和安全的 `intent_engine` 计数；通道只返回 `configured`，不返回凭据，意图状态不返回模型地址或原始回复。
+- 返回：调度状态、订阅计数、`delivery_channels` 和安全的 `intent_engine` 计数。每个通道含稳定 `id`、中文名称、`configured`、`push_capable`、`supports_text`、`supports_file`、`supports_link`、`configuration_group`、`delivery_semantics` 和能力说明；不返回凭据。`local_persistence` 表示仅本地持久化，`at_least_once` 表示外部平台至少一次投递。
 - 副作用：无，只读数据库心跳和内存配置。
 - 错误：数据库不可用时返回 500。
 - 示例：`curl http://127.0.0.1:8000/api/v1/system/status`
@@ -35,11 +35,11 @@
 ### `POST /api/v1/system/shutdown` — 优雅停止本机服务
 
 - 用途：只供跨平台 `bidpilot stop` 命令调用，让当前可管理 Uvicorn 先停止接收新请求，再执行内嵌 worker 和数据库生命周期清理。未激活虚拟环境时，应使用启动画面打印的完整 `.venv` Python 命令。
-- 参数：无 JSON 请求体；必须从 `127.0.0.1`/`::1` 发起，并提供请求头 `X-BidPilot-Control-Token`。令牌位于本机 `data/secrets/control.token`，不应复制到网页、脚本仓库或远程主机。
+- 参数：无 JSON 请求体；必须提供请求头 `X-BidPilot-Control-Token`。令牌只位于服务主机的 `data/secrets/control.token`，CLI 从本机私有文件读取；不应复制到网页、脚本仓库或远程主机。服务明确绑定局域网 IP 时，CLI 会经该接口地址回到本机，因此鉴权以高强度控制令牌为准，不依赖来源 IP。
 - 返回：HTTP 202 和 `{"accepted":true,"message":"已接收停止请求，正在完成清理"}`；返回后连接会在数秒内不可用，这是成功现象。
 - 副作用：停止 Web 进程及其内嵌长期任务 worker；不会删除 SQLite、报告、订阅、机会、投递账本或配置。
-- 错误：403 表示不是回环请求或控制令牌错误；409 表示服务由普通 `uvicorn ...` 启动、没有可控退出回调，此时必须在启动终端按 `Ctrl+C`。
-- 示例：日常用户不要手写令牌请求；在同一项目目录运行启动画面打印的准确命令，例如 Windows 的 `.venv\Scripts\python.exe -m bidpilot stop`。系统不会在失败后按 PID 强杀未知进程。
+- 错误：403 表示本机控制令牌缺失或错误；409 表示服务由普通 `uvicorn ...` 启动、没有可控退出回调，此时必须在启动终端按 `Ctrl+C`。
+- 示例：日常用户不要手写令牌请求；在同一项目目录运行启动画面打印的准确命令：Windows 使用 `.venv\Scripts\python.exe -m bidpilot stop`，macOS/Linux 使用 `.venv/bin/python -m bidpilot stop`。系统不会在失败后按 PID 强杀未知进程。
 
 ### `GET /api/v1/sources/status` — 来源运行状态
 
@@ -120,7 +120,7 @@
 
 - 用途：先用确定性规则拆成主题、地域、时间、公告类型、排除词、计划和投递通道；低置信、缺失或冲突字段才交给 LLM 提议修复，所有提议再经过本地校验。
 - 请求：`query` 必填，2～500 字；`delivery_channel` 仅为请求模型兼容字段，本接口不执行投递。
-- 返回：`TenderQuerySpec`、字段置信度、警告、`parser_version` 和 `resolution`。`resolution` 解释调用原因、模型状态、字段级接受/拒绝/锁定决定和耗时，不包含 API Key、端点或模型原文。
+- 返回：`TenderQuerySpec`、字段置信度、警告、`parser_version`、`resolution` 和 `confirmation_snapshot`。快照由服务端 HMAC 签名、绑定规范化原问题并在 15 分钟后过期；网页确认后把它原样交给运行/订阅接口，后端无需再次调用 LLM。`resolution` 不包含 API Key、端点或模型原文。
 - 副作用：不抓取、不生成报告、不创建订阅；`auto/always` 模式满足条件时，会把原问题、规则基线和当前时间发送给用户配置的模型服务。不会发送标讯正文、机会备注、订阅历史或密钥。
 - 错误：422 表示问题过短、规则日期/计划非法或 JSON 格式错误。模型超时、HTTP 错误、Markdown 包裹、额外字段或非法 JSON 不返回 502，而是在 `resolution.llm_status` 中披露并安全回退。
 - 示例：见下方 `curl`。它只解析意图，不会开始检索或创建长期任务。
@@ -140,6 +140,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/parse \
   "region_code": "440000",
   "event_types": [],
   "parser_version": "hybrid-v1",
+  "confirmation_snapshot": "<限时签名值，请原样回传，不要手工修改>",
   "resolution": {
     "mode": "hybrid",
     "llm_status": "confirmed",
@@ -185,10 +186,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `POST /api/v1/runs` — 立即执行任务
 
 - 用途：解析问题、访问来源、过滤、去重、摘要和持久化。即时任务即使最终保留 0 条，也会生成包含诊断信息的 Word；长期订阅在无新增时是否生成/外发报告由通知策略决定。
-- 请求：`query` 必填；推荐用 `delivery_targets` 选择 1～10 个已配置目标，例如 `["local","email"]`。旧 `delivery_channel` 继续兼容并等价于单元素列表；同时提交时以列表为准，第一个目标回填到旧字段。
+- 请求：`query` 必填；网页或交互式客户端应先调用解析接口，并把返回的 `confirmation_snapshot` 原样放入本请求。后端验证签名、15 分钟时效和原问题一致性后执行同一结构化意图，不再二次调用 LLM。`delivery_targets` 选择 1～10 个已配置目标；旧 `delivery_channel` 继续兼容并等价于单元素列表。
 - 返回：`RunResult` 除运行 ID、证据、来源诊断、`search_explanation`、新增数和报告路径外，还包含 `delivery_targets` 与逐目标 `delivery_receipts`；每条回执的 `outbox_id` 可直接用于死信重试。状态 `retrying` 表示已进入后台重试，`dead_letter` 表示达到上限待人工处理。
 - 副作用：真实访问公开/已授权来源并写数据库；报告记录、全部目标 Outbox 及各自公告集合先原子落库，之后才外发。每个目标只收到自己尚未确认的公告；一个渠道失败不会让成功渠道重发。
-- 错误：422 请求字段非法；502 表示意图、抓取、报告或持久入队在可靠投递点之前失败。单个外部渠道超时通常返回 HTTP 200、运行 `partial` 和目标 `retrying`，不会重新抓取。
+- 错误：409 表示确认快照已过期、签名不匹配或问题文字已变化，重新解析即可；422 请求字段非法；502 表示意图、抓取、报告或持久入队在可靠投递点之前失败。单个外部渠道超时通常返回 HTTP 200、运行 `partial` 和目标 `retrying`，不会重新抓取。
 - 示例：请求体见下方 JSON；发送到 `POST /api/v1/runs` 后会立即执行一次真实任务。
 
 `diagnostics` 中每个来源都有三个容易混淆的数字：
@@ -208,6 +209,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ```json
 {
   "query": "最近1个月深圳充电桩招标信息",
+  "intent_snapshot": "<从解析接口取得>",
   "delivery_targets": ["local", "email"]
 }
 ```
@@ -347,27 +349,28 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `POST /api/v1/buyers/{buyer_id}/subscriptions` — 从真实买方创建精准监控
 
 - 用途：选择买方雷达中已经由本地公告证据确认的采购单位，创建长期监控任务。系统会把该单位写入不可由客户端伪造的 `spec.buyer_keywords` 精确过滤条件，并继续复用统一的混合意图解析、检索计划、来源授权、调度和增量投递账本。
-- 参数：路径中的 `buyer_id` 必须是上一条接口返回的 24 位小写十六进制本地哈希。JSON 包含 `name`（1～100 字）、带有“每天/每周/每月/未来某时刻”等明确计划的 `query`（2～500 字）、`delivery_targets`（1～10 个已配置目标；旧 `delivery_channel` 兼容）、`delivery_policy`（`always` 或 `on_change`）以及 `run_immediately`。客户端不得提交 `buyer_keywords` 改写买方身份。
+- 参数：路径中的 `buyer_id` 必须是上一条接口返回的 24 位小写十六进制本地哈希。JSON 包含 `name`（1～100 字）、带有“每天/每周/每月/未来某时刻”等明确计划的 `query`（2～500 字）、解析预览返回的 `intent_snapshot`、`delivery_targets`（1～10 个已配置目标；旧 `delivery_channel` 兼容）、`delivery_policy`（`always` 或 `on_change`）以及 `run_immediately`。网页先展示主题、地域、时间和计划供用户确认，再原样回传快照；客户端不得提交 `buyer_keywords` 改写买方身份。
 - 返回：标准 `Subscription`。重点检查 `spec.buyer_keywords` 是否只含所选采购单位；`spec.resolution.decisions` 中也会记录该字段由本地证据锁定，便于审计。
-- 副作用：会保存一条持久订阅；意图解析可能调用用户已配置的大模型。`run_immediately=true` 只将任务设为立即到期，持久 worker 领取后才会访问来源、生成报告并按配置投递。
-- 错误：404 表示该 `buyer_id` 不在当前本地雷达；422 表示字段非法、查询没有明确调度计划、投递通道未配置、客户端企图提交额外字段，或买方名称无法形成可靠查询。后续来源登录、网络或投递失败会写入该订阅的运行日志。
-- 示例：`POST /api/v1/buyers/0123456789abcdef01234567/subscriptions`，请求体可为 `{"name":"安徽大学采购监控","query":"每天9点汇总最近30天服务器采购公告","delivery_targets":["local","email"],"delivery_policy":"on_change","run_immediately":false}`。
+- 副作用：会保存一条持久订阅；未回传快照的旧客户端可能调用用户已配置的大模型，有效快照直接复用已确认意图，不会二次调用模型。`run_immediately=true` 只将任务设为立即到期，持久 worker 领取后才会访问来源、生成报告并按配置投递。
+- 错误：404 表示该 `buyer_id` 不在当前本地雷达；409 表示快照过期、签名不匹配或问题已变化，网页会要求重新解析确认；422 表示字段非法、查询没有明确调度计划、投递通道未配置、客户端企图提交额外字段，或买方名称无法形成可靠查询。后续来源登录、网络或投递失败会写入该订阅的运行日志。
+- 示例：`POST /api/v1/buyers/0123456789abcdef01234567/subscriptions`，请求体可为 `{"name":"安徽大学采购监控","query":"每天9点汇总最近30天服务器采购公告","intent_snapshot":"<从解析接口取得>","delivery_targets":["local","email"],"delivery_policy":"on_change","run_immediately":false}`。
 
 ## 7. 长期订阅
 
 ### `POST /api/v1/subscriptions` — 创建订阅
 
 - 用途：保存每天、每周、每月或一次性未来计划；同规则、同买方和同一有序目标列表重复提交会复用原订阅。
-- 请求：`name`、`query`、`delivery_targets`（1～10 个已配置目标）、`delivery_policy`（`always`/`on_change`）、`run_immediately`。旧 `delivery_channel` 仍可单独使用。
-- 返回：订阅 ID、`delivery_targets`、兼容 `delivery_channel`、解析规则、启用状态、下一次时间和最近状态。
+- 请求：`name`、`query`、解析预览返回的 `intent_snapshot`、`delivery_targets`（1～10 个已配置目标）、`delivery_policy`（`always`/`on_change`）、`run_immediately`。网页必须回传快照，避免确认后重新解析漂移；旧 API 客户端可省略并由服务端解析。旧 `delivery_channel` 仍可单独使用。
+- 返回：订阅 ID、`delivery_targets`、兼容 `delivery_channel`、已确认解析规则、启用状态、下一次时间、最近运行状态，以及独立的 `last_delivery_status` / `last_delivery_message`。`last_status=partial` 可能只是来源覆盖不完整；只有 `last_delivery_status=partial` 才表示渠道仍在重试或死信。
 - 副作用：写订阅表；立即模式把首轮置为到期，由持久 worker 领取。
-- 错误：422，无法形成计划、通道未配置或字段非法。
+- 错误：409 表示确认快照已过期、签名不匹配或问题文字已变化，重新解析即可；422 表示无法形成计划、通道未配置或字段非法。
 - 示例：将下方 JSON 发送到 `POST /api/v1/subscriptions`；`local` 表示只在本机报告中心保存结果。
 
 ```json
 {
   "name": "深圳充电桩日报",
   "query": "每天9点汇总最近1个月深圳充电桩信息",
+  "intent_snapshot": "<从解析接口取得>",
   "delivery_targets": ["local", "email"],
   "delivery_policy": "always",
   "run_immediately": true
@@ -378,7 +381,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 
 - 用途：管理全部长期任务。
 - 参数：无。
-- 返回：订阅、下次时间、租约、失败次数和最近回执。
+- 返回：订阅、下次时间、租约、失败次数、`last_status` 检索结论和 `last_delivery_status` 交付结论。网页将“检索部分覆盖”与“部分渠道待处理”分开显示，不再把来源限制误报成渠道失败。
 - 副作用：无。
 - 错误：数据库不可用时 500。
 - 示例：`GET /api/v1/subscriptions`。
@@ -395,10 +398,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `PATCH /api/v1/subscriptions/{subscription_id}` — 编辑订阅
 
 - 用途：局部修改名称、规则、多目标列表或无新增策略；改规则后重算下次时间，保留仍在使用目标的防重复账本。
-- 请求：只提交要改的 `name`、`query`、`delivery_targets`、兼容 `delivery_channel` 或 `delivery_policy`。
+- 请求：只提交要改的 `name`、`query`、`delivery_targets`、兼容 `delivery_channel` 或 `delivery_policy`。修改 `query` 时，网页先调用意图解析接口展示主题、地域、时间与计划，再把 `query` 和同一次返回的 `intent_snapshot` 一起提交；只改名称、目标或策略时不需要快照。
 - 返回：更新后的订阅，包括规范化后的全部目标。
-- 副作用：更新订阅和计划时间，不立即检索。被移除目标尚未发送的 pending、retrying、dead_letter 任务会转为 skipped 并保留取消审计；若该目标正在真实发送则返回 409，避免“页面显示取消但外部仍收到”。
-- 错误：404 不存在；409 正在执行；422 规则或通道非法。
+- 副作用：更新订阅和计划时间，不立即检索。有效快照直接复用用户刚确认的结构化规则，不会二次调用模型。被移除目标尚未发送的 pending、retrying、dead_letter 任务会转为 skipped 并保留取消审计；若该目标正在真实发送则返回 409，避免“页面显示取消但外部仍收到”。
+- 错误：404 不存在；409 表示正在执行，或意图快照过期、被修改、与问题不一致；422 表示规则、通道或快照组合非法。
 - 示例：`curl -X PATCH http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id> -H "Content-Type: application/json" -d '{"name":"深圳充电桩工作日报","delivery_policy":"on_change"}'`。
 
 ### `POST /api/v1/subscriptions/{subscription_id}/run` — 手动运行订阅
@@ -440,10 +443,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `GET /api/v1/subscriptions/{subscription_id}/runs` — 运行日志
 
 - 用途：定位自动/手动执行、失败和新增数量。
-- 参数：`subscription_id`；`limit` 默认 20，范围 1～100。
-- 返回：按时间倒序的运行记录。
+- 参数：`subscription_id`；`limit` 默认 20。整数小于 1 时按 1、大于 100 时按 100 读取；非整数返回 422。
+- 返回：按时间倒序的运行记录；每行补充 `delivery_status` 和 `delivery_message`，用于区分“来源覆盖部分完成”与“渠道部分完成”。
 - 副作用：无。
-- 错误：404 不存在；422 limit 非法。
+- 错误：404 不存在；422 表示 limit 不是整数。数值超出范围会安全收敛，不返回 422。
 - 示例：`curl "http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/runs?limit=20"`。
 
 ### `GET /api/v1/subscriptions/{subscription_id}/deliveries` — 投递回执
@@ -458,15 +461,26 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `GET /api/v1/subscriptions/{subscription_id}/delivery-outbox` — 逐目标持久投递队列
 
 - 用途：一行查看“一次运行 × 一个交付目标”的最终状态，区分尚未领取、正在发送、等待重试、已经成功、死信和按策略跳过；排查问题时不必从多条尝试日志猜测当前结论。
-- 参数：路径参数 `subscription_id`；可选查询参数 `limit` 范围 1～200，默认 100。此接口没有请求体。
-- 返回：按创建时间倒序返回 `id`、`run_id`、`channel`、`status`、`attempt_count`、`max_attempts`、`next_attempt_at`、`item_count`、`report_path`、`last_message`、脱敏 `last_error`、`external_id` 和租约审计字段。`retrying` 表示 worker 会自动再试；`dead_letter` 表示达到上限，必须先修复配置再手动重试。
+- 参数：路径参数 `subscription_id`；可选查询参数 `limit` 默认 100，整数小于 1 时按 1、大于 200 时按 200 读取；非整数返回 422。此接口没有请求体。
+- 返回：按创建时间倒序返回 `id`、`run_id`、`channel`、`status`、`attempt_count`、`max_attempts`、`next_attempt_at`、`item_count`、`report_path`、`last_message`、脱敏 `last_error`、`external_id` 和租约审计字段。`retrying` 表示 worker 会自动再试；`dead_letter` 表示永久错误或达到重试上限，必须先修复配置再手动重试。
 - 副作用：无；只读 SQLite，不发送消息、不占用租约、不改变重试时间。
 - 错误：404 表示订阅不存在；422 表示 `limit` 不是整数。空数组表示该订阅尚未产生投递任务，不等于接口故障。
 - 示例：`curl "http://127.0.0.1:8000/api/v1/subscriptions/<subscription_id>/delivery-outbox?limit=100"`。
 
+Outbox 状态不要按字面猜测，含义如下：
+
+| `status` | 中文含义 | 是否自动继续 | 用户应该做什么 |
+|---|---|---|---|
+| `pending` | 已持久入队，尚未领取 | 是 | 等待在线 worker |
+| `sending` | 某个 worker 已取得租约并正在外发 | 是 | 不要重复点击或移除该目标 |
+| `retrying` | 临时失败，已安排下次时间 | 是 | 查看 `next_attempt_at`，不要连续手动重试 |
+| `succeeded` | 外部成功已确认，目标级账本已提交 | 否 | 无需操作；其他目标失败也不会重发它 |
+| `dead_letter` | 永久错误或五次失败 | 否 | 先修复配置，再调用单目标重试接口 |
+| `skipped` | 无新增策略静默，或目标被用户移除 | 否 | 查看 `last_message` 判断具体原因 |
+
 ### `POST /api/v1/delivery-outbox/{outbox_id}/retry` — 重试单个死信目标
 
-- 用途：修复 Webhook、邮箱或模型之外的渠道配置后，只重新排队指定的失败目标；不会重新抓取网站，也不会再次发送同一运行中已经成功的其他渠道。
+- 用途：修复 Webhook、邮箱等投递渠道配置后，只重新排队指定的失败目标；不会重新抓取网站，也不会再次发送同一运行中已经成功的其他渠道。即时任务在结果页直接显示此按钮；订阅任务在“订阅中心 → 日志 → 交付控制塔”显示。
 - 路径参数：`outbox_id` 必须来自上一个接口，且当前 `status` 必须是 `dead_letter`；无 JSON 请求体。局域网访问时仍遵循当前 `admin_token` 或 `trusted_lan` 写操作策略。
 - 返回：重新排队后的 outbox 行，通常为 `status=retrying`、`attempt_count=0`、`next_attempt_at` 为当前时间。HTTP 返回成功只表示“已经持久入队”，真实发送结果应继续查看本接口列表或投递回执。
 - 副作用：清除这个死信目标的旧租约和错误并重新入队；不删除历史尝试、不修改成功目标的目标级账本、不立即在 HTTP 请求线程外发。
@@ -535,7 +549,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 
 ### `GET /api/v1/config` — 读取脱敏配置
 
-- 用途：读取 AI、检索、worker、局域网和六类通道的非敏感字段、来源、版本与就绪状态。
+- 用途：读取 AI、检索、worker、局域网、报告发布，以及飞书、邮件、钉钉、企业微信、通用 Webhook、Telegram、Slack 的非敏感字段、来源、版本与就绪状态。
 - 参数：无请求体、无查询参数，也不需要短期编辑令牌。
 - 返回：`RuntimeConfigView`；敏感字段只有 `configured`。`network` 同时返回当前实际生效值、重启后配置值和 `pending_restart`，不会回显管理员令牌。
 - 副作用：无。
@@ -555,7 +569,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 
 - 用途：按脏字段局部保存白名单配置并持久化；普通运行参数立即生效，网络范围、策略、可信网段、管理员令牌和端口统一在重启后生效。
 - 请求头：`X-BidPilot-Config-Token`。
-- 请求：必须带读取时取得的 `revision`。敏感字段留空/省略表示保持；清除使用 `clear_secrets`；普通字段恢复环境变量或默认值使用 `reset_fields`。`network_access_mode` 为 `local/lan`，`lan_access_policy` 为 `admin_token/trusted_lan`，可信网段可填 `auto`。
+- 请求：必须带读取时取得的 `revision`。敏感字段留空/省略表示保持；清除使用 `clear_secrets`；普通字段恢复环境变量或默认值使用 `reset_fields`。`network_access_mode` 为 `local/lan`，`lan_access_policy` 为 `admin_token/trusted_lan`，可信网段可填 `auto`。Telegram 使用 `telegram_bot_token`、`telegram_chat_id`、可选 `telegram_message_thread_id`、`telegram_disable_notification` 和 `telegram_protect_content`；Slack 使用 `slack_webhook_url`，且只接受 `hooks.slack.com` 或 `hooks.slack-gov.com` 的官方 HTTPS `/services/{team}/{channel}/{secret}` 地址。
 - 返回：脱敏后的最新配置和递增 revision；网络部分明确区分当前与重启后状态。
 - 副作用：写 `runtime_config`；敏感值用本机 Fernet 密钥加密后存入 SQLite。
 - 错误：403 令牌或 LAN 策略未通过；409 revision 冲突；422 未知字段、URL、私网 CIDR、管理员令牌强度、端口、超时或枚举非法。
@@ -573,6 +587,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 }
 ```
 
+本接口当前 62 个可写字段的逐项中文解释（用途、格式/范围、费用或隐私/安全影响、立即或重启生效）见 `docs/CONFIGURATION_GUIDE.md` 第 13.1 节“全部网页/API 配置字段字典”。Swagger schema 也为全部字段提供中文 description。
+
 ### `POST /api/v1/config/model/test` — 模型连通测试
 
 - 用途：真实调用当前模型的 `/chat/completions`。
@@ -585,10 +601,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/intent/compare \
 ### `POST /api/v1/config/channels/{channel}/test` — 通道测试
 
 - 用途：真实发送“配置中心连通性测试”无新增回执。
-- 参数：`channel` 为 `feishu_webhook`、`feishu_app`、`email`、`dingtalk_webhook`、`wecom_webhook`、`generic_webhook`。
+- 参数：`channel` 为 `feishu_webhook`、`feishu_app`、`email`、`dingtalk_webhook`、`wecom_webhook`、`generic_webhook`、`telegram_bot` 或 `slack_webhook`。
 - 返回：实际通道、消息、延迟和成功状态。
 - 副作用：真实外发；网页会在调用前二次确认。
-- 错误：403 令牌；422 通道未配置/不支持；502 网络、认证或平台响应失败。
+- 错误：403 令牌；422 通道未配置/不支持；502 返回已脱敏的具体失败原因，例如 Telegram Chat ID/权限错误、Slack Webhook 拒绝、平台限流、网络超时或认证失败；不会包含 Token 或完整秘密 URL。
 - 示例：`curl -X POST http://127.0.0.1:8000/api/v1/config/channels/feishu_webhook/test -H "X-BidPilot-Config-Token: <token>"`。该请求会向已配置飞书群真实发送一条测试消息。
 
 ## 10. 配置写入示例
@@ -599,11 +615,13 @@ import requests
 base = "http://127.0.0.1:8000"
 token = requests.post(f"{base}/api/v1/config/edit-token").json()["edit_token"]
 headers = {"X-BidPilot-Config-Token": token}
+current = requests.get(f"{base}/api/v1/config").json()
 
 result = requests.put(
     f"{base}/api/v1/config",
     headers=headers,
     json={
+        "revision": current["revision"],
         "llm_base_url": "http://127.0.0.1:8045/v1",
         "llm_model": "your-compatible-model",
         "llm_api_key": "your-key",

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import re
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 from docx import Document
@@ -28,6 +27,8 @@ BORDER = "CAD5E2"
 WHITE = "FFFFFF"
 CONTENT_WIDTH_DXA = 9360
 TABLE_INDENT_DXA = 120
+RELEASE_VERSION = "0.8.0"
+RELEASE_DATE = "2026-07-24"
 
 
 @dataclass(frozen=True)
@@ -41,43 +42,53 @@ class ScreenshotSpec:
 SCREENSHOTS = {
     "6. 网页七个区域": ScreenshotSpec(
         "01-home.png",
-        "图 1  v0.7.0 情报检索首页：七个业务入口、自然语言任务和系统在线状态",
-        "标擎 BidPilot v0.7.0 情报检索首页与七个业务入口",
+        "图 1  v0.8.0 情报检索首页：多目标交付、自然语言任务和系统在线状态",
+        "标擎 BidPilot v0.8.0 情报检索首页与多目标交付选择器",
     ),
     "9. 网页配置模型：逐字段解释": ScreenshotSpec(
         "02-config.png",
         "图 2  配置中心：模型地址、名称、模式和阈值均可在网页设置",
         "标擎 BidPilot 配置中心的模型配置区域",
     ),
+    "10.7 Telegram Bot": ScreenshotSpec(
+        "09-telegram-config.png",
+        "图 3  Telegram Bot 配置卡：敏感字段脱敏、能力边界、逐卡保存和真实测试",
+        "标擎 BidPilot Telegram Bot 图形化配置卡",
+    ),
+    "10.8 Slack Incoming Webhook": ScreenshotSpec(
+        "10-slack-config.png",
+        "图 4  Slack Incoming Webhook 配置卡：官方地址校验、链接边界和报告发布入口",
+        "标擎 BidPilot Slack Incoming Webhook 图形化配置卡",
+    ),
     "11. 长期订阅：为什么关闭网页后还能跑": ScreenshotSpec(
         "03-subscriptions.png",
-        "图 3  订阅中心：查看 worker、下次执行、最近运行和管理操作",
-        "标擎 BidPilot 订阅中心",
+        "图 5  订阅中心：查看 worker、多目标、下次执行和管理操作",
+        "标擎 BidPilot 多目标订阅中心",
+    ),
+    "11.3 状态解释": ScreenshotSpec(
+        "11-delivery-outbox.png",
+        "图 6  交付控制塔：按运行与目标查看状态；出现死信时可只恢复失败渠道",
+        "标擎 BidPilot 订阅 Outbox 与死信单目标重试界面",
     ),
     "12. 机会工作台、买方雷达与决策中心": ScreenshotSpec(
         "04-opportunities.png",
-        "图 4  我的机会：按项目管理阶段、负责人、下一步、归档和删除",
+        "图 7  我的机会：按项目管理阶段、负责人、下一步、归档和删除",
         "标擎 BidPilot 我的机会项目工作台",
     ),
     "12.6 买方雷达：从已有证据找到值得长期关注的单位": ScreenshotSpec(
         "05-buyers.png",
-        "图 5  买方雷达：只聚合本机真实公告并创建采购单位锁定监控",
+        "图 8  买方雷达：只聚合本机真实公告并创建采购单位锁定监控",
         "标擎 BidPilot 买方雷达与真实采购单位证据",
     ),
     "12.7 第一次使用决策中心": ScreenshotSpec(
         "06-decision.png",
-        "图 6  决策中心：企业画像、证据约束适配判断、反馈和本轮追问",
+        "图 9  决策中心：企业画像、证据约束适配判断、反馈和本轮追问",
         "标擎 BidPilot 决策中心企业画像与证据智能",
     ),
     "13. 来源中心与授权边界": ScreenshotSpec(
         "07-sources.png",
-        "图 7  来源中心：能力、健康趋势和用户可见授权生命周期",
+        "图 10  来源中心：能力、健康趋势和用户可见授权生命周期",
         "标擎 BidPilot 来源健康与网页授权中心",
-    ),
-    "17.8 抓取结果为 0": ScreenshotSpec(
-        "08-zero-results.png",
-        "图 8  零结果诊断：扫描、候选、排除原因、覆盖缺口和安全建议",
-        "标擎 BidPilot 零结果原因诊断页面",
     ),
 }
 
@@ -263,6 +274,7 @@ def configure_styles(doc: Document) -> None:
     code.paragraph_format.space_before = Pt(4)
     code.paragraph_format.space_after = Pt(8)
     code.paragraph_format.line_spacing = 1.15
+    code.paragraph_format.keep_together = True
 
     callout = styles.add_style("ManualCallout", 1)
     set_style_font(callout, latin=BODY_LATIN, cjk=BODY_CJK, size=10.5, color="344054")
@@ -517,6 +529,9 @@ def set_table_geometry(table, widths: list[int]) -> None:
         grid.append(column)
 
     for row in table.rows:
+        trpr = row._tr.get_or_add_trPr()
+        if trpr.find(qn("w:cantSplit")) is None:
+            trpr.append(OxmlElement("w:cantSplit"))
         for index, cell in enumerate(row.cells):
             width = widths[min(index, len(widths) - 1)]
             tcpr = cell._tc.get_or_add_tcPr()
@@ -561,8 +576,6 @@ def add_markdown_table(doc: Document, rows: list[list[str]]) -> None:
 
 
 def add_screenshot(doc: Document, path: Path, spec: ScreenshotSpec) -> None:
-    if not path.exists():
-        return
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_before = Pt(2)
@@ -595,7 +608,7 @@ def configure_page(doc: Document) -> None:
     left = paragraph.add_run("标擎 BidPilot · 零基础操作说明书")
     set_run_font(left, size=9, color=MUTED, bold=True)
     paragraph.add_run("\t")
-    right = paragraph.add_run("v0.7.0")
+    right = paragraph.add_run("v0.8.0")
     set_run_font(right, size=9, color=MUTED)
     set_paragraph_border(paragraph, side="bottom", color=BORDER, size=4, space=2)
 
@@ -654,10 +667,10 @@ def add_cover(doc: Document) -> None:
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
     rows = [
-        ("文档版本", "v0.7.0"),
+        ("文档版本", f"v{RELEASE_VERSION}"),
         ("适用系统", "Windows / macOS / Linux"),
         ("默认地址", "http://127.0.0.1:8000"),
-        ("更新日期", date.today().isoformat()),
+        ("更新日期", RELEASE_DATE),
     ]
     widths = [2700, 6660]
     set_table_geometry(table, widths)
@@ -866,8 +879,37 @@ def add_body_from_markdown(
         add_rich_text(paragraph, text)
 
 
+def validate_screenshot_contract(source_text: str, assets_dir: Path) -> None:
+    headings = {
+        match.group(1).strip()
+        for line in source_text.splitlines()
+        if (match := re.match(r"^#{2,4}\s+(.+?)\s*$", line))
+    }
+    missing_anchors = [anchor for anchor in SCREENSHOTS if anchor not in headings]
+    missing = [
+        spec.filename for spec in SCREENSHOTS.values() if not (assets_dir / spec.filename).is_file()
+    ]
+    empty = [
+        spec.filename
+        for spec in SCREENSHOTS.values()
+        if (assets_dir / spec.filename).is_file()
+        and (assets_dir / spec.filename).stat().st_size < 10_000
+    ]
+    if missing_anchors or missing or empty:
+        details = []
+        if missing_anchors:
+            details.append("手册标题锚点不存在：" + "、".join(missing_anchors))
+        if missing:
+            details.append("缺少：" + "、".join(missing))
+        if empty:
+            details.append("文件异常小：" + "、".join(empty))
+        raise FileNotFoundError("说明书截图门禁未通过；请先运行截图工具。" + "；".join(details))
+
+
 def build_manual(source: Path, output: Path, assets_dir: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
+    source_text = source.read_text(encoding="utf-8")
+    validate_screenshot_contract(source_text, assets_dir)
     doc = Document()
     configure_page(doc)
     configure_styles(doc)
@@ -883,11 +925,15 @@ def build_manual(source: Path, output: Path, assets_dir: Path) -> None:
     add_front_matter(doc)
     add_body_from_markdown(
         doc,
-        source.read_text(encoding="utf-8"),
+        source_text,
         assets_dir=assets_dir,
         bullet_abstract_id=bullet_abstract_id,
         number_abstract_id=number_abstract_id,
     )
+    if len(doc.inline_shapes) != len(SCREENSHOTS):
+        raise RuntimeError(
+            f"说明书截图插入数量异常：应为 {len(SCREENSHOTS)}，实际为 {len(doc.inline_shapes)}"
+        )
     doc.save(output)
 
 
@@ -897,7 +943,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("outputs/manuals/标擎BidPilot零基础操作说明书_v0.7.0.docx"),
+        default=Path(f"outputs/manuals/标擎BidPilot零基础操作说明书_v{RELEASE_VERSION}.docx"),
     )
     parser.add_argument("--assets-dir", type=Path, default=Path("outputs/manuals/assets"))
     args = parser.parse_args()

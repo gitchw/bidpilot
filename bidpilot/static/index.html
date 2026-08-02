@@ -246,21 +246,21 @@
           <div class="config-card-head"><div><p class="eyebrow">AI MODEL</p><h2>OpenAI-compatible 模型</h2></div><span class="state-badge muted" id="config-status-ai">未配置</span></div>
           <p>模型参与七个可独立控制的环节：低置信意图复核、检索词规划、边界候选语义复核、逐公告摘要、证据约束情报简报、企业适配语义解释和本轮证据追问。模型只能提议或选择证据；地域、日期、公告类型、排除词、分数、链接和证据引用始终由本地校验把关。</p>
           <div class="config-fields">
-            <label class="wide"><span>API 基础地址</span><input data-config="llm_base_url" type="url" placeholder="http://127.0.0.1:8045/v1"></label>
-            <label><span>模型名称</span><input data-config="llm_model" placeholder="例如 gemini-3-flash-agent"></label>
-            <label><span>超时（秒）</span><input data-config="llm_timeout" type="number" min="3" max="120" step="1"></label>
+            <label class="wide"><span>API 基础地址</span><input data-config="llm_base_url" type="url" placeholder="http://127.0.0.1:8045/v1"><small>填写 OpenAI-compatible 服务的 <code>/v1</code> 根地址；查询或证据只会在相应 AI 功能启用时发送。使用外部服务前请确认其隐私政策。</small></label>
+            <label><span>模型名称</span><input data-config="llm_model" placeholder="例如 gemini-3-flash-agent"><small>必须与服务端开放的模型 ID 完全一致；名称填错会让所有 AI 环节安全回退到本地规则。</small></label>
+            <label><span>超时（秒）</span><input data-config="llm_timeout" type="number" min="3" max="120" step="1"><small>范围 3～120 秒。数值过小容易误判慢模型不可用，过大会延长解析和检索等待。</small></label>
             <label><span>意图辅助模式</span><select data-config="intent_llm_mode"><option value="auto">自动（推荐）</option><option value="off">关闭，只用规则</option><option value="always">每次都复核</option></select><small>自动模式仅在低置信、缺失或冲突时调用模型。</small></label>
             <label><span>置信阈值</span><input data-config="intent_llm_confidence_threshold" type="number" min="0.5" max="0.99" step="0.01"><small>字段低于此值才允许模型参与修复；建议 0.85。</small></label>
             <label><span>AI 检索规划</span><select data-config="retrieval_llm_mode"><option value="auto">自动规划（推荐）</option><option value="off">关闭，只用本地词典</option></select><small>模型只建议词条和来源优先级，不生成公告。</small></label>
-            <label><span>最多检索轮次</span><select data-config="retrieval_max_rounds"><option value="2">2 轮（首轮 + 缺口补搜）</option><option value="1">1 轮（不补搜）</option></select></label>
+            <label><span>最多检索轮次</span><select data-config="retrieval_max_rounds"><option value="2">2 轮（首轮 + 缺口补搜）</option><option value="1">1 轮（不补搜）</option></select><small>选择 2 轮只会在系统识别到覆盖缺口时补搜；会增加来源请求和整体耗时，但不会绕过站点限制。</small></label>
             <label><span>每来源查询预算</span><input data-config="retrieval_query_budget_per_source" type="number" min="1" max="5" step="1"><small>控制每个支持关键词来源最多执行几个词，建议 2。</small></label>
             <label><span>语义接受阈值</span><input data-config="retrieval_semantic_threshold" type="number" min="0.5" max="0.99" step="0.01"><small>仅作用于已通过日期/地域等硬过滤的边界候选。</small></label>
             <label><span>语义复核候选上限</span><input data-config="retrieval_semantic_candidate_limit" type="number" min="1" max="30" step="1"><small>超出部分明确标记为预算不足，不会静默放行。</small></label>
             <label class="wide checkbox-config"><input data-config="retrieval_semantic_review" type="checkbox"><span><b>启用 AI 边界复核</b><small>关闭后，字面未命中的候选会保守拒绝；确定性检索仍可运行。</small></span></label>
             <label><span>逐公告 AI 摘要</span><select data-config="record_summary_mode"><option value="auto">自动（推荐）</option><option value="off">关闭，只做本地摘录</option></select><small>关闭后公告正文不会进入摘要模型。</small></label>
             <label><span>摘要公告上限</span><input data-config="record_summary_max_records" type="number" min="0" max="30" step="1"><small>每轮最多多少条公告调用摘要模型。</small></label>
-            <label><span>摘要并发上限</span><input data-config="record_summary_concurrency" type="number" min="1" max="8" step="1"></label>
-            <label><span>单条正文字符上限</span><input data-config="record_summary_max_chars" type="number" min="500" max="12000" step="100"></label>
+            <label><span>摘要并发上限</span><input data-config="record_summary_concurrency" type="number" min="1" max="8" step="1"><small>范围 1～8。并发越高速度可能越快，也更容易触发模型限流或占满本机推理资源。</small></label>
+            <label><span>单条正文字符上限</span><input data-config="record_summary_max_chars" type="number" min="500" max="12000" step="100"><small>范围 500～12000。过小会截断关键正文，过大会增加模型费用、显存占用和等待时间。</small></label>
             <label><span>AI 情报简报</span><select data-config="intelligence_brief_mode"><option value="auto">自动生成（推荐）</option><option value="off">关闭模型，只用确定性建议</option></select><small>模型输出必须引用本轮 E 编号，否则整份回退。</small></label>
             <label><span>简报证据上限</span><input data-config="intelligence_brief_max_records" type="number" min="3" max="25" step="1"><small>按机会分选取最多多少条证据发送给模型，建议 12。</small></label>
             <label><span>企业适配 AI 复核</span><select data-config="decision_assessment_mode"><option value="auto">自动复核（推荐）</option><option value="off">关闭 AI，只用本地判断</option></select><small>AI 只匹配画像词和逐字证据；本地评分始终生效。</small></label>
@@ -275,9 +275,9 @@
           <div class="config-card-head"><div><p class="eyebrow">SOURCE & REQUEST BUDGET</p><h2>检索与来源预算</h2></div><span class="state-badge muted">立即生效</span></div>
           <p>这些设置决定每个公开来源的网络等待、访问间隔、候选上限和中国政府采购网分页深度。数值越大不等于结果越准，建议逐项调整并观察来源中心。</p>
           <div class="config-fields">
-            <label><span>单次请求超时（秒）</span><input data-config="request_timeout" type="number" min="3" max="120" step="1"></label>
+            <label><span>单次请求超时（秒）</span><input data-config="request_timeout" type="number" min="3" max="120" step="1"><small>范围 3～120 秒；只限制单个来源。超时来源会单独记录诊断，不会拖垮其他来源。</small></label>
             <label><span>同站请求间隔（秒）</span><input data-config="request_interval" type="number" min="0.1" max="10" step="0.1"><small>用于尊重网站负载和频率边界，建议不低于 0.8。</small></label>
-            <label><span>每来源候选上限</span><input data-config="max_results_per_source" type="number" min="1" max="100" step="1"></label>
+            <label><span>每来源候选上限</span><input data-config="max_results_per_source" type="number" min="1" max="100" step="1"><small>范围 1～100。增大可以保留更多候选，也会增加详情读取、内存和校验时间，并不保证结果更精准。</small></label>
             <label><span>政府采购网分页上限</span><input data-config="ccgp_max_pages" type="number" min="1" max="20" step="1"><small>遇到时间下界会提前停止，不会无界翻页。</small></label>
           </div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="retrieval" disabled>保存本卡修改</button></div>
@@ -289,17 +289,27 @@
           <div class="config-fields">
             <label><span>访问范围</span><select data-config="network_access_mode"><option value="local">仅本机（推荐）</option><option value="lan">局域网设备</option></select><small>局域网模式绑定 0.0.0.0，不等于允许直接暴露公网。</small></label>
             <label><span>局域网管理方式</span><select data-config="lan_access_policy"><option value="admin_token">管理员令牌保护（推荐）</option><option value="trusted_lan">信任局域网，不输令牌</option></select><small>信任模式只接受直连私网地址，所有能连到服务的可信设备都能修改和删除数据。</small></label>
-            <label><span>服务端口</span><input data-config="port" type="number" min="1" max="65535" step="1"><small>默认 8000；保存后需要重启。</small></label>
+            <label><span>服务端口</span><input data-config="port" type="number" min="1" max="65535" step="1"><small>先看你怎样启动：用项目 <code>.venv</code> 运行原生 Python 服务时，这里才控制端口，保存后要重启；用 Docker Compose 时，这里不会改变端口，容器内固定监听 8000，请改项目根目录 <code>.env</code> 中的 <code>BIDPILOT_PORT</code> 后重新创建容器。</small></label>
             <label><span>可信网段</span><input data-config="lan_trusted_networks" type="text" maxlength="1000" placeholder="auto"><small><code>auto</code> 允许常见私网、链路本地和组网地址；也可填写逗号分隔的私有 CIDR。</small></label>
             <label class="wide secret-field" id="lan-admin-token-field"><span>局域网管理员令牌 <em data-secret-state="lan_admin_token">未配置</em></span><input data-config="lan_admin_token" type="password" minlength="16" autocomplete="new-password" placeholder="至少 16 个字符；留空保持原值"><small><input data-clear="lan_admin_token" type="checkbox"> 清除已保存令牌　<button type="button" class="link-button" id="generate-lan-token">生成安全令牌</button></small></label>
-            <label><span>worker 轮询间隔（秒）</span><input data-config="worker_poll_interval" type="number" min="0.2" max="300" step="0.1"></label>
+            <label><span>worker 轮询间隔（秒）</span><input data-config="worker_poll_interval" type="number" min="0.2" max="300" step="0.1"><small>范围 0.2～300 秒，决定长期任务和 Outbox 多久检查一次。过小会增加数据库与 CPU 压力。</small></label>
             <label><span>任务租约（秒）</span><input data-config="worker_lease_seconds" type="number" min="30" max="7200" step="1"><small>长检索需预留足够时间，默认 900。</small></label>
-            <label><span>心跳判定（秒）</span><input data-config="worker_heartbeat_ttl" type="number" min="5" max="600" step="1"></label>
+            <label><span>心跳判定（秒）</span><input data-config="worker_heartbeat_ttl" type="number" min="5" max="600" step="1"><small>范围 5～600 秒；超过该时间未收到心跳才显示 worker 离线。过短可能在机器繁忙时误报。</small></label>
           </div>
           <div class="privacy-callout"><b>当前生效状态</b><span id="network-effective-state">正在读取网络配置…</span></div>
           <div class="privacy-callout"><b>其他设备如何访问</b><span>保存并重启后，在同一局域网设备打开“http://这台电脑的局域网 IP:端口”。远端点击来源登录时，登录窗口会在运行 BidPilot 的电脑上打开；不会绕过原平台登录、验证码或账号权限。</span></div>
           <div class="privacy-callout danger"><b>重要安全提示</b><span>局域网 HTTP 流量没有加密。不要做路由器端口映射，也不要把 8000 端口直接暴露到公网；公网部署必须另加 HTTPS 和用户认证。</span></div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="system" disabled>保存本卡修改</button></div>
+        </article>
+
+        <article class="config-card compact-card" data-config-group="publishing">
+          <div class="config-card-head"><div><p class="eyebrow">REPORT PUBLISHING</p><h2>报告发布与下载链接</h2></div><span class="state-badge muted">可选</span></div>
+          <p>这是所有“链接型渠道”共用的入口，不属于飞书。只有你已经部署了 HTTPS、身份认证和访问控制时才填写；留空时系统会诚实说明报告仅保存在本机。</p>
+          <div class="config-fields one-column">
+            <label><span>公网报告根地址（可选）</span><input data-config="public_base_url" type="url" placeholder="https://bidpilot.example.com"><small>飞书/钉钉/企业微信/Slack 可附带下载链接；Telegram 文件超过 50 MB 时也使用这里。不要填写裸露、无认证的临时地址。</small></label>
+          </div>
+          <div class="privacy-callout"><b>安全边界</b><span>BidPilot 不会替你创建公网隧道、绕过访问控制或自动签发证书；地址必须由部署管理员先安全配置。</span></div>
+          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="publishing" disabled>保存本卡修改</button></div>
         </article>
 
         <article class="config-card" data-config-group="feishu">
@@ -308,11 +318,10 @@
           <div class="config-fields">
             <label class="wide secret-field"><span>机器人 Webhook <em data-secret-state="feishu_webhook_url">未配置</em></span><input data-config="feishu_webhook_url" type="password" autocomplete="new-password" placeholder="粘贴完整 Webhook，留空保持原值"><small><input data-clear="feishu_webhook_url" type="checkbox"> 清除</small></label>
             <label class="wide secret-field"><span>机器人签名密钥（可选） <em data-secret-state="feishu_webhook_secret">未配置</em></span><input data-config="feishu_webhook_secret" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="feishu_webhook_secret" type="checkbox"> 清除</small></label>
-            <label><span>应用 App ID</span><input data-config="feishu_app_id" placeholder="cli_xxx"></label>
+            <label><span>应用 App ID</span><input data-config="feishu_app_id" placeholder="cli_xxx"><small>来自飞书开放平台自建应用；只有与 App Secret、接收 ID 同时正确配置时才能直接发送 Word。</small></label>
             <label class="secret-field"><span>应用 App Secret <em data-secret-state="feishu_app_secret">未配置</em></span><input data-config="feishu_app_secret" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="feishu_app_secret" type="checkbox"> 清除</small></label>
-            <label><span>接收 ID</span><input data-config="feishu_receive_id" placeholder="群 chat_id 或用户 open_id"></label>
-            <label><span>接收 ID 类型</span><select data-config="feishu_receive_id_type"><option value="chat_id">chat_id</option><option value="open_id">open_id</option><option value="user_id">user_id</option><option value="union_id">union_id</option><option value="email">email</option></select></label>
-            <label class="wide"><span>公网报告地址（链接型渠道共用，可选）</span><input data-config="public_base_url" type="url" placeholder="https://bidpilot.example.com"><small>飞书/钉钉/企业微信/Slack 可发送报告链接；Telegram 文件超过 50 MB 时也需要这个地址。</small></label>
+            <label><span>接收 ID</span><input data-config="feishu_receive_id" placeholder="群 chat_id 或用户 open_id"><small>填写群聊或用户的真实标识；应用必须已获对应消息权限并能访问该接收者。</small></label>
+            <label><span>接收 ID 类型</span><select data-config="feishu_receive_id_type"><option value="chat_id">chat_id</option><option value="open_id">open_id</option><option value="user_id">user_id</option><option value="union_id">union_id</option><option value="email">email</option></select><small>必须与上方接收 ID 的实际类型一致；类型选错会被飞书接口拒绝。</small></label>
           </div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="feishu" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="feishu_webhook" disabled>测试群机器人</button><button class="secondary-button channel-test" data-test-channel="feishu_app" disabled>测试飞书应用</button><span id="test-result-feishu"></span></div>
         </article>
@@ -321,14 +330,14 @@
           <div class="config-card-head"><div><p class="eyebrow">EMAIL</p><h2>SMTP 邮件</h2></div><span class="state-badge muted" id="config-status-email">未配置</span></div>
           <p>使用标准 SSL、STARTTLS 或明文 SMTP；建议使用邮箱应用专用密码。</p>
           <div class="config-fields">
-            <label><span>SMTP 主机</span><input data-config="smtp_host" placeholder="smtp.example.com"></label>
-            <label><span>端口</span><input data-config="smtp_port" type="number" min="1" max="65535"></label>
-            <label><span>加密方式</span><select data-config="smtp_security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="plain">明文（不推荐）</option></select></label>
-            <label><span>用户名</span><input data-config="smtp_username" autocomplete="username"></label>
+            <label><span>SMTP 主机</span><input data-config="smtp_host" placeholder="smtp.example.com"><small>填写邮箱服务商提供的发信服务器域名，不要填写网页版邮箱地址。</small></label>
+            <label><span>端口</span><input data-config="smtp_port" type="number" min="1" max="65535"><small>范围 1～65535；常见 SSL 为 465、STARTTLS 为 587，请以邮箱服务商说明为准。</small></label>
+            <label><span>加密方式</span><select data-config="smtp_security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="plain">明文（不推荐）</option></select><small>必须与端口匹配。公网邮件应使用 SSL 或 STARTTLS；明文只适合你完全控制的隔离内网。</small></label>
+            <label><span>用户名</span><input data-config="smtp_username" autocomplete="username"><small>通常填写完整邮箱地址；若服务器允许免登录可留空，否则必须同时填写授权码。</small></label>
             <label class="secret-field"><span>密码 / 授权码 <em data-secret-state="smtp_password">未配置</em></span><input data-config="smtp_password" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="smtp_password" type="checkbox"> 清除</small></label>
-            <label><span>发件人</span><input data-config="smtp_from" type="email" placeholder="robot@example.com"></label>
-            <label class="wide"><span>收件人（逗号分隔）</span><input data-config="smtp_to" placeholder="owner@example.com, sales@example.com"></label>
-            <label><span>超时（秒）</span><input data-config="smtp_timeout" type="number" min="3" max="120"></label>
+            <label><span>发件人</span><input data-config="smtp_from" type="email" placeholder="robot@example.com"><small>应使用 SMTP 账号有权发送的地址；不一致时服务商可能拒绝、改写或判定为垃圾邮件。</small></label>
+            <label class="wide"><span>收件人（逗号分隔）</span><input data-config="smtp_to" placeholder="owner@example.com, sales@example.com"><small>可填写多个地址，用逗号、分号或换行分隔；每位收件人都会收到同一份报告，请避免误填外部联系人。</small></label>
+            <label><span>超时（秒）</span><input data-config="smtp_timeout" type="number" min="3" max="120"><small>范围 3～120 秒，覆盖连接、登录和发送；超时后该邮件目标进入有限重试，不影响其他渠道。</small></label>
           </div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="email" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="email" disabled>发送测试邮件</button><span id="test-result-email"></span></div>
         </article>
@@ -358,14 +367,14 @@
           <div class="config-fields one-column">
             <label class="secret-field"><span>Webhook <em data-secret-state="generic_webhook_url">未配置</em></span><input data-config="generic_webhook_url" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="generic_webhook_url" type="checkbox"> 清除</small></label>
             <label class="secret-field"><span>Bearer Token（可选） <em data-secret-state="generic_webhook_bearer_token">未配置</em></span><input data-config="generic_webhook_bearer_token" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="generic_webhook_bearer_token" type="checkbox"> 清除</small></label>
-            <label><span>Webhook 超时（秒）</span><input data-config="delivery_webhook_timeout" type="number" min="3" max="120"></label>
+            <label><span>Webhook 超时（秒）</span><input data-config="delivery_webhook_timeout" type="number" min="3" max="120"><small>范围 3～120 秒，供飞书、钉钉、企微、通用 Webhook、Telegram 和 Slack 共用；过短容易产生不确定回执和重复风险。</small></label>
           </div>
           <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="generic" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="generic_webhook" disabled>发送测试事件</button><span id="test-result-generic"></span></div>
         </article>
 
         <article class="config-card" data-config-group="telegram">
           <div class="config-card-head"><div><p class="eyebrow">TELEGRAM</p><h2>Telegram Bot</h2></div><span class="state-badge muted" id="config-status-telegram">未配置</span></div>
-          <p>使用 Telegram 官方 Bot API。普通 Word 报告直接作为文件发送；超过 50 MB 时改发公网下载链接，未配置公网地址则明确进入死信。</p>
+          <p>使用 Telegram 官方 Bot API。普通 Word 报告直接作为文件发送；超过 50 MB 时使用“报告发布与下载链接”卡中的安全地址，未配置则明确进入死信。</p>
           <div class="config-fields">
             <label class="wide secret-field"><span>Bot Token <em data-secret-state="telegram_bot_token">未配置</em></span><input data-config="telegram_bot_token" type="password" autocomplete="new-password" placeholder="留空保持原值"><small><input data-clear="telegram_bot_token" type="checkbox"> 清除已保存 Token</small></label>
             <label><span>Chat ID</span><input data-config="telegram_chat_id" maxlength="200" placeholder="例如 -1001234567890"><small>可填写私聊、群组或频道 ID；机器人必须已经拥有发送权限。</small></label>
@@ -374,17 +383,17 @@
             <label class="checkbox-config"><input data-config="telegram_protect_content" type="checkbox"><span><b>保护消息内容</b><small>请求 Telegram 限制转发和保存。</small></span></label>
           </div>
           <div class="privacy-callout"><b>能力边界</b><span>支持文字、Word 文件和链接；Bot Token 只发送给固定的 api.telegram.org，不会拼接到错误提示或网页回显。</span></div>
-          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="telegram" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="telegram_bot" disabled>发送测试消息</button><span id="test-result-telegram"></span></div>
+          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="telegram" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="telegram_bot" disabled>发送测试消息</button><button class="secondary-button" data-open-config-group="publishing">设置报告链接</button><span id="test-result-telegram"></span></div>
         </article>
 
         <article class="config-card compact-card" data-config-group="slack">
           <div class="config-card-head"><div><p class="eyebrow">SLACK</p><h2>Slack Incoming Webhook</h2></div><span class="state-badge muted" id="config-status-slack">未配置</span></div>
-          <p>使用 Slack 官方 Incoming Webhook 向其绑定的频道发送消息。Webhook 本身不能上传 Word；配置公网报告地址后会附带下载链接，否则明确提示报告保存在 BidPilot 主机。</p>
+          <p>使用 Slack 官方 Incoming Webhook 向其绑定的频道发送消息。Webhook 本身不能上传 Word；在“报告发布与下载链接”卡配置安全地址后才会附带链接，否则明确提示报告保存在 BidPilot 主机。</p>
           <div class="config-fields one-column">
             <label class="secret-field"><span>Incoming Webhook <em data-secret-state="slack_webhook_url">未配置</em></span><input data-config="slack_webhook_url" type="password" autocomplete="new-password" placeholder="https://hooks.slack.com/services/…"><small><input data-clear="slack_webhook_url" type="checkbox"> 清除已保存 Webhook</small></label>
           </div>
           <div class="privacy-callout"><b>能力边界</b><span>支持文字和报告链接，不支持附件；仅接受 Slack 官方 HTTPS Webhook 地址。</span></div>
-          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="slack" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="slack_webhook" disabled>发送测试消息</button><span id="test-result-slack"></span></div>
+          <div class="config-card-actions"><button class="primary-button compact save-config-card" data-config-save-group="slack" disabled>保存本卡修改</button><button class="secondary-button channel-test" data-test-channel="slack_webhook" disabled>发送测试消息</button><button class="secondary-button" data-open-config-group="publishing">设置报告链接</button><span id="test-result-slack"></span></div>
         </article>
       </div>
     </section>

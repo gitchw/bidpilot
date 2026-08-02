@@ -20,6 +20,12 @@ const state = {
   buyerRadarLoadSequence: 0,
   subscriptionLoadSequence: 0,
   subscriptionExpandedLogs: new Set(),
+  subscriptionDrafts: new Set(),
+  subscriptionLogPollTimers: new Map(),
+  subscriptionLogPollFailures: new Map(),
+  runDeliveryPollTimer: null,
+  runDeliveryPollRunId: null,
+  runDeliveryPollFailures: 0,
   sources: [],
   profile: null,
   profileLoaded: false,
@@ -59,6 +65,14 @@ const DELIVERY_STATUS_LABELS = {
   pending: "等待发送", sending: "正在发送", retrying: "等待重试",
   succeeded: "发送成功", dead_letter: "需要人工处理", skipped: "已跳过",
 };
+const ACTIVE_DELIVERY_STATUSES = new Set(["pending", "sending", "retrying"]);
+const API_FIELD_LABELS = {
+  query: "查询问题", name: "名称", intent_snapshot: "意图确认",
+  delivery_channel: "交付渠道", delivery_targets: "交付目标", delivery_policy: "无新增通知策略",
+  run_immediately: "创建后立即运行", subscription_id: "订阅", outbox_id: "投递任务",
+  buyer_id: "采购单位", canonical_id: "公告标识", version_hash: "公告版本",
+  question: "问题", limit: "返回数量", search: "搜索内容", stage: "阶段",
+};
 
 function escapeHtml(value = "") {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
@@ -82,6 +96,68 @@ function formatDateTimeInput(value) {
   if (Number.isNaN(date.getTime())) return "";
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
+}
+
+function configFieldLabel(field) {
+  const input = $$('[data-config]').find((node) => node.dataset.config === field);
+  const label = input?.closest("label");
+  const heading = label?.querySelector(":scope > span > b") || label?.querySelector(":scope > span");
+  if (!heading) return "";
+  const copy = heading.cloneNode(true);
+  copy.querySelectorAll("em, small").forEach((node) => node.remove());
+  return copy.textContent.trim();
+}
+
+function humanFieldName(field) {
+  const key = String(field ?? "");
+  return API_FIELD_LABELS[key] || configFieldLabel(key) || key.replaceAll("_", " ") || "请求";
+}
+
+function humanFieldPath(location = []) {
+  const fields = [...location];
+  if (["body", "query", "path"].includes(String(fields[0]))) fields.shift();
+  return fields.length ? fields.map(humanFieldName).join(" → ") : "请求";
+}
+
+function humanValidationMessage(message = "") {
+  const text = String(message);
+  if (/[一-鿿]/.test(text)) return text;
+  const exact = {
+    "Field required": "为必填项",
+    "Input should be a valid string": "必须填写有效文本",
+    "Input should be a valid integer": "必须填写整数",
+    "Input should be a valid number": "必须填写数字",
+    "Input should be a valid boolean": "必须选择是或否",
+    "Input should be a valid list": "必须填写列表",
+    "Input should be a valid URL, relative URL without a base": "必须填写包含协议的有效地址",
+    "Extra inputs are not permitted": "不是允许提交的字段",
+  };
+  if (exact[text]) return exact[text];
+  let match = text.match(/^String should have at least (\d+) characters?$/);
+  if (match) return `至少需要 ${match[1]} 个字符`;
+  match = text.match(/^String should have at most (\d+) characters?$/);
+  if (match) return `最多允许 ${match[1]} 个字符`;
+  match = text.match(/^Input should be greater than or equal to (.+)$/);
+  if (match) return `必须大于或等于 ${match[1]}`;
+  match = text.match(/^Input should be less than or equal to (.+)$/);
+  if (match) return `必须小于或等于 ${match[1]}`;
+  match = text.match(/^List should have at least (\d+) items? after validation, not \d+$/);
+  if (match) return `至少需要选择 ${match[1]} 项`;
+  match = text.match(/^List should have at most (\d+) items? after validation, not \d+$/);
+  if (match) return `最多允许选择 ${match[1]} 项`;
+  match = text.match(/^Input should be (.+)$/);
+  if (match) return `必须是 ${match[1].replaceAll("'", "")}`;
+  return text;
+}
+
+function humanizeErrorMessage(message = "") {
+  let text = humanValidationMessage(message);
+  const fields = $$('[data-config]').map((node) => node.dataset.config).sort((a, b) => b.length - a.length);
+  fields.forEach((field) => {
+    const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    text = text.replace(new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?=$|[^A-Za-z0-9_])`, "g"), (_, prefix) => `${prefix}${humanFieldName(field)}`);
+  });
+  return text;
 }
 
 function feedbackKey(canonicalId, versionHash) { return `${canonicalId}::${versionHash}`; }
@@ -172,8 +248,9 @@ async function api(path, options = {}) {
         return api(path, { ...options, _lanRetry: nextLanRetry });
       }
     }
-    const validation = Array.isArray(data.detail) ? data.detail.map((item) => `${(item.loc || []).slice(1).join(".") || "请求"}：${item.msg}`).join("；") : null;
-    const error = new Error(typeof data.detail === "string" ? data.detail : validation || `请求失败 (${response.status})`);
+    const validation = Array.isArray(data.detail) ? data.detail.map((item) => `${humanFieldPath(item.loc || [])}：${humanValidationMessage(item.msg)}`).join("；") : null;
+    const detail = typeof data.detail === "string" ? humanizeErrorMessage(data.detail) : validation;
+    const error = new Error(detail || `请求失败 (${response.status})`);
     error.status = response.status; throw error;
   }
   return data;
@@ -260,14 +337,38 @@ function syncDeliveryTargetPicker(root, changedInput = null) {
   return targets;
 }
 
-async function openDeliveryConfiguration(group) {
-  await activateTab("config");
-  await loadConfig(false);
-  const card = $(`[data-config-group="${group}"]`);
-  if (!card) return toast("没有找到对应的配置卡，请刷新页面后重试", 5000);
-  card.scrollIntoView({ behavior: "smooth", block: "start" });
+function resetPageScroll() {
+  window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+}
+
+function waitForLayout() {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function revealConfigCard(card) {
+  const topbarHeight = $(".topbar")?.getBoundingClientRect().height || 0;
+  const toolbar = $("#tab-config .config-toolbar");
+  const toolbarStyle = toolbar ? window.getComputedStyle(toolbar) : null;
+  const stickyToolbarBottom = toolbar && toolbarStyle?.position === "sticky"
+    ? (Number.parseFloat(toolbarStyle.top) || 0) + toolbar.getBoundingClientRect().height : 0;
+  const offset = Math.max(topbarHeight, stickyToolbarBottom) + 16;
+  const targetTop = Math.max(0, card.getBoundingClientRect().top + window.scrollY - offset);
+  window.scrollTo({ top: targetTop, left: 0, behavior: "instant" });
+  $(".config-card.attention-card")?.classList.remove("attention-card");
+  card.setAttribute("tabindex", "-1");
+  card.focus({ preventScroll: true });
   card.classList.add("attention-card");
-  window.setTimeout(() => card.classList.remove("attention-card"), 2600);
+  window.clearTimeout(window.__configAttentionTimer);
+  window.__configAttentionTimer = window.setTimeout(() => card.classList.remove("attention-card"), 2600);
+}
+
+async function openDeliveryConfiguration(group) {
+  const activated = await activateTab("config");
+  if (!activated) return;
+  await waitForLayout();
+  const card = $(`article.config-card[data-config-group="${group}"]`);
+  if (!card) return toast("没有找到对应的配置卡，请刷新页面后重试", 5000);
+  revealConfigCard(card);
 }
 
 function bindDeliveryTargetPicker(root) {
@@ -326,6 +427,21 @@ function renderIntent(spec) {
   $("#intent-panel").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+async function parseScheduledIntentForConfirmation(query, actionLabel) {
+  const spec = await api("/api/v1/intent/parse", { method: "POST", body: JSON.stringify({ query }) });
+  if (spec.schedule?.kind === "immediate") throw new Error("长期任务规则必须写清每天、每周、每月或未来执行时间");
+  const warnings = (spec.warnings || []).slice(0, 3).map((item) => `\n⚠ ${item}`).join("");
+  const accepted = window.confirm(
+    `${actionLabel}前，请确认系统理解是否正确：\n\n` +
+    `主题：${spec.topic || "未识别"}\n` +
+    `地域：${spec.region || "全国"}\n` +
+    `时间：${spec.start_date} 至 ${spec.end_date}\n` +
+    `计划：${spec.schedule?.expression || "未识别"}${warnings}\n\n` +
+    "点击“确定”后才会保存长期任务；点击“取消”可继续修改规则。"
+  );
+  return accepted ? spec : null;
+}
+
 function animatePipeline() {
   const steps = $$(".pipe-step"); steps.forEach((step) => step.classList.remove("active", "done"));
   let index = 0; steps[0].classList.add("active");
@@ -349,6 +465,7 @@ async function runQuery() {
   const query = currentQuery(); if (query.length < 2) return toast("请先输入查询问题");
   if (state.runInFlight) return toast("当前情报任务正在执行，请等待本轮完成");
   const targets = currentDeliveryTargets(); if (!targets.length) return toast("请至少选择一个交付目标");
+  stopRunDeliveryPolling();
   const sequence = ++state.runRequestSequence;
   let runCompleted = false;
   setRunControlsBusy(true);
@@ -360,7 +477,7 @@ async function runQuery() {
     }
     $("#run-panel").classList.remove("hidden"); $("#results-panel").classList.add("hidden"); animatePipeline();
     $("#run-panel").scrollIntoView({ behavior: "smooth", block: "center" });
-    const run = await api("/api/v1/runs", { method: "POST", body: JSON.stringify({ query, ...deliveryPayload(targets) }) });
+    const run = await api("/api/v1/runs", { method: "POST", body: JSON.stringify({ query, intent_snapshot: state.spec.confirmation_snapshot, ...deliveryPayload(targets) }) });
     if (sequence !== state.runRequestSequence) return;
     state.run = run; state.qaAnswer = null; runCompleted = true;
     clearInterval(window.__pipeTimer); $$(".pipe-step").forEach((step) => { step.classList.remove("active"); step.classList.add("done"); });
@@ -372,27 +489,111 @@ async function runQuery() {
   } catch (error) {
     clearInterval(window.__pipeTimer);
     if (!runCompleted) {
+      if (error.status === 409) state.spec = null;
       toast(error.transient ? `${error.message}；请先查看“报告历史”，避免重复执行` : error.message, 8000);
-      $("#run-state").textContent = error.transient ? "结果待确认" : "执行失败";
+      $("#run-state").textContent = error.transient ? "结果待确认" : error.status === 409 ? "请重新解析确认" : "执行失败";
     }
   }
   finally { if (sequence === state.runRequestSequence) setRunControlsBusy(false); }
 }
 
+function hasActiveDeliveryRows(rows = []) {
+  return rows.some((row) => ACTIVE_DELIVERY_STATUSES.has(row.status));
+}
+
+function setRunDeliveryRefreshState(message, failed = false) {
+  const node = $("#delivery-receipts .delivery-refresh-state");
+  if (!node) return;
+  node.textContent = message;
+  node.classList.toggle("failed", failed);
+}
+
+function stopRunDeliveryPolling() {
+  if (state.runDeliveryPollTimer) window.clearTimeout(state.runDeliveryPollTimer);
+  state.runDeliveryPollTimer = null;
+  state.runDeliveryPollRunId = null;
+  state.runDeliveryPollFailures = 0;
+}
+
+async function refreshRunDeliveryStatus({ announce = false } = {}) {
+  const runId = state.run?.run_id;
+  if (!runId) throw new Error("当前页面没有可刷新的运行记录");
+  const wasActive = hasActiveDeliveryRows(state.run.delivery_receipts || []);
+  const latest = await api(`/api/v1/runs/${encodeURIComponent(runId)}`, { timeoutMs: 15000 });
+  if (state.run?.run_id !== runId) return false;
+  Object.assign(state.run, {
+    status: latest.status ?? state.run.status,
+    delivery_channel: latest.delivery_channel ?? state.run.delivery_channel,
+    delivery_targets: latest.delivery_targets ?? state.run.delivery_targets,
+    delivery_receipts: latest.delivery_receipts || [],
+    delivery_status: latest.delivery_status,
+    delivery_message: latest.delivery_message,
+  });
+  renderDeliveryReceipts(state.run);
+  const active = hasActiveDeliveryRows(state.run.delivery_receipts || []);
+  if (announce) toast(active ? "投递状态已刷新，仍有渠道在后台处理" : "投递状态已刷新，当前任务均已结束");
+  else if (wasActive && !active) toast(state.run.delivery_status === "success" ? "本轮全部交付目标已确认" : "本轮投递已停止，请查看需要人工处理的渠道", 6000);
+  return active;
+}
+
+function scheduleRunDeliveryPolling(runId, delay = 4000) {
+  if (!runId || state.run?.run_id !== runId || state.runDeliveryPollTimer) return;
+  state.runDeliveryPollRunId = runId;
+  state.runDeliveryPollTimer = window.setTimeout(async () => {
+    state.runDeliveryPollTimer = null;
+    if (state.run?.run_id !== runId) return stopRunDeliveryPolling();
+    try {
+      const active = await refreshRunDeliveryStatus();
+      state.runDeliveryPollFailures = 0;
+      if (active) scheduleRunDeliveryPolling(runId, 4000);
+    } catch (error) {
+      state.runDeliveryPollFailures += 1;
+      if (error.status === 404) {
+        stopRunDeliveryPolling();
+        setRunDeliveryRefreshState("运行记录已不存在；请到报告历史核对本机文件。", true);
+        return;
+      }
+      setRunDeliveryRefreshState(`自动刷新暂时失败：${error.message}。系统会继续重试，也可手动刷新。`, true);
+      if (state.runDeliveryPollFailures === 1) toast("投递任务仍保存在后台；状态刷新暂时中断，系统会自动重连", 7000);
+      scheduleRunDeliveryPolling(runId, Math.min(15000, 4000 * (state.runDeliveryPollFailures + 1)));
+    }
+  }, delay);
+}
+
 function renderDeliveryReceipts(run) {
   const root = $("#delivery-receipts"); if (!root) return;
   const receipts = run?.delivery_receipts || [];
-  if (!receipts.length) { root.innerHTML = ""; root.classList.add("hidden"); return; }
+  if (!receipts.length) { stopRunDeliveryPolling(); root.innerHTML = ""; root.classList.add("hidden"); return; }
   const cards = receipts.map((receipt) => {
     const status = DELIVERY_STATUS_LABELS[receipt.status] || receipt.status;
     const next = receipt.next_attempt_at ? `<span>下次尝试：${escapeHtml(formatTime(receipt.next_attempt_at))}</span>` : "";
     const external = receipt.external_id ? `<span>平台回执：${escapeHtml(receipt.external_id)}</span>` : "";
     const outbox = receipt.outbox_id ? `<span title="${escapeHtml(receipt.outbox_id)}">投递任务：${escapeHtml(receipt.outbox_id.slice(0, 8))}</span>` : "";
-    return `<article class="delivery-receipt ${escapeHtml(receipt.status)}"><div><b>${escapeHtml(deliveryChannelName(receipt.channel))}</b><span class="delivery-receipt-status">${escapeHtml(status)}</span></div><p>${escapeHtml(receipt.message || "暂无详细回执")}</p><footer><span>已尝试 ${receipt.attempt_count || 0} 次</span>${next}${external}${outbox}</footer></article>`;
+    const retry = receipt.status === "dead_letter" && receipt.outbox_id ? `<button class="secondary-button compact retry-run-outbox" data-outbox-id="${escapeHtml(receipt.outbox_id)}">只重试此渠道</button>` : "";
+    return `<article class="delivery-receipt ${escapeHtml(receipt.status)}"><div><b>${escapeHtml(deliveryChannelName(receipt.channel))}</b><span class="delivery-receipt-status">${escapeHtml(status)}</span></div><p>${escapeHtml(receipt.message || "暂无详细回执")}</p><footer><span>已尝试 ${receipt.attempt_count || 0} 次</span>${next}${external}${outbox}${retry}</footer></article>`;
   }).join("");
   const completed = receipts.filter((item) => ["succeeded", "skipped"].includes(item.status)).length;
-  root.innerHTML = `<div class="delivery-receipts-head"><div><p class="eyebrow">DELIVERY RECEIPTS</p><h3>逐目标投递回执</h3></div><span>${completed} / ${receipts.length} 已完成</span></div><p class="delivery-semantics">成功目标不会因其他目标失败而重发；外部平台已接收但本地确认前崩溃的极小窗口仍可能产生重复。</p><div class="delivery-receipt-grid">${cards}</div>`;
+  const active = hasActiveDeliveryRows(receipts);
+  root.innerHTML = `<div class="delivery-receipts-head"><div><p class="eyebrow">DELIVERY RECEIPTS</p><h3>逐目标投递回执</h3></div><div class="delivery-refresh-controls"><span>${completed} / ${receipts.length} 已完成</span><button class="secondary-button compact refresh-run-delivery" type="button">刷新投递状态</button><small class="delivery-refresh-state">${active ? "后台处理中 · 每 4 秒自动刷新" : "当前状态已确认"}</small></div></div><p class="delivery-semantics">成功目标不会因其他目标失败而重发；外部平台已接收但本地确认前崩溃的极小窗口仍可能产生重复。</p><div class="delivery-receipt-grid">${cards}</div>`;
   root.classList.remove("hidden");
+  root.querySelector(".refresh-run-delivery")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget; button.disabled = true; button.textContent = "刷新中…";
+    try { await refreshRunDeliveryStatus({ announce: true }); }
+    catch (error) { setRunDeliveryRefreshState(`刷新失败：${error.message}。请检查服务后重试。`, true); toast(error.message, 6000); }
+    finally { if (button.isConnected) { button.disabled = false; button.textContent = "刷新投递状态"; } }
+  });
+  root.querySelectorAll(".retry-run-outbox").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true; button.textContent = "正在重新排队…";
+    try {
+      const queued = await api(`/api/v1/delivery-outbox/${encodeURIComponent(button.dataset.outboxId)}/retry`, { method: "POST" });
+      const receipt = state.run?.delivery_receipts?.find((item) => item.outbox_id === queued.id);
+      if (receipt) Object.assign(receipt, { status: queued.status, attempt_count: queued.attempt_count, next_attempt_at: queued.next_attempt_at, message: queued.last_message || "已重新排队，等待 worker 领取。" });
+      renderDeliveryReceipts(state.run);
+      toast("该死信目标已重新排队；其他成功目标不会重发");
+    } catch (error) { button.disabled = false; button.textContent = "只重试此渠道"; toast(error.message, 6000); }
+  }));
+  if (active && run?.run_id) scheduleRunDeliveryPolling(run.run_id);
+  else stopRunDeliveryPolling();
 }
 
 function renderResults(run, scroll = true) {
@@ -885,7 +1086,7 @@ function buyerRadarCard(item) {
     <details class="buyer-activities"><summary>查看近期原文证据（${item.recent_activities.length} 条）</summary><div>${activities || '<p class="buyer-empty-copy">暂无可展示活动。</p>'}</div></details>
     <details class="buyer-monitor-editor"><summary>＋ 为这个采购单位创建自动监控</summary><div>
       <label><span>任务名称</span><input class="buyer-monitor-name" maxlength="100" value="${escapeHtml(monitorName)}"></label>
-      <label class="wide"><span>自然语言规则</span><textarea class="buyer-monitor-query" rows="3" maxlength="500">${escapeHtml(monitorQuery)}</textarea><small>必须写清每天、每周、每月或未来某个时间；采购单位已由系统锁定，不必重复填写。</small></label>
+      <label class="wide"><span>自然语言规则</span><textarea class="buyer-monitor-query" rows="3" maxlength="500">${escapeHtml(monitorQuery)}</textarea><small>必须写清每天、每周、每月或未来某个时间；采购单位已由系统锁定，不必重复填写。点击创建后还会先让你确认主题、地域、时间和计划，确认前不会保存或立即运行。</small></label>
       <fieldset class="delivery-target-control buyer-monitor-targets wide"><legend>投递目标（可以同时选择多个）</legend>${deliveryTargetPickerMarkup(["local"])}</fieldset>
       <label><span>无新增时</span><select class="buyer-monitor-policy"><option value="on_change">保持安静</option><option value="always">也发送回执</option></select></label>
       <label class="buyer-monitor-immediate"><input class="buyer-monitor-run" type="checkbox" checked><span><b>创建后立即检查一次</b><small>长期任务仍会持久保存；worker 离线时会等待恢复。</small></span></label>
@@ -907,16 +1108,30 @@ function bindBuyerRadarActions() {
       const targets = selectedDeliveryTargets(card.querySelector(".buyer-monitor-targets"));
       if (!targets.length) return toast("请至少选择一个投递目标");
       button.disabled = true;
-      button.textContent = "正在创建…";
-      status.textContent = "正在锁定采购单位并解析执行计划…";
+      button.textContent = "正在解析…";
+      status.textContent = "正在解析主题、地域、时间和执行计划；确认前不会创建或立即运行。";
       try {
+        const confirmedIntent = await parseScheduledIntentForConfirmation(query, "创建采购单位监控");
+        if (card.querySelector(".buyer-monitor-query").value.trim() !== query) {
+          status.textContent = "解析期间规则内容已经改变；请按最新内容重新创建。";
+          return;
+        }
+        if (!confirmedIntent) {
+          status.textContent = "已取消创建；请修改规则后再次确认。";
+          return;
+        }
+        button.textContent = "正在创建…";
+        status.textContent = "意图已确认，正在锁定本地采购单位并保存长期任务…";
+        const currentTargets = selectedDeliveryTargets(card.querySelector(".buyer-monitor-targets"));
+        if (!currentTargets.length) throw new Error("请至少选择一个投递目标");
         const runImmediately = card.querySelector(".buyer-monitor-run").checked;
         const subscription = await api(`/api/v1/buyers/${card.dataset.buyerId}/subscriptions`, {
           method: "POST",
           body: JSON.stringify({
-            name,
+            name: card.querySelector(".buyer-monitor-name").value.trim(),
             query,
-            ...deliveryPayload(targets),
+            intent_snapshot: confirmedIntent.confirmation_snapshot,
+            ...deliveryPayload(currentTargets),
             delivery_policy: card.querySelector(".buyer-monitor-policy").value,
             run_immediately: runImmediately,
           }),
@@ -926,10 +1141,13 @@ function bindBuyerRadarActions() {
         await activateTab("subscriptions");
         if (runImmediately) pollSubscription(subscription.id, subscription.last_run_at);
       } catch (error) {
-        button.disabled = false;
-        button.textContent = "创建精准监控";
         status.textContent = error.message;
         toast(error.message, 6000);
+      } finally {
+        if (button.isConnected) {
+          button.disabled = false;
+          button.textContent = "创建精准监控";
+        }
       }
     });
   });
@@ -1385,9 +1603,34 @@ function dirtyConfigFields(group = null) {
   return [...state.configDirty].filter((field) => !group || configFieldGroup(field) === group);
 }
 
+function savedDeliveryChannelReady(channel) {
+  const config = state.config;
+  if (!config) return false;
+  const readiness = {
+    feishu_webhook: config.feishu?.webhook_ready,
+    feishu_app: config.feishu?.app_ready,
+    email: config.email?.ready,
+    dingtalk_webhook: config.dingtalk?.ready,
+    wecom_webhook: config.wecom?.ready,
+    generic_webhook: config.generic_webhook?.ready,
+    telegram_bot: config.telegram?.ready,
+    slack_webhook: config.slack?.ready,
+  };
+  return Boolean(readiness[channel]);
+}
+
+function syncConfigInputAvailability() {
+  const locked = !state.configLoaded || state.configSaving;
+  $$('[data-config], [data-clear], .field-reset').forEach((control) => { control.disabled = locked; });
+  const generator = $("#generate-lan-token"); if (generator) generator.disabled = locked;
+  const reload = $("#reload-config"); if (reload) reload.disabled = state.configSaving;
+  const panel = $("#tab-config");
+  if (panel) { panel.classList.toggle("config-saving", state.configSaving); panel.setAttribute("aria-busy", String(state.configSaving)); }
+}
+
 function setConfigControlsAvailable(available) {
-  $$('[data-config], [data-clear]').forEach((input) => { input.disabled = !available; });
   state.configLoaded = available;
+  syncConfigInputAvailability();
   updateConfigDirtyUI();
 }
 
@@ -1405,10 +1648,16 @@ function updateConfigDirtyUI() {
     button.disabled = !state.configLoaded || !dirtyConfigFields(button.dataset.configSaveGroup).length || state.configSaving;
   });
   const aiDirty = dirtyConfigFields("ai").length > 0;
-  if ($("#test-model")) $("#test-model").disabled = !state.configLoaded || aiDirty || state.configSaving;
+  if ($("#test-model")) {
+    const ready = Boolean(state.config?.ai?.ready);
+    $("#test-model").disabled = !state.configLoaded || !ready || aiDirty || state.configSaving;
+    $("#test-model").title = ready ? "测试当前已经保存的模型配置" : "请先完整填写并保存模型地址与模型名称";
+  }
   $$('.channel-test').forEach((button) => {
     const group = channelTestGroup(button.dataset.testChannel);
-    button.disabled = !state.configLoaded || dirtyConfigFields(group).length > 0 || state.configSaving;
+    const ready = savedDeliveryChannelReady(button.dataset.testChannel);
+    button.disabled = !state.configLoaded || !ready || dirtyConfigFields(group).length > 0 || state.configSaving;
+    button.title = ready ? "通过当前已保存配置真实发送一条测试消息" : "请先完整配置并保存此渠道";
   });
 }
 
@@ -1569,7 +1818,7 @@ async function saveConfig(group = null, showMessage = true) {
   if (!fields.length) { if (showMessage) toast(group ? "本卡没有未保存修改" : "当前没有未保存修改"); return state.config; }
   if (!validateConfigFields(fields)) return null;
   const button = $("#save-config"), saveState = $("#config-save-state");
-  state.configSaving = true; updateConfigDirtyUI(); saveState.textContent = `正在保存 ${fields.length} 项`; saveState.className = "state-badge warning";
+  state.configSaving = true; syncConfigInputAvailability(); updateConfigDirtyUI(); saveState.textContent = `正在保存 ${fields.length} 项 · 为防止覆盖，输入已暂时锁定`; saveState.className = "state-badge warning";
   try {
     const config = await configApi("/api/v1/config", { method: "PUT", body: JSON.stringify(collectConfigPayload(fields)) });
     fields.forEach((field) => state.configDirty.delete(field));
@@ -1582,7 +1831,7 @@ async function saveConfig(group = null, showMessage = true) {
   } catch (error) {
     if (error.status === 409) state.configConflict = true;
     saveState.textContent = error.status === 409 ? "版本冲突 · 请重新读取" : "保存失败"; saveState.className = "state-badge danger"; throw error;
-  } finally { state.configSaving = false; button.disabled = false; updateConfigDirtyUI(); }
+  } finally { state.configSaving = false; syncConfigInputAvailability(); button.disabled = false; updateConfigDirtyUI(); }
 }
 
 async function resetConfigField(field) {
@@ -1592,7 +1841,7 @@ async function resetConfigField(field) {
   const config = await configApi("/api/v1/config", { method: "PUT", body: JSON.stringify({ revision: state.config.revision, reset_fields: [field] }) });
   state.configDirty.delete(field);
   renderConfig(config, { preserveFields: new Set(state.configDirty) });
-  toast(`${field} 已恢复为环境变量或程序默认值`);
+  toast(`${humanFieldName(field)}已恢复为环境变量或程序默认值`);
 }
 
 function showConfigTestResult(group, result, failed = false) {
@@ -1650,17 +1899,19 @@ function subscriptionState(row) {
   if (row.in_progress) return ["执行中", "warning"];
   if (!row.enabled) return row.spec.schedule.kind === "once" && row.last_run_at ? ["已完成", "muted"] : ["已暂停", "muted"];
   if (row.last_status === "failed") return ["等待重试", "danger"];
-  if (row.last_status === "partial") return ["部分渠道待处理", "warning"];
+  if (row.last_delivery_status === "partial") return ["部分渠道待处理", "warning"];
+  if (row.last_status === "partial") return ["检索部分覆盖", "warning"];
   if (row.next_run_at && new Date(row.next_run_at) <= new Date()) return ["待领取", "warning"];
   return ["已启用", "success"];
 }
 
 async function loadSubscriptions() {
+  if (state.subscriptionDrafts.size && $("#subscription-list .subscription-editor[data-dirty='true']")) return null;
   const sequence = ++state.subscriptionLoadSequence;
   const [, rows] = await Promise.all([loadSystemStatus(), api("/api/v1/subscriptions")]);
   if (sequence !== state.subscriptionLoadSequence) return [];
   const root = $("#subscription-list");
-  if (!rows.length) { state.subscriptionExpandedLogs.clear(); root.innerHTML = `<div class="loading-card">尚无订阅。在情报检索中输入“每天 / 每周 / 今天 9:00 发送”即可创建。</div>`; return []; }
+  if (!rows.length) { stopAllSubscriptionLogPolling(); state.subscriptionExpandedLogs.clear(); state.subscriptionDrafts.clear(); root.innerHTML = `<div class="loading-card">尚无订阅。在情报检索中输入“每天 / 每周 / 今天 9:00 发送”即可创建。</div>`; return []; }
   root.innerHTML = rows.map((row) => {
     const [label, tone] = subscriptionState(row);
     const targets = normalizeDeliveryTargets(row.delivery_targets?.length ? row.delivery_targets : [row.delivery_channel]);
@@ -1670,12 +1921,13 @@ async function loadSubscriptions() {
       <p class="last-message ${row.last_status === "failed" ? "error" : row.last_status === "partial" ? "warning" : ""}">${escapeHtml(row.last_message || "首轮运行尚未完成；worker 将按到期时间领取。")}</p></div>
       <div class="subscription-controls"><div class="subscription-target-summary"><small>交付目标</small><div>${deliveryTargetSummaryMarkup(targets)}</div></div><label><span>无新增</span><select class="subscription-policy"><option value="always" ${row.delivery_policy === "always" ? "selected" : ""}>发送回执</option><option value="on_change" ${row.delivery_policy === "on_change" ? "selected" : ""}>保持安静</option></select></label>
       <div class="row-actions"><button class="secondary-button run-now" ${row.in_progress ? "disabled" : ""}>${row.in_progress ? "执行中…" : "立即执行"}</button><button class="secondary-button toggle-enabled" ${row.in_progress ? "disabled" : ""}>${row.in_progress ? "本轮完成后可暂停" : row.enabled ? "暂停后续" : "恢复"}</button><button class="secondary-button edit-subscription" ${row.in_progress ? "disabled" : ""}>编辑规则</button><button class="secondary-button view-log" aria-expanded="false">日志</button><button class="danger-button delete-subscription" ${row.in_progress ? "disabled" : ""}>删除</button></div></div>
-      <div class="subscription-editor hidden"><div class="editor-grid"><label><span>订阅名称</span><input class="subscription-name" value="${escapeHtml(row.name)}" maxlength="100"></label><label class="editor-query"><span>自然语言规则</span><textarea class="subscription-query" rows="3" maxlength="500">${escapeHtml(row.spec.raw_query)}</textarea></label></div><fieldset class="delivery-target-control subscription-target-editor"><legend>交付目标（可以同时选择多个）</legend>${deliveryTargetPickerMarkup(targets)}</fieldset><p>修改规则会重新计算下次执行时间；保留目标的防重复账本不会清空。移除目标会取消该目标尚未发送的队列，保存前会再次确认。</p><div class="editor-actions"><button class="primary-button compact save-subscription">保存规则与目标</button><button class="secondary-button cancel-edit">取消</button></div></div>
-      <div class="subscription-log hidden"></div></article>`;
+      <div class="subscription-editor hidden"><div class="editor-grid"><label><span>订阅名称</span><input class="subscription-name" value="${escapeHtml(row.name)}" maxlength="100"></label><label class="editor-query"><span>自然语言规则</span><textarea class="subscription-query" rows="3" maxlength="500">${escapeHtml(row.spec.raw_query)}</textarea></label></div><fieldset class="delivery-target-control subscription-target-editor"><legend>交付目标（可以同时选择多个）</legend>${deliveryTargetPickerMarkup(targets)}</fieldset><p>修改自然语言后，保存前会先展示主题、地域、时间和计划供你确认；确认后才会更新规则并重算下次执行时间。保留目标的防重复账本不会清空。移除目标会取消该目标尚未发送的队列，保存前会再次确认。</p><div class="editor-actions"><button class="primary-button compact save-subscription">保存规则与目标</button><button class="secondary-button cancel-edit">取消</button></div></div>
+      <div class="subscription-log hidden" aria-live="polite"></div></article>`;
   }).join("");
   bindSubscriptionActions();
   const visibleIds = new Set(rows.map((row) => row.id));
-  [...state.subscriptionExpandedLogs].filter((id) => !visibleIds.has(id)).forEach((id) => state.subscriptionExpandedLogs.delete(id));
+  [...state.subscriptionExpandedLogs].filter((id) => !visibleIds.has(id)).forEach((id) => { state.subscriptionExpandedLogs.delete(id); stopSubscriptionLogPolling(id); });
+  [...state.subscriptionDrafts].filter((id) => !visibleIds.has(id)).forEach((id) => state.subscriptionDrafts.delete(id));
   await Promise.allSettled([...state.subscriptionExpandedLogs].map((id) => {
     const card = root.querySelector(`.subscription-card[data-id="${id}"]`);
     return card ? loadSubscriptionLog(card, id) : Promise.resolve();
@@ -1689,6 +1941,10 @@ function bindSubscriptionActions() {
     const originalTargets = normalizeDeliveryTargets((card.dataset.targets || "local").split(","));
     const nameInput = card.querySelector(".subscription-name"), queryInput = card.querySelector(".subscription-query");
     const originalName = nameInput.value, originalQuery = queryInput.value;
+    const editor = card.querySelector(".subscription-editor");
+    const markDraft = () => { state.subscriptionDrafts.add(id); editor.dataset.dirty = "true"; };
+    editor.addEventListener("input", markDraft);
+    editor.addEventListener("change", markDraft);
     bindDeliveryTargetPicker(card.querySelector(".subscription-target-editor"));
     card.querySelector(".run-now").addEventListener("click", async (event) => {
       const button = event.currentTarget; button.disabled = true; button.textContent = "执行中…";
@@ -1710,6 +1966,7 @@ function bindSubscriptionActions() {
     card.querySelector(".cancel-edit").addEventListener("click", () => {
       nameInput.value = originalName; queryInput.value = originalQuery;
       renderDeliveryTargetPicker(card.querySelector(".subscription-target-editor"), originalTargets);
+      state.subscriptionDrafts.delete(id); delete editor.dataset.dirty;
       card.querySelector(".subscription-editor").classList.add("hidden");
     });
     card.querySelector(".save-subscription").addEventListener("click", async (event) => {
@@ -1723,11 +1980,35 @@ function bindSubscriptionActions() {
       if (removed.length && !window.confirm(`移除 ${removed.map(deliveryChannelName).join("、")} 会取消这些目标尚未发送或等待重试的任务；已成功记录仍会保留。确定保存吗？`)) return;
       button.disabled = true; button.textContent = "保存中…";
       try {
-        const payload = { name, query };
+        let confirmedIntent = null;
+        if (query !== originalQuery) {
+          button.textContent = "正在解析…";
+          confirmedIntent = await parseScheduledIntentForConfirmation(query, "更新订阅规则");
+          if (queryInput.value.trim() !== query) throw new Error("解析期间规则内容已经改变，请按最新内容重新保存");
+          if (!confirmedIntent) { toast("已取消保存；订阅仍保持原规则", 5000); return; }
+          button.textContent = "保存中…";
+        }
+        const payload = {};
+        if (name !== originalName) payload.name = name;
+        if (query !== originalQuery) {
+          payload.query = query;
+          payload.intent_snapshot = confirmedIntent.confirmation_snapshot;
+        }
         if (!sameDeliveryTargets(originalTargets, targets)) Object.assign(payload, deliveryPayload(targets));
+        if (!Object.keys(payload).length) {
+          state.subscriptionDrafts.delete(id); delete editor.dataset.dirty;
+          editor.classList.add("hidden");
+          toast("没有需要保存的变化");
+          return;
+        }
         await api(`/api/v1/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+        state.subscriptionDrafts.delete(id); delete editor.dataset.dirty;
         toast("订阅规则与交付目标已更新，下次执行时间已重新计算"); await loadSubscriptions();
-      } catch (error) { toast(error.message, 5000); button.disabled = false; button.textContent = "保存规则与目标"; }
+      } catch (error) {
+        toast(error.status === 409 ? "意图确认已过期或订阅状态已经变化，请重新解析后再保存" : error.message, 6000);
+      } finally {
+        if (button.isConnected) { button.disabled = false; button.textContent = "保存规则与目标"; }
+      }
     });
     card.querySelector(".view-log").addEventListener("click", () => toggleSubscriptionLog(card, id).catch((error) => toast(error.message)));
     card.querySelector(".delete-subscription").addEventListener("click", async (event) => {
@@ -1740,7 +2021,7 @@ function bindSubscriptionActions() {
         return;
       }
       button.disabled = true; button.textContent = "删除中…";
-      try { await api(`/api/v1/subscriptions/${id}`, { method: "DELETE" }); toast("订阅已删除"); await loadSubscriptions(); }
+      try { await api(`/api/v1/subscriptions/${id}`, { method: "DELETE" }); state.subscriptionDrafts.delete(id); stopSubscriptionLogPolling(id); toast("订阅已删除"); await loadSubscriptions(); }
       catch (error) { toast(error.message, 5000); button.disabled = false; button.dataset.confirm = "false"; button.textContent = "删除"; }
     });
   });
@@ -1750,10 +2031,48 @@ async function toggleSubscriptionLog(card, id) {
   const root = card.querySelector(".subscription-log");
   const button = card.querySelector(".view-log");
   if (!root.classList.contains("hidden")) {
-    root.classList.add("hidden"); state.subscriptionExpandedLogs.delete(id); button.textContent = "日志"; button.setAttribute("aria-expanded", "false"); return;
+    root.classList.add("hidden"); state.subscriptionExpandedLogs.delete(id); stopSubscriptionLogPolling(id); button.textContent = "日志"; button.setAttribute("aria-expanded", "false"); return;
   }
   state.subscriptionExpandedLogs.add(id); button.textContent = "收起投递"; button.setAttribute("aria-expanded", "true");
   await loadSubscriptionLog(card, id);
+}
+
+function stopSubscriptionLogPolling(id) {
+  const timer = state.subscriptionLogPollTimers.get(id);
+  if (timer) window.clearTimeout(timer);
+  state.subscriptionLogPollTimers.delete(id);
+  state.subscriptionLogPollFailures.delete(id);
+}
+
+function stopAllSubscriptionLogPolling() {
+  [...state.subscriptionLogPollTimers.keys()].forEach(stopSubscriptionLogPolling);
+  state.subscriptionLogPollFailures.clear();
+}
+
+function setSubscriptionLogRefreshState(card, message, failed = false) {
+  const node = card?.querySelector(".delivery-control-refresh-state");
+  if (!node) return;
+  node.textContent = message;
+  node.classList.toggle("failed", failed);
+}
+
+function scheduleSubscriptionLogPolling(card, id, delay = 4000) {
+  if (state.activeTab !== "subscriptions" || !card?.isConnected || !state.subscriptionExpandedLogs.has(id) || state.subscriptionLogPollTimers.has(id)) return;
+  const timer = window.setTimeout(async () => {
+    state.subscriptionLogPollTimers.delete(id);
+    if (!card.isConnected || !state.subscriptionExpandedLogs.has(id)) return stopSubscriptionLogPolling(id);
+    try {
+      await loadSubscriptionLog(card, id, { background: true });
+      state.subscriptionLogPollFailures.set(id, 0);
+    } catch (error) {
+      const failures = (state.subscriptionLogPollFailures.get(id) || 0) + 1;
+      state.subscriptionLogPollFailures.set(id, failures);
+      setSubscriptionLogRefreshState(card, `自动刷新暂时失败：${error.message}。系统会继续重试，也可手动刷新。`, true);
+      if (failures === 1) toast("交付队列仍保存在后台；控制塔刷新暂时中断，系统会自动重连", 7000);
+      scheduleSubscriptionLogPolling(card, id, Math.min(15000, 4000 * (failures + 1)));
+    }
+  }, delay);
+  state.subscriptionLogPollTimers.set(id, timer);
 }
 
 function legacyDeliveryRows(deliveries, runId) {
@@ -1781,10 +2100,11 @@ function deliveryOutboxRowMarkup(row) {
   return `<article class="delivery-outbox-row ${escapeHtml(row.status)}"><div class="delivery-outbox-head"><b>${escapeHtml(deliveryChannelName(row.channel))}</b><span>${escapeHtml(status)}</span></div><p>${escapeHtml(message)}</p><footer><span>尝试 ${row.attempt_count || 0} / ${row.max_attempts || 5}</span>${next}${external}${retry}</footer></article>`;
 }
 
-async function loadSubscriptionLog(card, id) {
+async function loadSubscriptionLog(card, id, { background = false } = {}) {
   const root = card.querySelector(".subscription-log"); if (!root) return;
   const button = card.querySelector(".view-log");
-  root.classList.remove("hidden"); root.innerHTML = '<div class="subscription-log-loading">正在读取运行记录与逐目标投递队列…</div>';
+  root.classList.remove("hidden");
+  if (!background) root.innerHTML = '<div class="subscription-log-loading">正在读取运行记录与逐目标投递队列…</div>';
   if (button) { button.textContent = "收起投递"; button.setAttribute("aria-expanded", "true"); }
   let runs, deliveries, outbox;
   try {
@@ -1794,20 +2114,31 @@ async function loadSubscriptionLog(card, id) {
       api(`/api/v1/subscriptions/${id}/delivery-outbox?limit=100`),
     ]);
   } catch (error) {
-    if (card.isConnected && state.subscriptionExpandedLogs.has(id)) root.innerHTML = `<div class="subscription-log-error">投递记录读取失败：${escapeHtml(error.message)}。请检查服务后点击“收起投递”，再重新打开。</div>`;
+    if (!background && card.isConnected && state.subscriptionExpandedLogs.has(id)) root.innerHTML = `<div class="subscription-log-error">投递记录读取失败：${escapeHtml(error.message)}。请检查服务后点击“收起投递”，再重新打开；后台任务不会因此丢失。</div>`;
     throw error;
   }
   if (!card.isConnected || !state.subscriptionExpandedLogs.has(id)) return;
-  if (!runs.length) { root.innerHTML = "尚无运行记录；创建后的首轮任务仍会由持久 worker 领取。"; return; }
-  const runLabels = { completed: "完成", partial: "部分完成", failed: "失败", running: "执行中", queued: "排队中" };
-  root.innerHTML = runs.map((run) => {
+  if (!runs.length) { stopSubscriptionLogPolling(id); root.innerHTML = "尚无运行记录；创建后的首轮任务仍会由持久 worker 领取。"; return; }
+  const runLabel = (run) => run.status === "partial" ? (run.delivery_status === "partial" ? "部分渠道待处理" : "检索部分覆盖") : ({ completed: "完成", failed: "失败", running: "执行中", queued: "排队中" }[run.status] || run.status);
+  const deadLetterCount = outbox.filter((item) => item.status === "dead_letter").length;
+  const retryingCount = outbox.filter((item) => ["pending", "sending", "retrying"].includes(item.status)).length;
+  const runningCount = runs.filter((run) => ["running", "queued"].includes(run.status)).length;
+  const refreshPending = retryingCount > 0 || runningCount > 0;
+  const controlSummary = `<div class="delivery-control-summary"><div><p class="eyebrow">DELIVERY CONTROL TOWER</p><b>交付控制塔 · Outbox ${outbox.length} 项</b><span>运行中 ${runningCount} · 等待处理 ${retryingCount} · 死信 ${deadLetterCount}</span></div><p>${deadLetterCount ? "请先修复对应渠道，再点击死信行中的“只重试此渠道”；不会重新抓取或重发成功目标。" : "当前没有死信。若以后出现永久错误或达到重试上限，这里会显示“只重试此渠道”按钮。"}</p><div class="delivery-control-refresh"><button class="secondary-button compact refresh-subscription-outbox" type="button">刷新投递状态</button><small class="delivery-control-refresh-state">${refreshPending ? "后台处理中 · 每 4 秒自动刷新" : "当前状态已确认"}</small></div></div>`;
+  root.innerHTML = controlSummary + runs.map((run) => {
     const reason = run.trigger_reason === "schedule" ? "自动" : "手动";
     const targetRows = outbox.filter((item) => item.run_id === run.id);
     const legacyRows = targetRows.length ? [] : legacyDeliveryRows(deliveries, run.id);
     const report = run.report_path ? `<a href="/api/v1/reports/${encodeURIComponent(run.report_path.replaceAll("\\", "/").split("/").pop())}">下载本轮报告 ↗</a>` : "";
     const rows = [...targetRows, ...legacyRows];
-    return `<section class="subscription-run-log"><div class="subscription-run-head"><span class="log-status ${escapeHtml(run.status)}">${runLabels[run.status] || escapeHtml(run.status)}</span><div><b>${formatTime(run.started_at)} · ${reason}</b><span>发现 ${run.result_count} / 新增 ${run.new_count}</span></div>${report}</div>${run.error ? `<p class="subscription-run-error">${escapeHtml(run.error)}</p>` : ""}<div class="delivery-outbox-list">${rows.length ? rows.map(deliveryOutboxRowMarkup).join("") : '<p class="delivery-outbox-empty">这轮没有外部投递任务；旧数据可能只保留总体运行记录。</p>'}</div></section>`;
+    return `<section class="subscription-run-log"><div class="subscription-run-head"><span class="log-status ${escapeHtml(run.status)}">${escapeHtml(runLabel(run))}</span><div><b>${formatTime(run.started_at)} · ${reason}</b><span>发现 ${run.result_count} / 新增 ${run.new_count}</span></div>${report}</div>${run.error ? `<p class="subscription-run-error">${escapeHtml(run.error)}</p>` : ""}<div class="delivery-outbox-list">${rows.length ? rows.map(deliveryOutboxRowMarkup).join("") : '<p class="delivery-outbox-empty">这轮没有外部投递任务；旧数据可能只保留总体运行记录。</p>'}</div></section>`;
   }).join("");
+  root.querySelector(".refresh-subscription-outbox")?.addEventListener("click", async (event) => {
+    const refreshButton = event.currentTarget; refreshButton.disabled = true; refreshButton.textContent = "刷新中…";
+    try { await loadSubscriptionLog(card, id, { background: true }); toast("交付控制塔已刷新"); }
+    catch (error) { setSubscriptionLogRefreshState(card, `刷新失败：${error.message}。请检查服务后重试。`, true); toast(error.message, 6000); }
+    finally { if (refreshButton.isConnected) { refreshButton.disabled = false; refreshButton.textContent = "刷新投递状态"; } }
+  });
   root.querySelectorAll(".retry-outbox").forEach((retryButton) => retryButton.addEventListener("click", async () => {
     const outboxId = retryButton.dataset.outboxId;
     retryButton.disabled = true; retryButton.textContent = "正在重新排队…";
@@ -1822,6 +2153,8 @@ async function loadSubscriptionLog(card, id) {
     try { await loadSubscriptionLog(card, id); }
     catch (error) { toast(`死信已重新排队，但列表暂未刷新：${error.message}`, 7000); }
   }));
+  if (refreshPending) scheduleSubscriptionLogPolling(card, id);
+  else stopSubscriptionLogPolling(id);
 }
 
 async function loadReports() {
@@ -1838,11 +2171,20 @@ async function createSubscriptionFromQuery() {
     if (spec.schedule.kind === "immediate") return toast("问题中需要包含每天、每周或未来发送时间");
     const targets = currentDeliveryTargets(); if (!targets.length) return toast("请至少选择一个交付目标");
     const name = `${spec.region || "全国"} · ${spec.topic} · ${spec.schedule.expression}`;
-    const subscription = await api("/api/v1/subscriptions", { method: "POST", body: JSON.stringify({ name, query, ...deliveryPayload(targets), delivery_policy: $("#delivery-policy").value, run_immediately: true }) });
+    const subscription = await api("/api/v1/subscriptions", { method: "POST", body: JSON.stringify({ name, query, intent_snapshot: spec.confirmation_snapshot, ...deliveryPayload(targets), delivery_policy: $("#delivery-policy").value, run_immediately: true }) });
     await activateTab("subscriptions");
     const workerOnline = state.system?.worker_online;
     toast(workerOnline ? "订阅已保存，首轮扫描已进入持久队列" : "订阅已保存，但 worker 离线；启动后会自动补跑", 5000);
     pollSubscription(subscription.id, subscription.last_run_at);
+  } catch (error) {
+    if (error.status === 409) {
+      state.spec = null;
+      $("#parse-button").disabled = false;
+      $("#parse-button").textContent = "重新解析意图";
+      toast("意图确认已过期或问题已经变化，创建订阅前请重新解析", 7000);
+      return;
+    }
+    throw error;
   } finally { button.disabled = false; }
 }
 
@@ -1853,19 +2195,33 @@ function pollSubscription(id, previousLastRunAt = null) {
       clearInterval(window.__subscriptionPoll);
       return toast("任务仍保存在后台；可在订阅中心继续查看状态和日志", 5000);
     }
+    if (state.activeTab === "subscriptions" && state.subscriptionDrafts.size) return;
     try {
       const row = await api(`/api/v1/subscriptions/${id}`); await loadSubscriptions();
       if (row.last_run_at && row.last_run_at !== previousLastRunAt) { clearInterval(window.__subscriptionPoll); toast(row.last_status === "failed" ? `本轮执行失败，系统已安排重试：${row.last_message}` : `本轮执行完成：新增 ${row.last_new_count} 条`, 5000); }
-    } catch { clearInterval(window.__subscriptionPoll); }
+    } catch (error) {
+      clearInterval(window.__subscriptionPoll);
+      toast(`自动跟踪暂时中断：${error.message}。任务仍保存在后台，请到订阅中心点击“刷新状态”。`, 8000);
+    }
   }, 3000);
 }
 
 async function activateTab(tab) {
-  if (state.activeTab === "config" && tab !== "config" && state.configDirty.size && !window.confirm(`配置中心还有 ${state.configDirty.size} 项未保存修改，确定离开并保留草稿吗？`)) return;
+  if (state.activeTab === "config" && tab !== "config" && state.configDirty.size && !window.confirm(`配置中心还有 ${state.configDirty.size} 项未保存修改，确定离开并保留草稿吗？`)) return false;
+  const subscriptionViewWillReload = state.activeTab === "subscriptions" && tab === "subscriptions";
+  if (state.activeTab === "subscriptions" && (tab !== "subscriptions" || subscriptionViewWillReload) && state.subscriptionDrafts.size) {
+    if (!window.confirm(`有 ${state.subscriptionDrafts.size} 条订阅规则尚未保存；离开或重新打开会丢弃这些草稿，确定继续吗？`)) return false;
+    state.subscriptionDrafts.clear();
+  }
+  if (state.activeTab === "subscriptions" && tab !== "subscriptions") stopAllSubscriptionLogPolling();
   state.activeTab = tab;
   $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.tab === tab));
   $$(".tab-panel").forEach((node) => node.classList.remove("active")); $(`#tab-${tab}`).classList.add("active");
+  resetPageScroll();
   if (tab === "decision") await loadDecisionCenter(); if (tab === "opportunities") await setOpportunityWorkspaceView(state.opportunityView); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(false); if (tab === "reports") await loadReports();
+  await waitForLayout();
+  resetPageScroll();
+  return true;
 }
 
 $$(".nav-link").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab).catch((error) => toast(error.message))));
@@ -1901,6 +2257,7 @@ $("#run-question").addEventListener("keydown", (event) => { if (event.key === "E
 $$('[data-run-question]').forEach((button) => button.addEventListener("click", () => { $("#run-question").value = button.dataset.runQuestion; $("#run-question").focus(); }));
 $("#test-model").addEventListener("click", testModelConnection);
 $$('.channel-test').forEach((button) => button.addEventListener("click", () => testDeliveryChannel(button)));
+$$('[data-open-config-group]').forEach((button) => button.addEventListener("click", () => openDeliveryConfiguration(button.dataset.openConfigGroup).catch((error) => toast(error.message, 6000))));
 $$('[data-config]').forEach((input) => {
   const listener = () => {
     if (input.type === "password" && input.value.trim()) {
@@ -1925,7 +2282,7 @@ $("#query-input").addEventListener("input", () => {
 });
 $("#query-input").addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery(); });
 document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#query-input").focus(); } });
-window.addEventListener("beforeunload", (event) => { if (state.configDirty.size) { event.preventDefault(); event.returnValue = ""; } });
+window.addEventListener("beforeunload", (event) => { if (state.configDirty.size || state.subscriptionDrafts.size) { event.preventDefault(); event.returnValue = ""; } });
 window.createBidPilotSubscription = createSubscriptionFromQuery;
 Promise.all([loadSystemStatus(), loadSources(), loadReports(), loadSubscriptions(), loadOpportunities()]).catch((error) => toast(error.message));
 setInterval(() => {

@@ -24,7 +24,11 @@ def activate(page: Page, tab: str, ready_selector: str, loading_text: str | None
 
 
 def capture(page: Page, output: Path) -> None:
-    page.screenshot(path=output, full_page=False, animations="disabled")
+    output.write_bytes(page.screenshot(full_page=False, animations="disabled"))
+
+
+def capture_element(page: Page, selector: str, output: Path) -> None:
+    output.write_bytes(page.locator(selector).screenshot(animations="disabled"))
 
 
 def build_screenshots(base_url: str, output_dir: Path, zero_query: str | None) -> None:
@@ -46,9 +50,26 @@ def build_screenshots(base_url: str, output_dir: Path, zero_query: str | None) -
 
         activate(page, "config", "#config-save-state", "正在读取")
         capture(page, output_dir / "02-config.png")
+        telegram_card = 'article.config-card[data-config-group="telegram"]'
+        page.locator(telegram_card).scroll_into_view_if_needed()
+        page.wait_for_timeout(350)
+        capture_element(page, telegram_card, output_dir / "09-telegram-config.png")
+        slack_card = 'article.config-card[data-config-group="slack"]'
+        page.locator(slack_card).scroll_into_view_if_needed()
+        page.wait_for_timeout(350)
+        capture_element(page, slack_card, output_dir / "10-slack-config.png")
 
         activate(page, "subscriptions", "#scheduler-health", "正在检查")
         capture(page, output_dir / "03-subscriptions.png")
+        if page.locator(".subscription-card .view-log").count():
+            page.locator(".subscription-card .view-log").first.click()
+            page.wait_for_selector(".subscription-card .subscription-log:not(.hidden)")
+            page.wait_for_function(
+                "!document.querySelector('.subscription-card .subscription-log')?.textContent.includes('正在读取')"
+            )
+            page.locator(".subscription-card .subscription-log").first.scroll_into_view_if_needed()
+            page.wait_for_timeout(350)
+            capture(page, output_dir / "11-delivery-outbox.png")
 
         activate(page, "opportunities", "#opportunity-summary", "正在读取")
         capture(page, output_dir / "04-opportunities.png")
@@ -88,7 +109,7 @@ def build_screenshots(base_url: str, output_dir: Path, zero_query: str | None) -
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="从正在运行的 BidPilot 捕获 v0.7.0 手册截图")
+    parser = argparse.ArgumentParser(description="从正在运行的 BidPilot 捕获 v0.8.0 手册截图")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/manuals/assets"))
     parser.add_argument("--zero-query", default=None)
