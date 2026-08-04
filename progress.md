@@ -329,3 +329,14 @@
 - 新增 `auto/visible/headless` 浏览器运行策略：Windows/macOS 与 Linux 桌面默认可见，Linux 无 DISPLAY/WAYLAND_DISPLAY 时自动无头；显式 visible 在无图形会话中失败关闭并返回可操作说明。
 - 新增 hardened systemd web/worker 单元与生产环境样例；保留 Docker Compose 双服务、健康检查、回环端口发布和优雅停止。CI 升级至 Actions v7，新增格式、compileall、结构化配置、Compose 模型与 Ubuntu 镜像构建检查。
 - Windows 最终代码状态完成 287 项 Pytest，Ruff lint/format、compileall、JavaScript、JSON/YAML/TOML 和 `git diff --check` 全部通过；Linux WSL 与 GitHub Actions 结果将在同一交付批次继续记录。
+
+## 2026-08-03 — 比赛终版文档、跨平台证据与交付包封版
+
+- Windows 与 Debian 13 / Python 3.13.5 最终工作树分别复跑 288 项 Pytest，并通过 Ruff lint/format、compileall 与结构化配置校验；真实 systemd 烟测确认 Web 与 worker 以 `bidpilot` 非特权用户 active/running，健康接口、CLI 状态、心跳与优雅停止均正常。
+- GitHub Actions `30736770753` 的 Windows、Ubuntu、macOS × Python 3.11/3.13 及 Ubuntu Compose/镜像构建 7 个作业全部 `success`，关闭此前仅 Windows 通过的跨平台缺口。
+- 按官方 40 强模板的 A4、蓝/紫/橙信息卡语言重写参赛方案：17 页、28 个语义标题、28 张表、4 张真实 UI 截图；新增评审导航、四维证据映射、AI/来源/登录/增量/Outbox/机会经营、4 周量化试点、团队审计角色、路线图与官方交付物逐项对照。
+- 参赛方案和提交清单、Linux 运维、详设、跨平台审计共 5 份新 Word 均完成 Word 原生打开、PDF/PNG 逐页视觉复核；无裁切、重叠、乱码或空白页。图片替代文本审计从 4 个高等级问题降为 0；单格提示卡不冒充数据表头。
+- 终版目录收录 4 个按 `用户问题_时间.docx` 命名的真实运行结果，其中包含正向、零结果、公开来源与千里马免费会员即时首屏结果。10 份 DOCX 均通过 `OpenNoRepairDialog` 打开且无修复提示。
+- 源码 ZIP 使用当前工作树 119 个文件构建，归档共 131 个文件/目录项且全部使用正斜杠；确认包含核心代码、systemd、比赛文档生成器，排除 `.git`、`.venv`、`.env`、数据库、密钥、浏览器配置、缓存、生成报告和交付目录。
+- Demo 的 4 分 30 秒脚本与分镜已完成；公开视频链接仍必须在真实录制、上传并验证未登录可播放后回填，不提供虚构链接、测试账号或付费内容。
+- F13、F14、F15、F55、F56 仅更新实际验收状态，保留 append-only 功能描述不变。

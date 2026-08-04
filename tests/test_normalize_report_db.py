@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from docx import Document
 
@@ -135,6 +136,31 @@ async def test_report_contains_required_fields_and_filename(sample_spec, tmp_pat
     combined = text + table_text
     for required in ("安徽大学服务器采购公告", "发布时间", "来源链接", "核心内容", "附件链接"):
         assert required in combined
+
+
+async def test_report_uses_audit_suffix_only_for_a_real_same_minute_collision(
+    sample_spec, tmp_path: Path
+):
+    generated_at = datetime(2026, 7, 17, 14, 24, tzinfo=ZoneInfo("Asia/Shanghai"))
+    first = generate_report(
+        sample_spec,
+        [],
+        [],
+        tmp_path,
+        generated_at=generated_at,
+        filename_suffix="run-a",
+    )
+    second = generate_report(
+        sample_spec,
+        [],
+        [],
+        tmp_path,
+        generated_at=generated_at,
+        filename_suffix="run-b",
+    )
+
+    assert first.name.endswith("_202607171424.docx")
+    assert second.name.endswith("_202607171424_run-b.docx")
 
 
 def test_delivery_ledger_is_exactly_once(tmp_path: Path):

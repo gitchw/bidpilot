@@ -23,6 +23,9 @@ def main() -> None:
         required = ("[Unit]", "[Service]", "[Install]", "Restart=on-failure")
         if not all(item in text for item in required):
             raise ValueError(f"incomplete systemd unit: {unit}")
+    smoke_test = ROOT / "deploy" / "systemd" / "smoke-test.sh"
+    if not smoke_test.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash"):
+        raise ValueError("systemd smoke test must be an executable Bash script")
 
 
 if __name__ == "__main__":

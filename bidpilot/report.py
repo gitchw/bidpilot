@@ -125,7 +125,12 @@ def generate_report(
 ) -> Path:
     generated_at = generated_at or datetime.now(ZoneInfo(spec.schedule.timezone))
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / safe_filename(spec.raw_query, generated_at, filename_suffix)
+    official_path = output_dir / safe_filename(spec.raw_query, generated_at)
+    path = (
+        output_dir / safe_filename(spec.raw_query, generated_at, filename_suffix)
+        if official_path.exists() and filename_suffix
+        else official_path
+    )
 
     document = Document()
     _configure_document(document)
