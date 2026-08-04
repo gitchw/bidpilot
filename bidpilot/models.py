@@ -810,6 +810,11 @@ class OpportunityCreate(BaseModel):
 class OpportunityUpdate(BaseModel):
     stage: OpportunityStage | None = Field(default=None, description="机会阶段")
     owner: str | None = Field(default=None, description="负责人或团队", max_length=100)
+    next_action: str | None = Field(
+        default=None,
+        description="下一步需要实际完成的业务动作",
+        max_length=500,
+    )
     next_action_at: datetime | None = Field(default=None, description="下一步动作时间")
     notes: str | None = Field(default=None, description="跟进备注", max_length=4000)
     tags: list[str] | None = Field(default=None, description="最多 20 个标签", max_length=20)
@@ -829,6 +834,7 @@ class Opportunity(BaseModel):
     record: TenderRecord
     stage: OpportunityStage = OpportunityStage.NEW
     owner: str = ""
+    next_action: str = ""
     next_action_at: datetime | None = None
     notes: str = ""
     tags: list[str] = Field(default_factory=list)

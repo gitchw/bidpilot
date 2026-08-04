@@ -113,6 +113,8 @@ RUNTIME_FIELDS: frozenset[str] = frozenset(
         "network_access_mode",
         "lan_access_policy",
         "lan_trusted_networks",
+        "trusted_proxy_networks",
+        "enterprise_allowed_origins",
         "port",
         "lan_admin_token",
     }
@@ -124,10 +126,13 @@ RESTART_REQUIRED_FIELDS: frozenset[str] = frozenset(
         "network_access_mode",
         "lan_access_policy",
         "lan_trusted_networks",
+        "trusted_proxy_networks",
+        "enterprise_allowed_origins",
         "lan_admin_token",
         "port",
     }
 )
+ENTERPRISE_ENV_LOCKED_FIELDS: frozenset[str] = RESTART_REQUIRED_FIELDS
 
 URL_FIELDS = {
     "llm_base_url",
@@ -422,9 +427,9 @@ class RuntimeConfigUpdate(BaseModel):
         le=600,
         description="网页判断 worker 在线的心跳有效秒数，范围 5～600；只影响状态判断，不删除任务",
     )
-    network_access_mode: Literal["local", "lan"] | None = Field(
+    network_access_mode: Literal["local", "lan", "enterprise"] | None = Field(
         default=None,
-        description="重启后的监听范围：local 仅本机，lan 允许局域网设备连接",
+        description="重启后的监听范围：local 仅本机，lan 为兼容局域网，enterprise 为 HTTPS 企业内网",
     )
     lan_access_policy: Literal["admin_token", "trusted_lan"] | None = Field(
         default=None,
@@ -434,6 +439,16 @@ class RuntimeConfigUpdate(BaseModel):
         default=None,
         max_length=1000,
         description="可信私网 CIDR，逗号分隔；auto 使用内置私网、链路本地和组网范围",
+    )
+    trusted_proxy_networks: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="受信反向代理 CIDR；仅这些直连节点提交的转发头会被解析，空值表示完全不信任代理头",
+    )
+    enterprise_allowed_origins: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="企业浏览器允许的 HTTPS Origin，逗号分隔且必须精确匹配，不支持通配符",
     )
     port: int | None = Field(
         default=None,
@@ -619,18 +634,26 @@ class WorkerConfigView(BaseModel):
 
 
 class NetworkConfigView(BaseModel):
-    access_mode: Literal["local", "lan"] = Field(description="已保存、重启后生效的访问范围")
+    access_mode: Literal["local", "lan", "enterprise"] = Field(
+        description="已保存、重启后生效的访问范围"
+    )
     access_policy: Literal["admin_token", "trusted_lan"] = Field(
         description="已保存、重启后生效的 LAN 写操作保护方式"
     )
     trusted_networks: str = Field(description="已保存、重启后生效的可信私网范围")
+    trusted_proxy_networks: str = Field(description="已保存、重启后生效的受信代理网段")
+    enterprise_allowed_origins: str = Field(description="已保存的企业 HTTPS 浏览器来源")
     port: int = Field(description="已保存、重启后生效的服务端口")
     bind_host_after_restart: str = Field(description="按已保存范围计算的重启后监听地址")
-    effective_access_mode: Literal["local", "lan"] = Field(description="当前进程实际使用的访问范围")
+    effective_access_mode: Literal["local", "lan", "enterprise"] = Field(
+        description="当前进程实际使用的访问范围"
+    )
     effective_access_policy: Literal["admin_token", "trusted_lan"] = Field(
         description="当前进程实际使用的 LAN 写操作保护方式"
     )
     effective_trusted_networks: str = Field(description="当前进程实际使用的可信私网范围")
+    effective_trusted_proxy_networks: str = Field(description="当前进程实际信任的代理网段")
+    effective_enterprise_allowed_origins: str = Field(description="当前进程允许的 HTTPS Origin")
     effective_port: int = Field(description="当前进程实际使用的端口")
     effective_bind_host: str = Field(description="当前进程实际使用的监听地址")
     lan_admin_token: SecretState = Field(description="已保存令牌是否存在，不返回原文")
@@ -732,6 +755,11 @@ class RuntimeConfiguration:
         self.settings = settings
         self.base_values = settings.model_dump()
         self.default_values = Settings(_env_file=None).model_dump()
+        self.environment_locked_fields = (
+            ENTERPRISE_ENV_LOCKED_FIELDS
+            if settings.network_access_mode == "enterprise"
+            else frozenset()
+        )
         self.vault = LocalSecretVault(settings.data_dir / "secrets" / "runtime_config.key")
         self._persisted_fields: set[str] = set()
         self.load_persisted()
@@ -745,14 +773,22 @@ class RuntimeConfiguration:
             raise KeyError(f"{field} 不是需重启生效的配置")
         return self._effective_restart_values[field]
 
-    def set_effective_endpoint(self, *, host: str, port: int) -> None:
+    def set_effective_endpoint(
+        self,
+        *,
+        host: str,
+        port: int,
+        access_mode: Literal["local", "lan", "enterprise"] | None = None,
+    ) -> None:
         """Record the endpoint this process actually bound, including CLI overrides."""
         normalized = host.strip("[]").lower()
         try:
             loopback = normalized == "localhost" or ipaddress.ip_address(normalized).is_loopback
         except ValueError:
             loopback = False
-        self._effective_restart_values["network_access_mode"] = "local" if loopback else "lan"
+        self._effective_restart_values["network_access_mode"] = access_mode or (
+            "local" if loopback else "lan"
+        )
         self._effective_restart_values["port"] = int(port)
         self._effective_bind_host = host
 
@@ -761,7 +797,7 @@ class RuntimeConfiguration:
         persisted: dict[str, object] = {}
         legacy_secrets: dict[str, tuple[str, bool]] = {}
         for field, row in rows.items():
-            if field not in RUNTIME_FIELDS:
+            if field not in RUNTIME_FIELDS or field in self.environment_locked_fields:
                 continue
             try:
                 raw_value = row["value"]
@@ -798,7 +834,10 @@ class RuntimeConfiguration:
         metadata: dict[str, ConfigFieldMetadata] = {}
         for field in sorted(RUNTIME_FIELDS):
             row = rows.get(field)
-            if row is not None:
+            if field in self.environment_locked_fields:
+                source = "environment"
+                updated_at = None
+            elif row is not None:
                 source: Literal["web", "environment", "default"] = "web"
                 updated_at = row.get("updated_at")
             else:
@@ -882,13 +921,27 @@ class RuntimeConfiguration:
                 access_mode=self.settings.network_access_mode,
                 access_policy=self.settings.lan_access_policy,
                 trusted_networks=self.settings.lan_trusted_networks,
+                trusted_proxy_networks=self.settings.trusted_proxy_networks,
+                enterprise_allowed_origins=self.settings.enterprise_allowed_origins,
                 port=self.settings.port,
                 bind_host_after_restart=(
-                    "0.0.0.0" if self.settings.network_access_mode == "lan" else "127.0.0.1"
+                    "0.0.0.0"
+                    if self.settings.network_access_mode == "lan"
+                    else (
+                        self.settings.host
+                        if self.settings.network_access_mode == "enterprise"
+                        else "127.0.0.1"
+                    )
                 ),
                 effective_access_mode=self.effective_restart_value("network_access_mode"),
                 effective_access_policy=self.effective_restart_value("lan_access_policy"),
                 effective_trusted_networks=self.effective_restart_value("lan_trusted_networks"),
+                effective_trusted_proxy_networks=self.effective_restart_value(
+                    "trusted_proxy_networks"
+                ),
+                effective_enterprise_allowed_origins=self.effective_restart_value(
+                    "enterprise_allowed_origins"
+                ),
                 effective_port=self.effective_restart_value("port"),
                 effective_bind_host=self._effective_bind_host,
                 lan_admin_token=secret("lan_admin_token"),
@@ -957,7 +1010,8 @@ class RuntimeConfiguration:
                 "清除必须显式勾选。"
                 "默认服务只监听本机；主动开启局域网模式后，其他设备的写操作必须携带"
                 "独立管理员令牌，或明确选择仅对可信私有网段免令牌。网络配置统一在"
-                "重启后生效；局域网 HTTP 不加密，也不等于公网安全方案。"
+                "重启后生效；局域网 HTTP 不加密，也不等于公网安全方案。企业模式要求"
+                "HTTPS、受信客户端/代理、精确 Origin 和所有业务 API 的管理员令牌。"
             ),
         )
 
@@ -981,6 +1035,14 @@ class RuntimeConfiguration:
         if conflicts:
             raise RuntimeConfigError(
                 f"同一字段不能同时填写、清除或恢复来源值：{', '.join(sorted(conflicts))}"
+            )
+        locked_changes = (
+            set(changes) | clear_secrets | reset_fields
+        ) & self.environment_locked_fields
+        if locked_changes:
+            raise RuntimeConfigError(
+                "企业模式的网络安全边界由服务器环境强制锁定，不能通过网页覆盖："
+                + ", ".join(sorted(locked_changes))
             )
         for field in clear_secrets:
             if field in SECRET_FIELDS:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 
@@ -54,13 +56,15 @@ class QianlimaSource(SourceAdapter):
     authorization_action_label = "在系统内免费登录"
     coverage_note = (
         "定时任务只读取无需登录的公开分类列表。用户本人在来源中心完成免费登录后，"
-        "即时任务可通过系统托管的同一个持久浏览器配置执行一次首屏检索；不导出或后台重放 Cookie，"
+        "即时任务可通过系统托管的同一个持久浏览器配置执行有界免费列表检索；只有已有书面授权或"
+        "官方 API 记录编号且管理员显式开启后，监控任务才可在页数、间隔和每日预算内复用。"
+        "授权、Web、worker 与清除使用跨进程 profile 锁。不导出或后台重放 Cookie，"
         "也不把 Cookie 交给 HTTP 客户端，"
-        "不自动翻页、不读取付费详情，也不把会员检索接入定时任务。"
+        "不读取付费详情，不绕过验证码、WAF、账号权限或原站频率限制。"
     )
 
     profile_marker_value = "qianlima-persistent-browser-v1"
-    foreground_cooldown_seconds = 10.0
+    usage_state_version = "1"
 
     _EVENT_FEEDS = {
         EventType.TENDER: "/zbgg/",
@@ -75,6 +79,7 @@ class QianlimaSource(SourceAdapter):
         self._last_foreground_search_at = 0.0
         self._live_playwright = None
         self._live_context = None
+        self._profile_lock_handle = None
 
     @property
     def profile_dir(self) -> Path:
@@ -83,6 +88,69 @@ class QianlimaSource(SourceAdapter):
     @property
     def profile_state_path(self) -> Path:
         return self.profile_dir / "bidpilot-state.json"
+
+    @property
+    def usage_state_path(self) -> Path:
+        return self.profile_dir / "bidpilot-usage.json"
+
+    @property
+    def usage_lock_path(self) -> Path:
+        return self.profile_dir / "bidpilot-usage.lock"
+
+    @property
+    def profile_lock_path(self) -> Path:
+        return self.profile_dir.parent / f".{self.source_id}.profile.lock"
+
+    def _acquire_profile_lock(self, *, wait_seconds: float = 3.0) -> None:
+        """Hold an OS-backed cross-process lease for the complete Chromium session."""
+
+        if self._profile_lock_handle is not None:
+            return
+        self.profile_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.profile_lock_path.open("a+b")
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        deadline = time.monotonic() + max(0.0, wait_seconds)
+        while True:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._profile_lock_handle = handle
+                return
+            except (BlockingIOError, OSError):
+                if time.monotonic() >= deadline:
+                    handle.close()
+                    raise RuntimeError(
+                        "千里马浏览器配置正被另一个 Web、worker 或授权进程使用，请稍后重试"
+                    ) from None
+                time.sleep(0.05)
+
+    def _release_profile_lock(self) -> None:
+        handle = self._profile_lock_handle
+        if handle is None:
+            return
+        try:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+            self._profile_lock_handle = None
 
     def _read_profile_state(self) -> dict[str, str]:
         try:
@@ -117,14 +185,10 @@ class QianlimaSource(SourceAdapter):
             return True
         if state.get("state") != "authorized":
             return False
-        expires_at = state.get("expires_at") or ""
-        if not expires_at:
-            return False
-        with suppress(ValueError):
-            parsed = datetime.fromisoformat(expires_at)
-            parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-            return parsed > datetime.now(UTC)
-        return False
+        # Chromium owns the actual login lifetime. Legacy markers may still
+        # carry a seven-day BidPilot timestamp, but every member query now
+        # health-checks the live site and marks the profile expired on failure.
+        return True
 
     @staticmethod
     def graphical_session_available() -> bool:
@@ -192,11 +256,21 @@ class QianlimaSource(SourceAdapter):
                 "或按 Linux 部署手册通过仅监听 127.0.0.1 的 noVNC/VNC 并使用 SSH 隧道操作；"
                 "系统不会在不可见窗口中代填账号、验证码或冒充登录成功。"
             )
-        return await self._launch_persistent_browser(headless=False)
+        await asyncio.to_thread(self._acquire_profile_lock)
+        try:
+            return await self._launch_persistent_browser(headless=False)
+        except Exception:
+            await asyncio.to_thread(self._release_profile_lock)
+            raise
 
     async def launch_search_browser(self):
         """Open the verified profile for one bounded search, headless on servers when needed."""
-        return await self._launch_persistent_browser(headless=self.search_browser_headless())
+        await asyncio.to_thread(self._acquire_profile_lock)
+        try:
+            return await self._launch_persistent_browser(headless=self.search_browser_headless())
+        except Exception:
+            await asyncio.to_thread(self._release_profile_lock)
+            raise
 
     def adopt_live_context(self, playwright, context) -> None:
         self._live_playwright = playwright
@@ -211,17 +285,29 @@ class QianlimaSource(SourceAdapter):
                 await self._live_playwright.stop()
         self._live_context = None
         self._live_playwright = None
+        await asyncio.to_thread(self._release_profile_lock)
 
     @staticmethod
-    async def _authorized_search_page(context):
-        for page in context.pages:
-            if not page.url.startswith("https://search.vip.qianlima.com/"):
-                continue
-            search_box = page.locator('input[placeholder="请输入您要搜索的内容"]')
-            member_center = page.get_by_text("会员中心", exact=True)
-            if await search_box.count() == 1 and await member_center.count() >= 1:
-                return page
-        return None
+    async def _authorized_search_page(context, *, timeout_ms: int = 6_000):
+        """Wait for the SPA to expose both search and signed-in account controls."""
+
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        while True:
+            for page in context.pages:
+                if not page.url.startswith("https://search.vip.qianlima.com/"):
+                    continue
+                search_box = page.locator('input[placeholder="请输入您要搜索的内容"]')
+                member_center = page.get_by_text("会员中心", exact=True)
+                personal_center = page.locator('a[href*="vip.qianlima.com/index.html"]')
+                if (
+                    await search_box.count() == 1
+                    and await member_center.count() >= 1
+                    and await personal_center.count() >= 1
+                ):
+                    return page
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(0.2)
 
     @classmethod
     async def authorization_context_ready(cls, context) -> bool:
@@ -229,23 +315,172 @@ class QianlimaSource(SourceAdapter):
 
     async def clear_profile(self) -> None:
         await self.close_live_browser()
-        root = self.settings.data_dir.resolve()
-        target = self.profile_dir.resolve()
-        if target == root or root not in target.parents:
-            raise RuntimeError("浏览器配置目录越出 BidPilot 数据目录，拒绝清理")
-        if target.exists():
-            shutil.rmtree(target)
+        await asyncio.to_thread(self._acquire_profile_lock)
+        try:
+            root = self.settings.data_dir.resolve()
+            target = self.profile_dir.resolve()
+            if target == root or root not in target.parents:
+                raise RuntimeError("浏览器配置目录越出 BidPilot 数据目录，拒绝清理")
+            if target.exists():
+                shutil.rmtree(target)
+        finally:
+            await asyncio.to_thread(self._release_profile_lock)
+
+    def _read_usage_state(self) -> dict[str, object]:
+        try:
+            value = json.loads(self.usage_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _write_usage_state(self, state: dict[str, object]) -> None:
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        temporary = self.usage_state_path.with_name(
+            f"{self.usage_state_path.name}.{os.getpid()}.tmp"
+        )
+        temporary.write_text(
+            json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(temporary, self.usage_state_path)
+
+    def _with_usage_lock(self, operation):
+        """Serialize the tiny audit ledger across web/worker processes."""
+
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + 3.0
+        while True:
+            try:
+                descriptor = os.open(
+                    self.usage_lock_path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o600,
+                )
+                os.close(descriptor)
+                break
+            except FileExistsError:
+                with suppress(OSError):
+                    if time.time() - self.usage_lock_path.stat().st_mtime > 120:
+                        self.usage_lock_path.unlink()
+                        continue
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("千里马用量账本正被另一个任务更新，请稍后重试") from None
+                time.sleep(0.05)
+        try:
+            return operation()
+        finally:
+            with suppress(OSError):
+                self.usage_lock_path.unlink()
+
+    def _reserve_member_query(
+        self,
+        *,
+        query: str,
+        schedule_kind: ScheduleKind,
+    ) -> tuple[bool, str, dict[str, object]]:
+        now = datetime.now(UTC)
+        local_day = now.astimezone(ZoneInfo(self.settings.timezone)).date().isoformat()
+        query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
+
+        def reserve():
+            state = self._read_usage_state()
+            if (
+                state.get("version") != self.usage_state_version
+                or state.get("local_date") != local_day
+            ):
+                state = {
+                    "version": self.usage_state_version,
+                    "local_date": local_day,
+                    "queries_used": 0,
+                }
+            last_query_at = str(state.get("last_query_at") or "")
+            if last_query_at:
+                with suppress(ValueError):
+                    parsed = datetime.fromisoformat(last_query_at)
+                    parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+                    remaining = (
+                        self.settings.qianlima_member_cooldown_seconds
+                        - (now - parsed).total_seconds()
+                    )
+                    if remaining > 0:
+                        return (
+                            False,
+                            f"距上次免费会员查询不足冷却时间，请约 {ceil(remaining)} 秒后重试。",
+                            state,
+                        )
+            used = int(state.get("queries_used") or 0)
+            budget = self.settings.qianlima_member_daily_query_budget
+            if used >= budget:
+                return (
+                    False,
+                    f"今日免费会员查询预算 {budget} 次已用完，公开分类检索仍会继续。",
+                    state,
+                )
+            state.update(
+                {
+                    "queries_used": used + 1,
+                    "last_query_at": now.isoformat(),
+                    "last_query_hash": query_hash,
+                    "last_schedule_kind": schedule_kind.value,
+                    "last_outcome": "reserved",
+                }
+            )
+            self._write_usage_state(state)
+            return True, "", state
+
+        return self._with_usage_lock(reserve)
+
+    def _record_member_query_outcome(
+        self,
+        *,
+        outcome: str,
+        pages_read: int = 0,
+        scanned: int = 0,
+        kept: int = 0,
+    ) -> None:
+        def record():
+            state = self._read_usage_state()
+            state.update(
+                {
+                    "version": self.usage_state_version,
+                    "last_health_at": datetime.now(UTC).isoformat(),
+                    "last_outcome": outcome,
+                    "last_pages_read": pages_read,
+                    "last_scanned": scanned,
+                    "last_kept": kept,
+                }
+            )
+            self._write_usage_state(state)
+
+        self._with_usage_lock(record)
+
+    @staticmethod
+    def _safe_free_list_url(href: str) -> str | None:
+        """Allow only list-result links; the adapter never opens these detail URLs."""
+
+        source_url = urljoin("https://www.qianlima.com/", href)
+        if not re.fullmatch(r"https://www\.qianlima\.com/bid-\d+\.html", source_url):
+            return None
+        return source_url
 
     @classmethod
-    def parse_foreground_rows(cls, rows: list[dict[str, str]], limit: int = 20) -> list[RawTender]:
+    def parse_foreground_rows(
+        cls,
+        rows: list[dict[str, str]],
+        limit: int = 20,
+        *,
+        audit_metadata: dict[str, object] | None = None,
+    ) -> list[RawTender]:
         items: list[RawTender] = []
         seen: set[str] = set()
         for row in rows:
             title = normalize_space(row.get("title", ""))
             href = row.get("href", "")
-            source_url = urljoin("https://www.qianlima.com/", href)
+            source_url = cls._safe_free_list_url(href)
             published_text = normalize_space(row.get("published_at", ""))
             if not title or not href or not published_text or source_url in seen:
+                continue
+            if source_url is None:
                 continue
             published = parse_datetime(published_text)
             event_label = normalize_space(row.get("event_label", ""))
@@ -267,8 +502,11 @@ class QianlimaSource(SourceAdapter):
                     evidence=[EvidenceSpan(text=body[:360], source_url=source_url)],
                     auth_level="free_member",
                     source_metadata={
-                        "coverage": "user_triggered_first_page",
+                        "coverage": "bounded_free_member_list",
                         "browser_session": "persistent_profile",
+                        "page": int(row.get("page") or 1),
+                        "detail_access": "blocked_by_adapter",
+                        **(audit_metadata or {}),
                     },
                 )
             )
@@ -284,11 +522,17 @@ class QianlimaSource(SourceAdapter):
         allow_unverified: bool = False,
     ) -> SourceSearchResult:
         started = time.perf_counter()
-        if spec.schedule.kind != ScheduleKind.IMMEDIATE:
+        if (
+            spec.schedule.kind != ScheduleKind.IMMEDIATE
+            and not self.settings.qianlima_member_monitoring_enabled
+        ):
             return SourceSearchResult(
                 source=self.name,
                 status=SourceStatus.SKIPPED,
-                message="会员浏览器检索只允许用户主动的即时任务，定时任务继续使用公开分类列表。",
+                message=(
+                    "该监控任务继续使用公开分类列表；只有管理员显式开启千里马会员监控后，"
+                    "用户创建的监控任务才会在有界预算内复用登录配置。"
+                ),
             )
         if not self.profile_available(allow_unverified=allow_unverified):
             return SourceSearchResult(
@@ -304,20 +548,36 @@ class QianlimaSource(SourceAdapter):
                 message="千里马前台查询词必须为 2～40 个字符。",
             )
         async with self._foreground_lock:
-            now = time.monotonic()
-            if now - self._last_foreground_search_at < self.foreground_cooldown_seconds:
+            try:
+                reserved, reservation_message, usage_state = await asyncio.to_thread(
+                    self._reserve_member_query,
+                    query=query,
+                    schedule_kind=spec.schedule.kind,
+                )
+            except RuntimeError as exc:
                 return SourceSearchResult(
                     source=self.name,
                     status=SourceStatus.SKIPPED,
-                    message="为遵守原站频率边界，10 秒内只执行一次用户前台查询。",
+                    message=str(exc),
                     latency_ms=int((time.perf_counter() - started) * 1000),
                 )
-            self._last_foreground_search_at = now
+            if not reserved:
+                return SourceSearchResult(
+                    source=self.name,
+                    status=SourceStatus.SKIPPED,
+                    message=reservation_message,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
             owns_context = self._live_context is None
             if owns_context:
                 try:
                     playwright, _browser, context = await self.launch_search_browser()
                 except Exception as exc:
+                    with suppress(Exception):
+                        await asyncio.to_thread(
+                            self._record_member_query_outcome,
+                            outcome="browser_launch_failed",
+                        )
                     return SourceSearchResult(
                         source=self.name,
                         status=SourceStatus.FAILED,
@@ -334,6 +594,10 @@ class QianlimaSource(SourceAdapter):
                 page = await self._authorized_search_page(context)
                 if page is None:
                     self.mark_profile("expired")
+                    await asyncio.to_thread(
+                        self._record_member_query_outcome,
+                        outcome="auth_required",
+                    )
                     return SourceSearchResult(
                         source=self.name,
                         status=SourceStatus.AUTH_REQUIRED,
@@ -343,10 +607,56 @@ class QianlimaSource(SourceAdapter):
                 search_box = page.locator('input[placeholder="请输入您要搜索的内容"]')
                 await search_box.fill(query)
                 await search_box.press("Enter")
-                await page.wait_for_timeout(1800)
-                rows = await page.evaluate(
-                    """() => Array.from(document.querySelectorAll('a.con-title[href*="/bid-"]'))
-                      .slice(0, 20).map((link) => {
+                try:
+                    await page.wait_for_function(
+                        """() => document.querySelectorAll(
+                          'a.con-title[href*="/bid-"]'
+                        ).length > 0""",
+                        timeout=10_000,
+                    )
+                except Exception:
+                    # A valid free-member search can genuinely return no rows.
+                    # Session health is checked separately above and below.
+                    pass
+                all_rows: list[dict[str, str]] = []
+                pages_read = 0
+                max_pages = self.settings.qianlima_member_max_pages
+                max_results = self.settings.qianlima_member_max_results
+                for page_number in range(1, max_pages + 1):
+                    if page_number > 1:
+                        pager = page.locator("#dataListPager .pagingUl")
+                        page_link = pager.locator("a").filter(
+                            has_text=re.compile(rf"^{page_number}$")
+                        )
+                        if await page_link.count() != 1:
+                            break
+                        await page_link.click()
+                        await page.wait_for_timeout(1_800)
+                        active_page = pager.locator("a.activP-d").filter(
+                            has_text=re.compile(rf"^{page_number}$")
+                        )
+                        if await active_page.count() != 1:
+                            break
+                    if await self._authorized_search_page(context, timeout_ms=1_500) is None:
+                        self.mark_profile("expired")
+                        await asyncio.to_thread(
+                            self._record_member_query_outcome,
+                            outcome="auth_required",
+                            pages_read=pages_read,
+                            scanned=len(all_rows),
+                        )
+                        return SourceSearchResult(
+                            source=self.name,
+                            status=SourceStatus.AUTH_REQUIRED,
+                            message="千里马在检索过程中要求重新登录，本轮已停止且没有访问详情页。",
+                            latency_ms=int((time.perf_counter() - started) * 1000),
+                        )
+                    remaining = max_results - len(all_rows)
+                    if remaining <= 0:
+                        break
+                    rows = await page.evaluate(
+                        """({limit, pageNumber}) => Array.from(document.querySelectorAll('a.con-title[href*="/bid-"]'))
+                      .slice(0, limit).map((link) => {
                         const row = link.closest('li');
                         const tags = Array.from(row?.querySelectorAll('a.con-address') || [])
                           .map((item) => (item.textContent || '').replace(/\\s+/g, ' ').trim());
@@ -357,26 +667,56 @@ class QianlimaSource(SourceAdapter):
                           published_at: dateText,
                           event_label: tags[0] || '',
                           region: tags[1] || '',
-                          category: tags[2] || ''
+                          category: tags[2] || '',
+                          page: String(pageNumber)
                         };
-                      })"""
-                )
+                      })""",
+                        {"limit": remaining, "pageNumber": page_number},
+                    )
+                    if not isinstance(rows, list) or not rows:
+                        break
+                    all_rows.extend(rows)
+                    pages_read += 1
+                audit_metadata = {
+                    "query_hash": str(usage_state.get("last_query_hash") or ""),
+                    "schedule_kind": spec.schedule.kind.value,
+                    "pages_requested": max_pages,
+                    "pages_read": pages_read,
+                    "paid_detail_navigation": "mechanically_disabled",
+                }
                 items = self.parse_foreground_rows(
-                    rows if isinstance(rows, list) else [],
-                    limit=min(20, self.settings.max_results_per_source),
+                    all_rows,
+                    limit=max_results,
+                    audit_metadata=audit_metadata,
+                )
+                outcome = "passed" if items else "no_results"
+                self.mark_profile("authorized")
+                await asyncio.to_thread(
+                    self._record_member_query_outcome,
+                    outcome=outcome,
+                    pages_read=pages_read,
+                    scanned=len(all_rows),
+                    kept=len(items),
                 )
                 return SourceSearchResult(
                     source=self.name,
                     status=SourceStatus.PARTIAL,
                     items=items,
-                    scanned_count=len(rows) if isinstance(rows, list) else 0,
+                    scanned_count=len(all_rows),
                     message=(
-                        f"已在用户本人登录的系统托管持久浏览器中执行 1 次首屏查询，读取 {len(items)} 条免费会员列表结果；"
-                        "未翻页、未读取付费详情、未导出或通过 HTTP 重放 Cookie。"
+                        f"已在用户本人登录的系统托管持久浏览器中执行 1 次有界查询，"
+                        f"读取 {pages_read} 页、{len(items)} 条免费会员列表结果；"
+                        + ("当前关键词未返回列表候选；" if not items else "")
+                        + "付费详情导航被适配器机械禁用，未导出或通过 HTTP 重放 Cookie。"
                     ),
                     latency_ms=int((time.perf_counter() - started) * 1000),
                 )
             except Exception:
+                with suppress(Exception):
+                    await asyncio.to_thread(
+                        self._record_member_query_outcome,
+                        outcome="failed",
+                    )
                 return SourceSearchResult(
                     source=self.name,
                     status=SourceStatus.FAILED,
@@ -390,6 +730,7 @@ class QianlimaSource(SourceAdapter):
                     if playwright is not None:
                         with suppress(Exception):
                             await playwright.stop()
+                    await asyncio.to_thread(self._release_profile_lock)
 
     @classmethod
     def parse_search_page(cls, html: str, limit: int = 20) -> list[RawTender]:
@@ -463,7 +804,10 @@ class QianlimaSource(SourceAdapter):
         return item
 
     async def search(self, spec: TenderQuerySpec, fetcher: HttpFetcher) -> SourceSearchResult:
-        if spec.schedule.kind == ScheduleKind.IMMEDIATE and self.profile_available():
+        if self.profile_available() and (
+            spec.schedule.kind == ScheduleKind.IMMEDIATE
+            or self.settings.qianlima_member_monitoring_enabled
+        ):
             return await self.search_foreground(spec)
         started = time.perf_counter()
         try:

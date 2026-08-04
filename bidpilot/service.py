@@ -1709,6 +1709,7 @@ class BidPilotService:
             record=TenderRecord.model_validate_json(row["snapshot_json"]),
             stage=OpportunityStage(row["stage"]),
             owner=row.get("owner", ""),
+            next_action=row.get("next_action", ""),
             next_action_at=(
                 datetime.fromisoformat(row["next_action_at"]) if row.get("next_action_at") else None
             ),
@@ -1793,6 +1794,7 @@ class BidPilotService:
                         item.record.buyer or "",
                         item.record.region or "",
                         item.owner,
+                        item.next_action,
                         item.notes,
                         " ".join(item.tags),
                     )
@@ -1807,6 +1809,8 @@ class BidPilotService:
             changes["stage"] = update.stage.value
         if "owner" in fields:
             changes["owner"] = (update.owner or "").strip()
+        if "next_action" in fields:
+            changes["next_action"] = (update.next_action or "").strip()
         if "next_action_at" in fields:
             next_action_at = update.next_action_at
             if next_action_at and next_action_at.tzinfo is None:

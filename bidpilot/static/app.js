@@ -219,8 +219,7 @@ async function api(path, options = {}) {
       catch { state.lanAdminToken = ""; }
     }
     requestAdminToken = state.lanAdminToken || "";
-    const requestMethod = String(requestOptions.method || "GET").toUpperCase();
-    const adminHeaders = state.lanAdminToken && !["GET", "HEAD", "OPTIONS"].includes(requestMethod) ? { "X-BidPilot-Admin-Token": state.lanAdminToken } : {};
+    const adminHeaders = state.lanAdminToken ? { "X-BidPilot-Admin-Token": state.lanAdminToken } : {};
     response = await fetch(path, { ...requestOptions, signal: controller.signal, headers: { "Content-Type": "application/json", ...adminHeaders, ...(requestOptions.headers || {}) } });
   } catch (error) {
     const transient = error?.name === "AbortError" || error instanceof TypeError;
@@ -901,14 +900,15 @@ function opportunityCard(item) {
     <div class="opportunity-card-head"><div><div class="opportunity-kicker"><span>${escapeHtml(record.event_type)}</span><span>${escapeHtml(record.region || "地域未标注")}</span></div><span class="workspace-stage ${escapeHtml(item.stage)}">工作阶段：${escapeHtml(OPPORTUNITY_STAGES[item.stage] || item.stage)}</span><h3>${escapeHtml(record.title)}</h3></div><div class="score">${Math.round(record.opportunity_score)}</div></div>
     <p class="opportunity-buyer">${escapeHtml(record.buyer || "采购人未提取")} · ${escapeHtml(record.published_at.slice(0, 10))}</p>
     <div class="opportunity-tags">${tags || "<span>未设置标签</span>"}</div>
-    <div class="opportunity-next"><span><small>负责人</small><b>${escapeHtml(item.owner || "待分配")}</b></span><span><small>下一步</small><b>${item.next_action_at ? formatTime(item.next_action_at) : "待安排"}</b></span></div>
+    <div class="opportunity-next"><span><small>责任人</small><b>${escapeHtml(item.owner || "待分配")}</b></span><span><small>计划完成</small><b>${item.next_action_at ? formatTime(item.next_action_at) : "待安排"}</b></span><span class="opportunity-next-action"><small>执行动作</small><b>${escapeHtml(item.next_action || "待明确具体动作")}</b></span></div>
     <div class="opportunity-links">${source}<button class="mark-read">${item.is_read ? "标为未读" : "标为已读"}</button><button class="view-timeline" aria-expanded="false">查看原公告时间线</button><button class="archive-opportunity">${archived ? "恢复到待评估" : "归档保留"}</button><button class="delete-opportunity" data-confirm="false">删除卡片</button></div>
     <details class="opportunity-editor"><summary>跟进设置</summary><div class="opportunity-form">
       <label><span>阶段</span><select class="opportunity-stage" aria-label="机会阶段">${opportunityStageOptions(item.stage)}</select></label>
       <label><span>负责人</span><input class="opportunity-owner" maxlength="100" value="${escapeHtml(item.owner)}" placeholder="姓名或团队"></label>
+      <label class="opportunity-action-label"><span>下一步执行动作</span><textarea class="opportunity-next-action-input" rows="2" maxlength="500" placeholder="例如：联系采购人核验报名材料">${escapeHtml(item.next_action || "")}</textarea></label>
       <label><span>下一步时间</span><input class="opportunity-next-at" type="datetime-local" value="${formatDateTimeInput(item.next_action_at)}"></label>
       <label><span>标签</span><input class="opportunity-tags-input" maxlength="240" value="${escapeHtml(item.tags.join("，"))}" placeholder="重点，GPU，教育"></label>
-      <label class="opportunity-notes-label"><span>跟进备注</span><textarea class="opportunity-notes" rows="3" maxlength="4000" placeholder="记录判断、风险与下一步">${escapeHtml(item.notes)}</textarea></label>
+      <label class="opportunity-notes-label"><span>跟进备注</span><textarea class="opportunity-notes" rows="3" maxlength="4000" placeholder="记录核验依据、风险、沟通结果与决策">${escapeHtml(item.notes)}</textarea></label>
     </div><button class="primary-button compact save-opportunity">保存跟进</button></details>
     <div class="opportunity-delete-note hidden" aria-live="polite"></div><div class="opportunity-timeline hidden"></div>
   </article>`;
@@ -971,7 +971,7 @@ function bindOpportunityActions() {
       const tags = card.querySelector(".opportunity-tags-input").value.split(/[,，]/).map((item) => item.trim()).filter(Boolean);
       const nextAction = card.querySelector(".opportunity-next-at").value || null;
       try {
-        await api(`/api/v1/opportunities/${id}`, { method: "PATCH", body: JSON.stringify({ stage: card.querySelector(".opportunity-stage").value, owner: card.querySelector(".opportunity-owner").value.trim(), next_action_at: nextAction, notes: card.querySelector(".opportunity-notes").value.trim(), tags }) });
+        await api(`/api/v1/opportunities/${id}`, { method: "PATCH", body: JSON.stringify({ stage: card.querySelector(".opportunity-stage").value, owner: card.querySelector(".opportunity-owner").value.trim(), next_action: card.querySelector(".opportunity-next-action-input").value.trim(), next_action_at: nextAction, notes: card.querySelector(".opportunity-notes").value.trim(), tags }) });
         toast("机会跟进信息已保存"); await loadOpportunities();
       } catch (error) { button.disabled = false; button.textContent = "保存跟进"; toast(error.message, 5000); }
     });
@@ -1708,7 +1708,7 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
     decision_assessment_mode: config.ai.decision_assessment_mode, decision_assessment_max_records: config.ai.decision_assessment_max_records,
     request_timeout: config.retrieval.request_timeout, request_interval: config.retrieval.request_interval, max_results_per_source: config.retrieval.max_results_per_source, ccgp_max_pages: config.retrieval.ccgp_max_pages,
     worker_poll_interval: config.worker.poll_interval, worker_lease_seconds: config.worker.lease_seconds, worker_heartbeat_ttl: config.worker.heartbeat_ttl,
-    network_access_mode: config.network.access_mode, lan_access_policy: config.network.access_policy, lan_trusted_networks: config.network.trusted_networks, port: config.network.port,
+    network_access_mode: config.network.access_mode, lan_access_policy: config.network.access_policy, lan_trusted_networks: config.network.trusted_networks, trusted_proxy_networks: config.network.trusted_proxy_networks, enterprise_allowed_origins: config.network.enterprise_allowed_origins, port: config.network.port,
     feishu_app_id: config.feishu.app_id, feishu_receive_id: config.feishu.receive_id, feishu_receive_id_type: config.feishu.receive_id_type, public_base_url: config.feishu.public_base_url,
     smtp_host: config.email.host, smtp_port: config.email.port, smtp_security: config.email.security, smtp_username: config.email.username, smtp_from: config.email.sender, smtp_to: config.email.recipients, smtp_timeout: config.email.timeout,
     telegram_chat_id: config.telegram?.chat_id, telegram_message_thread_id: config.telegram?.message_thread_id, telegram_disable_notification: config.telegram?.disable_notification, telegram_protect_content: config.telegram?.protect_content,
@@ -1742,8 +1742,9 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
   setConfigStatus("slack", config.slack?.ready, "Webhook 已就绪");
   $("#config-security-notice").textContent = config.security_notice;
   const policyLabels = { admin_token: "管理员令牌保护", trusted_lan: "可信局域网免令牌" };
-  const effectiveScope = config.network.effective_access_mode === "lan" ? `局域网 ${config.network.effective_bind_host}:${config.network.effective_port} · ${policyLabels[config.network.effective_access_policy] || config.network.effective_access_policy}` : `仅本机 ${config.network.effective_bind_host}:${config.network.effective_port}`;
-  const nextScope = config.network.access_mode === "lan" ? `局域网 ${config.network.bind_host_after_restart}:${config.network.port} · ${policyLabels[config.network.access_policy] || config.network.access_policy}` : `仅本机 ${config.network.bind_host_after_restart}:${config.network.port}`;
+  const scopeText = (mode, host, port, policy) => mode === "enterprise" ? `企业内网 ${host}:${port} · HTTPS + 受信网段 + 管理员令牌` : (mode === "lan" ? `局域网 ${host}:${port} · ${policyLabels[policy] || policy}` : `仅本机 ${host}:${port}`);
+  const effectiveScope = scopeText(config.network.effective_access_mode, config.network.effective_bind_host, config.network.effective_port, config.network.effective_access_policy);
+  const nextScope = scopeText(config.network.access_mode, config.network.bind_host_after_restart, config.network.port, config.network.access_policy);
   $("#network-effective-state").textContent = config.network.pending_restart ? `现在：${effectiveScope}。保存的是：${nextScope}；请重启服务后生效。` : `现在：${effectiveScope}。没有等待重启的网络修改。`;
   syncLanPolicyHelp();
   renderConfigMetadata(config);
@@ -1752,13 +1753,20 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
 
 function syncLanPolicyHelp() {
   const mode = $('[data-config="network_access_mode"]')?.value;
-  const policy = $('[data-config="lan_access_policy"]')?.value;
+  const policyInput = $('[data-config="lan_access_policy"]');
+  const trustedOption = policyInput?.querySelector('option[value="trusted_lan"]');
+  if (trustedOption) trustedOption.disabled = mode === "enterprise";
+  if (mode === "enterprise" && policyInput?.value === "trusted_lan") {
+    policyInput.value = "admin_token";
+    markConfigDirty("lan_access_policy");
+  }
+  const policy = policyInput?.value;
   const field = $("#lan-admin-token-field");
   if (!field) return;
-  const required = mode === "lan" && policy === "admin_token";
+  const required = mode === "enterprise" || (mode === "lan" && policy === "admin_token");
   field.classList.toggle("attention-field", required);
   const hint = field.querySelector("small");
-  if (hint) hint.title = required ? "令牌保护模式必须保存至少 16 个字符，并在重启后生效。" : "可信局域网模式不要求令牌；可保留以便以后切回保护模式。";
+  if (hint) hint.title = required ? "LAN 令牌模式和企业模式必须保存至少 16 个字符，并在重启后生效。" : "可信局域网模式不要求令牌；可保留以便以后切回保护模式。";
 }
 
 function generateLanAdminToken() {

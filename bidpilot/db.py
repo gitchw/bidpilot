@@ -184,6 +184,7 @@ class Database:
             snapshot_json TEXT NOT NULL,
             stage TEXT NOT NULL DEFAULT 'new',
             owner TEXT NOT NULL DEFAULT '',
+            next_action TEXT NOT NULL DEFAULT '',
             next_action_at TEXT,
             notes TEXT NOT NULL DEFAULT '',
             tags_json TEXT NOT NULL DEFAULT '[]',
@@ -303,6 +304,7 @@ class Database:
             self._ensure_column(conn, "runs", "retrieval_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "brief_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(conn, "runs", "assessment_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(conn, "opportunities", "next_action", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "delivery_outbox", "last_message", "TEXT")
             legacy_target_rows = conn.execute(
                 """
@@ -702,7 +704,15 @@ class Database:
         return [dict(row) for row in rows]
 
     def update_opportunity(self, opportunity_id: str, changes: dict[str, Any]) -> bool:
-        allowed = {"stage", "owner", "next_action_at", "notes", "tags_json", "is_read"}
+        allowed = {
+            "stage",
+            "owner",
+            "next_action",
+            "next_action_at",
+            "notes",
+            "tags_json",
+            "is_read",
+        }
         invalid = set(changes) - allowed
         if invalid:
             raise ValueError(f"Unsupported opportunity fields: {sorted(invalid)}")

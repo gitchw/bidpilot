@@ -180,7 +180,7 @@
         <div class="opportunity-guide-head"><div><p class="eyebrow">START HERE</p><h2>第一次使用，按这 4 步走</h2></div><span>建议先归档，确认无用再删除</span></div>
         <ol>
           <li><b>1. 加入</b><span>在“情报检索”的真实结果卡点击“加入机会”。同一项目不会重复建卡。</span></li>
-          <li><b>2. 分工</b><span>打开“跟进设置”，填写负责人、下一步时间、标签和团队备注。</span></li>
+          <li><b>2. 分工</b><span>打开“跟进设置”，明确谁负责、下一步做什么、何时完成，再补充标签和团队备注。</span></li>
           <li><b>3. 推进</b><span>按待评估 → 跟进中 → 投标准备流转；结束后标记已中标或未中标。</span></li>
           <li><b>4. 收尾</b><span>归档会保留整张卡和跟进历史；删除只移除工作台卡片，不删除原公告、报告或反馈。</span></li>
         </ol>
@@ -189,7 +189,7 @@
         </div>
       </section>
       <div class="opportunity-toolbar">
-        <label><span>搜索机会</span><input id="opportunity-search" type="search" placeholder="项目、采购人、负责人或标签"></label>
+        <label><span>搜索机会</span><input id="opportunity-search" type="search" placeholder="项目、采购人、负责人、执行动作或标签"></label>
         <label><span>阶段</span><select id="opportunity-stage-filter"><option value="">全部阶段</option><option value="new">待评估</option><option value="following">跟进中</option><option value="bidding">投标准备</option><option value="won">已中标</option><option value="lost">未中标</option><option value="archived">已归档</option></select></label>
         <button class="secondary-button" id="refresh-opportunities">刷新</button>
       </div>
@@ -285,12 +285,14 @@
 
         <article class="config-card" data-config-group="system">
           <div class="config-card-head"><div><p class="eyebrow">WORKER & NETWORK</p><h2>长期任务与局域网</h2></div><span class="state-badge warning">网络改动需重启</span></div>
-          <p>默认只允许本机访问。需要手机或同一局域网电脑时可开放 LAN；可选择管理员令牌保护，也可在你完全信任当前局域网时免令牌使用全部功能。</p>
+          <p>默认只允许本机访问。临时可信局域网可使用 LAN；正式公司服务器请选择企业内网模式，由 HTTPS 网关、受信网段、来源白名单和管理员令牌共同保护。</p>
           <div class="config-fields">
-            <label><span>访问范围</span><select data-config="network_access_mode"><option value="local">仅本机（推荐）</option><option value="lan">局域网设备</option></select><small>局域网模式绑定 0.0.0.0，不等于允许直接暴露公网。</small></label>
+            <label><span>访问范围</span><select data-config="network_access_mode"><option value="local">仅本机（默认）</option><option value="lan">临时可信局域网</option><option value="enterprise">企业内网服务器（推荐生产）</option></select><small>企业模式使用 <code>BIDPILOT_HOST</code> 指定监听地址；即使绑定 0.0.0.0 也不会取消 API 身份校验。</small></label>
             <label><span>局域网管理方式</span><select data-config="lan_access_policy"><option value="admin_token">管理员令牌保护（推荐）</option><option value="trusted_lan">信任局域网，不输令牌</option></select><small>信任模式只接受直连私网地址，所有能连到服务的可信设备都能修改和删除数据。</small></label>
             <label><span>服务端口</span><input data-config="port" type="number" min="1" max="65535" step="1"><small>先看你怎样启动：用项目 <code>.venv</code> 运行原生 Python 服务时，这里才控制端口，保存后要重启；用 Docker Compose 时，这里不会改变端口，容器内固定监听 8000，请改项目根目录 <code>.env</code> 中的 <code>BIDPILOT_PORT</code> 后重新创建容器。</small></label>
             <label><span>可信网段</span><input data-config="lan_trusted_networks" type="text" maxlength="1000" placeholder="auto"><small><code>auto</code> 允许常见私网、链路本地和组网地址；也可填写逗号分隔的私有 CIDR。</small></label>
+            <label><span>受信反向代理网段</span><input data-config="trusted_proxy_networks" type="text" maxlength="1000" placeholder="127.0.0.1/32"><small>只信任明确的 Nginx/网关 CIDR；空值时忽略所有 <code>X-Forwarded-*</code> 请求头。</small></label>
+            <label class="wide"><span>企业 HTTPS 浏览器来源</span><input data-config="enterprise_allowed_origins" type="text" maxlength="2000" placeholder="https://bidpilot.example.internal"><small>企业模式必填，逗号分隔并精确匹配；不接受 HTTP、路径或通配符。</small></label>
             <label class="wide secret-field" id="lan-admin-token-field"><span>局域网管理员令牌 <em data-secret-state="lan_admin_token">未配置</em></span><input data-config="lan_admin_token" type="password" minlength="16" autocomplete="new-password" placeholder="至少 16 个字符；留空保持原值"><small><input data-clear="lan_admin_token" type="checkbox"> 清除已保存令牌　<button type="button" class="link-button" id="generate-lan-token">生成安全令牌</button></small></label>
             <label><span>worker 轮询间隔（秒）</span><input data-config="worker_poll_interval" type="number" min="0.2" max="300" step="0.1"><small>范围 0.2～300 秒，决定长期任务和 Outbox 多久检查一次。过小会增加数据库与 CPU 压力。</small></label>
             <label><span>任务租约（秒）</span><input data-config="worker_lease_seconds" type="number" min="30" max="7200" step="1"><small>长检索需预留足够时间，默认 900。</small></label>

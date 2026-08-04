@@ -6,7 +6,7 @@
 
 - 默认地址：`http://127.0.0.1:8000`。
 - 默认业务数据位于 `data/bidpilot.db`，报告位于 `outputs/reports`，生命周期控制记录位于 `data/runtime` 与 `data/secrets/control.token`。控制目录与可选业务数据目录解耦，避免迁移数据库后普通 `status/stop` 找不到服务。
-- 默认只监听本机。网页或环境变量可选择 LAN：`admin_token` 要求远端写操作提供管理员令牌；`trusted_lan` 只对直连私网免令牌。两种 LAN 模式都不是公网账号系统；公网发布必须在前置网关增加 TLS、身份认证、限流和审计。
+- 默认只监听本机。临时 LAN 的 `admin_token` 要求远端写操作提供管理员令牌，`trusted_lan` 只对直连私网免令牌。企业服务器应使用 `enterprise`：仅接受受信客户端/代理、要求 HTTPS 和精确 Origin，且所有业务 API 读写均需管理员令牌；前置网关仍应增加企业身份认证、限流和审计。
 - JSON 请求应使用 `Content-Type: application/json`。
 - 日期使用 ISO 8601；调度时区默认是 `Asia/Shanghai`。
 - `400/422` 表示输入问题，`403` 表示配置编辑令牌或 LAN 管理权限无效，`404` 表示资源不存在，`409` 表示资源正在执行、配置 revision 冲突，或意图确认快照因原问题变化、篡改或过期而不能继续使用，`502` 表示真实来源、模型或投递链路失败。
@@ -98,9 +98,9 @@
 
 ### `POST /api/v1/sources/{source_id}/auth/test` — 真实测试授权
 
-- 用途：执行有界真实搜索，而不是只检查本地标记。中国招标投标网验证搜索与免费会员详情；千里马在同一个系统托管持久浏览器中执行一次“服务器”首屏查询，最多读取 20 条列表摘要。首次登录必须可见；Linux 无显示服务只复用已验证配置，不会在后台代填账号或验证码。
+- 用途：执行有界真实搜索，而不是只检查本地标记。中国招标投标网验证搜索与免费会员详情；千里马在同一个系统托管持久 profile 中执行一次“服务器”列表查询，默认最多 2 页/40 条，并记录冷却、每日预算和健康结果。首次登录必须可见；Linux 无显示服务只复用已验证配置，不会在后台代填账号或验证码。
 - 路径参数：`source_id`；必须携带短期编辑令牌；远端请求还要符合当前 LAN 策略；无请求体。
-- 返回：`source_id`、`success`、`passed/failed/inconclusive`、脱敏诊断和耗时。零结果会返回 `inconclusive` 而不是误报登录失败；每次通过后的最长信任期为 7 天。千里马通过后只增强用户主动的即时任务，定时任务仍不消费会员登录态。
+- 返回：`source_id`、`success`、`passed/failed/inconclusive`、脱敏诊断和耗时。零结果会返回 `inconclusive` 而不是误报登录失败。千里马 profile 不使用人为 7 天定时器，每次查询以原站真实健康检查决定是否仍有效；会员监控默认关闭，开启时还必须提供书面授权或官方 API 的记录编号。
 - 副作用：会访问来源网站，可能消耗少量免费账号查询次数；遵守全局限速和有界重试，不下载付费文件、不执行投标操作。
 - 错误：403 表示请求来源/令牌问题；409 表示未保存授权、会话过期或来源不支持；502 表示请求本身无法执行。站点门禁、无法证明详情解锁和零候选会通过脱敏结果状态返回。
 - 示例：`POST /api/v1/sources/cecbid/auth/test`，请求头 `X-BidPilot-Config-Token: <token>`。
@@ -503,7 +503,7 @@ Outbox 状态不要按字面猜测，含义如下：
 ### `GET /api/v1/opportunities` — 筛选机会
 
 - 用途：看板与搜索。
-- 参数：可选 `stage`（new/following/bidding/won/lost/archived）和 `search`。
+- 参数：可选 `stage`（new/following/bidding/won/lost/archived）和 `search`；后者可匹配项目、采购人、负责人、下一步执行动作、标签或备注。
 - 返回：匹配机会及最新项目快照。
 - 副作用：无。
 - 错误：422，stage 非法。
@@ -511,7 +511,7 @@ Outbox 状态不要按字面猜测，含义如下：
 
 ### `GET /api/v1/opportunities/{opportunity_id}` — 机会详情
 
-- 用途：读取快照、阶段、负责人、下一步、标签和备注。
+- 用途：读取项目业务对象快照，以及阶段、负责人、下一步执行动作、计划完成时间、标签和备注。
 - 参数：`opportunity_id`。
 - 返回：`Opportunity`。
 - 副作用：无。
@@ -520,19 +520,19 @@ Outbox 状态不要按字面猜测，含义如下：
 
 ### `PATCH /api/v1/opportunities/{opportunity_id}` — 更新跟进
 
-- 用途：修改 `stage`、`owner`、`next_action_at`、`notes`、`tags`、`is_read`。
-- 请求：路径中的 `opportunity_id` 为机会卡片本地 ID；JSON 只需提交要修改的字段。`stage` 可为 `new/following/bidding/won/lost/archived`，`tags` 是字符串数组，`next_action_at` 使用 ISO 8601 时间或 null；不允许提交原始公告标题、采购人、评分或 URL。
+- 用途：修改 `stage`、`owner`、`next_action`、`next_action_at`、`notes`、`tags`、`is_read`，把“跟踪某个项目”落实为有责任人的可执行动作。
+- 请求：路径中的 `opportunity_id` 为机会卡片本地 ID；JSON 只需提交要修改的字段。`stage` 可为 `new/following/bidding/won/lost/archived`；`next_action` 是不超过 500 字的具体业务动作；`tags` 是字符串数组；`next_action_at` 使用 ISO 8601 时间或 null。不允许提交原始公告标题、采购人、评分或 URL。
 - 返回：更新后的机会。
 - 副作用：写人工跟进状态，不修改原始证据；后续公告刷新不覆盖人工字段。
 - 错误：404 不存在；422 枚举、日期或长度非法。
-- 示例：`curl -X PATCH http://127.0.0.1:8000/api/v1/opportunities/<opportunity_id> -H "Content-Type: application/json" -d '{"stage":"following","owner":"王同学","tags":["重点"],"is_read":true}'`。
+- 示例：`curl -X PATCH http://127.0.0.1:8000/api/v1/opportunities/<opportunity_id> -H "Content-Type: application/json" -d '{"stage":"following","owner":"王同学","next_action":"联系采购人核验报名材料","next_action_at":"2026-08-06T17:00:00+08:00","tags":["重点"],"is_read":true}'`。
 
 ### `DELETE /api/v1/opportunities/{opportunity_id}` — 删除工作台卡片
 
 - 用途：移除已经确认不再跟进的机会卡片。网页会先展示影响范围并要求再次点击确认；日常整理优先使用“归档保留”。
 - 参数：路径中的 `opportunity_id` 是机会卡片本地 ID；没有请求体。不要传 `canonical_id` 或 `project_key`，以免把工作台操作误解为删除原始公告。
 - 返回：HTTP 200 和 `{"deleted":true}`。删除后再读取该机会或它的工作台时间线会返回 404。
-- 副作用：只删除 `opportunities` 表中这一张卡片，同时丢弃它的阶段、负责人、下一步时间、备注、标签和已读状态。不会删除 `tender_items` 原始标讯、`runs/run_items` 运行证据、报告、反馈、订阅或投递账本；同一真实标讯以后可以重新加入并生成新的机会 ID。
+- 副作用：只删除 `opportunities` 表中这一张卡片，同时丢弃它的阶段、负责人、下一步执行动作、计划完成时间、备注、标签和已读状态。不会删除 `tender_items` 原始标讯、`runs/run_items` 运行证据、报告、反馈、订阅或投递账本；同一真实标讯以后可以重新加入并生成新的机会 ID。
 - 错误：404 表示机会不存在或已经删除；数据库不可用时返回 500。网络中断时不要盲目重复删除，应先用 GET 确认卡片是否仍存在。
 - 示例：`DELETE /api/v1/opportunities/8f1c...`。成功后重新执行 `GET /api/v1/opportunities` 刷新看板。
 
@@ -569,7 +569,7 @@ Outbox 状态不要按字面猜测，含义如下：
 
 - 用途：按脏字段局部保存白名单配置并持久化；普通运行参数立即生效，网络范围、策略、可信网段、管理员令牌和端口统一在重启后生效。
 - 请求头：`X-BidPilot-Config-Token`。
-- 请求：必须带读取时取得的 `revision`。敏感字段留空/省略表示保持；清除使用 `clear_secrets`；普通字段恢复环境变量或默认值使用 `reset_fields`。`network_access_mode` 为 `local/lan`，`lan_access_policy` 为 `admin_token/trusted_lan`，可信网段可填 `auto`。Telegram 使用 `telegram_bot_token`、`telegram_chat_id`、可选 `telegram_message_thread_id`、`telegram_disable_notification` 和 `telegram_protect_content`；Slack 使用 `slack_webhook_url`，且只接受 `hooks.slack.com` 或 `hooks.slack-gov.com` 的官方 HTTPS `/services/{team}/{channel}/{secret}` 地址。
+- 请求：必须带读取时取得的 `revision`。敏感字段留空/省略表示保持；清除使用 `clear_secrets`；普通字段恢复环境变量或默认值使用 `reset_fields`。`network_access_mode` 为 `local/lan/enterprise`，`lan_access_policy` 为 `admin_token/trusted_lan`，可信网段可填 `auto`。企业模式还需明确的 `trusted_proxy_networks`、至少一个 `enterprise_allowed_origins` 及管理员令牌。Telegram 使用 `telegram_bot_token`、`telegram_chat_id`、可选 `telegram_message_thread_id`、`telegram_disable_notification` 和 `telegram_protect_content`；Slack 使用 `slack_webhook_url`，且只接受 `hooks.slack.com` 或 `hooks.slack-gov.com` 的官方 HTTPS `/services/{team}/{channel}/{secret}` 地址。
 - 返回：脱敏后的最新配置和递增 revision；网络部分明确区分当前与重启后状态。
 - 副作用：写 `runtime_config`；敏感值用本机 Fernet 密钥加密后存入 SQLite。
 - 错误：403 令牌或 LAN 策略未通过；409 revision 冲突；422 未知字段、URL、私网 CIDR、管理员令牌强度、端口、超时或枚举非法。

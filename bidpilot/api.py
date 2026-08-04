@@ -42,7 +42,12 @@ from bidpilot.models import (
     TenderQuerySpec,
     TenderRecord,
 )
-from bidpilot.network_access import client_in_trusted_networks
+from bidpilot.network_access import (
+    client_in_trusted_networks,
+    parse_https_origins,
+    parse_trusted_proxy_networks,
+    resolve_forwarded_client,
+)
 from bidpilot.runtime_config import (
     ConfigEditTokenManager,
     ConnectionTestResult,
@@ -243,6 +248,31 @@ def create_app(
         except ValueError:
             return client_host == "testclient"
 
+    def enterprise_request_context(request: Request) -> tuple[str, bool, bool]:
+        """Return effective client, whether the peer is a trusted proxy, and HTTPS state."""
+
+        peer_host = request.client.host if request.client else ""
+        proxy_value = str(service.runtime_config.effective_restart_value("trusted_proxy_networks"))
+        client_host, used_forwarded = resolve_forwarded_client(
+            peer_host,
+            request.headers.get("X-Forwarded-For", ""),
+            proxy_value,
+        )
+        try:
+            peer_address = ipaddress.ip_address(peer_host)
+            if isinstance(peer_address, ipaddress.IPv6Address) and peer_address.ipv4_mapped:
+                peer_address = peer_address.ipv4_mapped
+            peer_is_proxy = any(
+                peer_address in network for network in parse_trusted_proxy_networks(proxy_value)
+            )
+        except ValueError:
+            peer_is_proxy = False
+        forwarded_proto = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip()
+        https = request.url.scheme == "https" or (
+            peer_is_proxy and forwarded_proto.lower() == "https"
+        )
+        return client_host, used_forwarded or peer_is_proxy, https
+
     def require_config_token(
         x_bidpilot_config_token: Annotated[
             str | None,
@@ -283,6 +313,81 @@ def create_app(
 
     @app.middleware("http")
     async def guard_lan_mutations(request: Request, call_next):
+        effective_mode = service.runtime_config.effective_restart_value("network_access_mode")
+        effective_token = str(service.runtime_config.effective_restart_value("lan_admin_token"))
+        if effective_mode == "enterprise" and request.url.path != "/health":
+            client_host, _trusted_proxy, https = enterprise_request_context(request)
+            effective_networks = str(
+                service.runtime_config.effective_restart_value("lan_trusted_networks")
+            )
+            try:
+                loopback_client = ipaddress.ip_address(client_host).is_loopback
+            except ValueError:
+                loopback_client = False
+            local_control = (
+                loopback_client
+                and request.url.path in {"/api/v1/system/status", "/api/v1/system/shutdown"}
+                and control_plane.verify(request.headers.get("X-BidPilot-Control-Token"))
+            )
+            if not loopback_client and not client_in_trusted_networks(
+                client_host, effective_networks
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "企业内网访问被拒绝：客户端不在受信网段"},
+                )
+            if not https and not local_control:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "企业内网模式要求通过 HTTPS 网关访问，禁止明文传输管理令牌"},
+                )
+            origin = request.headers.get("Origin", "").rstrip("/").lower()
+            allowed_origins = {
+                item.lower()
+                for item in parse_https_origins(
+                    str(
+                        service.runtime_config.effective_restart_value("enterprise_allowed_origins")
+                    )
+                )
+            }
+            if origin and origin not in allowed_origins and not local_control:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "企业浏览器来源不在 HTTPS 白名单"},
+                )
+            if request.method.upper() == "OPTIONS":
+                response = Response(status_code=204)
+            elif (
+                request.url.path.startswith("/api/")
+                and not local_control
+                and not (
+                    effective_token
+                    and secrets.compare_digest(
+                        request.headers.get("X-BidPilot-Admin-Token", ""), effective_token
+                    )
+                )
+            ):
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": "企业内网 API 需要有效的管理员令牌"},
+                )
+            else:
+                response = await call_next(request)
+            if origin:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = (
+                    "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+                )
+                response.headers["Access-Control-Allow-Headers"] = (
+                    "Content-Type,X-BidPilot-Admin-Token,X-BidPilot-Config-Token,"
+                    "X-BidPilot-Control-Token"
+                )
+                response.headers["Vary"] = "Origin"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            if request.url.path.startswith("/api/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
         if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and not is_loopback_request(
             request
         ):
@@ -293,9 +398,7 @@ def create_app(
             if control_shutdown:
                 return await call_next(request)
             supplied = request.headers.get("X-BidPilot-Admin-Token", "")
-            effective_mode = service.runtime_config.effective_restart_value("network_access_mode")
             effective_policy = service.runtime_config.effective_restart_value("lan_access_policy")
-            effective_token = str(service.runtime_config.effective_restart_value("lan_admin_token"))
             effective_networks = str(
                 service.runtime_config.effective_restart_value("lan_trusted_networks")
             )
@@ -1223,7 +1326,7 @@ def create_app(
             tag="机会工作台",
             summary="筛选机会列表",
             purpose="按阶段和关键字读取项目级机会，用于看板、负责人检索和待办管理。",
-            parameters="可选查询参数 `stage`：new/following/bidding/won/lost/archived；`search`：匹配项目、采购人、负责人、标签或备注。",
+            parameters="可选查询参数 `stage`：new/following/bidding/won/lost/archived；`search`：匹配项目、采购人、负责人、下一步执行动作、标签或备注。",
             returns="HTTP 200；返回匹配机会及每个项目的最新公告快照。",
             side_effects="无，只读 SQLite。",
             errors="422：stage 不是合法枚举值。",
@@ -1264,12 +1367,12 @@ def create_app(
         **_api_docs(
             tag="机会工作台",
             summary="更新机会跟进信息",
-            purpose="局部更新阶段、负责人、下一步时间、备注、标签或已读状态；后续公告刷新不会覆盖这些人工字段。",
-            parameters="路径参数 `opportunity_id`；JSON 可提交 `stage`、`owner`、`next_action_at`、`notes`、`tags`、`is_read`。",
+            purpose="局部更新阶段、负责人、下一步执行动作、计划完成时间、备注、标签或已读状态；后续公告刷新不会覆盖这些人工字段。",
+            parameters="路径参数 `opportunity_id`；JSON 可提交 `stage`、`owner`、`next_action`、`next_action_at`、`notes`、`tags`、`is_read`。`next_action` 是不超过 500 字的可执行业务动作。",
             returns="HTTP 200；返回更新后的机会。",
             side_effects="【有副作用】写入人工跟进状态。不会修改原始标讯证据。",
             errors="404：机会不存在；422：阶段、日期或字段长度非法。",
-            example='PATCH /api/v1/opportunities/{id}\n{"stage":"following","owner":"王同学","tags":["重点","充电桩"],"is_read":true}',
+            example='PATCH /api/v1/opportunities/{id}\n{"stage":"following","owner":"王同学","next_action":"联系采购人核验报名材料","next_action_at":"2026-08-06T17:00:00+08:00","tags":["重点","充电桩"],"is_read":true}',
             responses={404: "机会不存在。", 422: "字段格式或枚举值非法。"},
         ),
     )
@@ -1286,7 +1389,7 @@ def create_app(
             tag="机会工作台",
             summary="从机会工作台删除卡片",
             purpose=(
-                "移除用户不再跟进的机会卡片及其中的阶段、负责人、下一步、备注和标签。"
+                "移除用户不再跟进的机会卡片及其中的阶段、负责人、下一步执行动作、计划完成时间、备注和标签。"
                 "这只是工作台整理操作；同一真实标讯以后仍可重新加入。"
             ),
             parameters="路径参数 `opportunity_id`：机会卡片的本地 ID。无请求体；网页端应先进行二次确认。",
@@ -1627,7 +1730,7 @@ def create_app(
             tag="配置中心",
             summary="保存白名单运行时配置",
             purpose="在网页中按字段保存 AI、检索、worker、网络和推送通道设置。仅接受 schema 明列字段；普通字段立即生效，网络字段在重启后一次性生效，避免保存瞬间改变当前连接权限。",
-            parameters="请求头必须含短期编辑令牌。JSON 必须携带读取时得到的 `revision`，可局部提交任意白名单字段；`network_access_mode` 为 local/lan，`lan_access_policy` 为 admin_token/trusted_lan，`lan_trusted_networks` 可用 auto。敏感字段留空表示保持原值，清除放入 `clear_secrets`，普通字段恢复环境变量/默认值放入 `reset_fields`。",
+            parameters="请求头必须含短期编辑令牌。JSON 必须携带读取时得到的 `revision`，可局部提交任意白名单字段；`network_access_mode` 为 local/lan/enterprise，`lan_access_policy` 为 admin_token/trusted_lan，`lan_trusted_networks` 可用 auto。企业模式还要求受信代理网段、HTTPS Origin 白名单和管理员令牌。敏感字段留空表示保持原值，清除放入 `clear_secrets`，普通字段恢复环境变量/默认值放入 `reset_fields`。",
             returns="HTTP 200；返回脱敏后的最新 RuntimeConfigView、递增 revision，以及网络配置当前生效值和重启后值。",
             side_effects="【有副作用】原子写入 runtime_config 表并更新共享 Settings。未知字段被拒绝；网络监听和 LAN 权限在重启前保持不变；响应和日志不回显敏感原文。",
             errors="403：编辑令牌或局域网策略未通过；409：revision 已过期；422：未知字段、网段、令牌强度、URL、端口、超时或枚举值非法。",

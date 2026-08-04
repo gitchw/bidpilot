@@ -1156,6 +1156,7 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
         OpportunityUpdate(
             stage=OpportunityStage.FOLLOWING,
             owner="王同学",
+            next_action="联系采购人并核验报名材料",
             next_action_at=next_action,
             notes="联系采购人并核验资质要求",
             tags=["重点", "服务器", "重点"],
@@ -1164,6 +1165,7 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
     )
     assert updated.stage == OpportunityStage.FOLLOWING
     assert updated.owner == "王同学"
+    assert updated.next_action == "联系采购人并核验报名材料"
     assert updated.tags == ["重点", "服务器"]
     assert updated.next_action_at == next_action
     assert service.list_opportunities(search="采购人")[0]["id"] == opportunity.id
@@ -1176,6 +1178,7 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
     persisted = restarted.get_opportunity(opportunity.id)
     assert persisted is not None
     assert persisted.owner == "王同学"
+    assert persisted.next_action == "联系采购人并核验报名材料"
     assert persisted.notes == "联系采购人并核验资质要求"
     service.set_feedback(
         tender.canonical_id,
@@ -1190,6 +1193,16 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
             json={"stage": "not-a-stage"},
         )
         assert invalid.status_code == 422
+        api_updated = client.patch(
+            f"/api/v1/opportunities/{opportunity.id}",
+            json={
+                "next_action": "提交资质清单并由项目负责人复核",
+                "next_action_at": "2026-07-21T17:00:00+08:00",
+            },
+        )
+        assert api_updated.status_code == 200
+        assert api_updated.json()["next_action"] == "提交资质清单并由项目负责人复核"
+        assert api_updated.json()["next_action_at"] == "2026-07-21T17:00:00+08:00"
         missing = client.post(
             "/api/v1/opportunities",
             json={"canonical_id": "forged", "version_hash": "forged"},
@@ -1238,13 +1251,19 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
         assert recreated.json()["record"]["event_type"] == "中标公告"
         assert recreated.json()["stage"] == "new"
         assert recreated.json()["owner"] == ""
+        assert recreated.json()["next_action"] == ""
         assert recreated.json()["notes"] == ""
         assert recreated.json()["tags"] == []
         already_deleted = client.delete(f"/api/v1/opportunities/{opportunity.id}")
         assert already_deleted.status_code == 404
-        delete_contract = client.get("/openapi.json").json()["paths"][
-            "/api/v1/opportunities/{opportunity_id}"
-        ]["delete"]
+        openapi = client.get("/openapi.json").json()
+        update_contract = openapi["paths"]["/api/v1/opportunities/{opportunity_id}"]["patch"]
+        assert "`next_action`" in update_contract["description"]
+        next_action_schema = openapi["components"]["schemas"]["OpportunityUpdate"]["properties"][
+            "next_action"
+        ]
+        assert {item.get("maxLength") for item in next_action_schema["anyOf"]} == {None, 500}
+        delete_contract = openapi["paths"]["/api/v1/opportunities/{opportunity_id}"]["delete"]
         assert delete_contract["summary"] == "从机会工作台删除卡片"
         assert delete_contract["responses"]["200"]["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/DeleteResultResponse"
@@ -1352,6 +1371,7 @@ async def test_new_lifecycle_event_refreshes_opportunity_without_losing_follow_u
         OpportunityUpdate(
             stage=OpportunityStage.FOLLOWING,
             owner="项目负责人",
+            next_action="核验更正内容并更新报价清单",
             notes="已核验初始招标公告",
             is_read=True,
         ),
@@ -1366,6 +1386,7 @@ async def test_new_lifecycle_event_refreshes_opportunity_without_losing_follow_u
     assert refreshed.is_read is False
     assert refreshed.stage == OpportunityStage.FOLLOWING
     assert refreshed.owner == "项目负责人"
+    assert refreshed.next_action == "核验更正内容并更新报价清单"
     assert refreshed.notes == "已核验初始招标公告"
     assert [item["event_type"] for item in service.opportunity_timeline(opportunity.id)] == [
         "招标公告",

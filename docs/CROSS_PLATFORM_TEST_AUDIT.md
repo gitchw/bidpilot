@@ -1,10 +1,10 @@
 # 标擎 BidPilot 跨平台测试与审计报告
 
-报告日期：2026-08-02
+报告日期：2026-08-04
 
 审计对象：`gitchw/bidpilot` 主分支跨平台终版
 
-结论：Windows、Linux、macOS 自动化矩阵全部通过；Debian systemd 与 Ubuntu 容器均完成真实运行验证。
+结论：当前增强版在 Windows 本地 305 项测试与全部静态门禁通过；最终交付以同一 main 提交的 Windows、Ubuntu、macOS 双 Python 矩阵及 Ubuntu 企业 HTTPS 容器作业为准。上一基线已完成 Debian systemd 真实运行。
 
 ## 1. 执行摘要
 
@@ -12,10 +12,10 @@
 
 修复后：
 
-- Windows 本地 288 项 Pytest 全通过；
-- Debian 13 / Python 3.13 原生目录 288 项 Pytest 全通过；
+- Windows 本地增强版 305 项 Pytest 全通过；
+- Debian 13 / Python 3.13 基线版 288 项 Pytest 全通过；
 - Debian WSL2 `systemd 257` 真实启动 Web/worker，两个单元均为 `active`，API 与 CLI 均确认 worker 在线；
-- GitHub Actions 7 个作业全部通过：Windows/Ubuntu/macOS × Python 3.11/3.13，以及 Ubuntu Docker Compose/镜像构建；
+- GitHub Actions 共 7 个作业：Windows/Ubuntu/macOS × Python 3.11/3.13，以及 Ubuntu Compose/镜像/企业 HTTPS 栈；最终结论按交付 main 提交的 run 核验；
 - Ruff lint、Ruff format、compileall、前端 JavaScript、JSON/YAML/TOML 与 Compose 模型均通过。
 
 ## 2. 失败根因与修复
@@ -39,20 +39,22 @@ Linux/macOS 输出包含 ANSI 样式序列，视觉上仍是 `--host`，但程�
 - Actions 升级到官方 v7 主版本，消除旧 Node 运行时弃用告警；
 - systemd 单元加入最小权限、专用用户、只读系统、私有临时目录和严格写目录；
 - 千里马增加 `auto/visible/headless` 策略，区分首次可见登录与后台已验证配置复用。
+- enterprise 环境会锁定网络安全字段，旧 SQLite 不能降级；内部代理网络与仅出站来源网络分离。
+- 千里马授权、Web、worker 与清除共用 OS 级跨进程 profile 锁；实时健康检查替代人为 7 天过期。
 
 ## 3. 验证矩阵
 
 | 平台 | Python | 范围 | 结果 |
 |---|---:|---|---|
-| Windows 本机 | 3.11 | 288 项测试 + 全部静态检查 | 通过 |
+| Windows 本机 | 3.11 | 305 项测试 + 全部静态检查 | 通过 |
 | Debian 13 WSL2 | 3.13.5 | 288 项测试 + lint/format/compile/config | 通过 |
 | Debian 13 WSL2 | 3.13.5 | 真实 systemd Web/worker、健康与心跳 | 通过 |
 | GitHub Windows | 3.11 / 3.13 | 完整 CI | 通过 |
 | GitHub Ubuntu | 3.11 / 3.13 | 完整 CI | 通过 |
 | GitHub macOS | 3.11 / 3.13 | 完整 CI | 通过 |
-| GitHub Ubuntu | Docker | Compose 模型 + 镜像构建 | 通过 |
+| GitHub Ubuntu | Docker | 基础/企业 Compose + Chromium 镜像 + HTTPS 健康启动 | 以最终 main run 为准 |
 
-GitHub Actions 证据：`cross-platform-ci` run `30736770753`，结论 `success`，提交 `d4d5671`。
+GitHub Actions 基线证据：`cross-platform-ci` run `30865890049`，7 个作业 `success`。增强版以最终推送到 `main` 的最新 run 为交付证据。
 
 ## 4. 登录来源审计
 
@@ -65,11 +67,11 @@ GitHub Actions 证据：`cross-platform-ci` run `30736770753`，结论 `success`
 
 ### 4.2 千里马
 
-- 真实用户登录页已验证“服务器”首屏可见 20 条免费会员列表结果；
-- 普通即时任务保留 3 条真实 `auth_level=free_member` 记录；
+- 真实用户持久 profile 已验证“服务器”无头查询读取 2 页、40 条免费会员列表结果；
+- 本次服务器式健康复验结果为 `authorized`，用量账本记录 `last_outcome=passed`、`pages_read=2`、`last_kept=40`；
 - 不导出 Cookie，不把 Cookie 交给 HTTP 客户端；
-- 仅即时、单主题、一次首屏、最多 20 条、10 秒冷却；
-- 定时任务继续只用公开分类，不翻页、不访问付费详情；
+- 默认仅用户主动的即时、单主题查询；最多 2 页/40 条、30 秒冷却、每日 24 次；
+- 会员监控默认关闭，只有书面授权/官方 API 记录编号门禁满足后才可启用；始终不访问付费详情；
 - Linux 后台只允许复用已经通过可见登录与真实测试的持久浏览器配置。
 
 ## 5. systemd 真实运行记录
@@ -103,16 +105,16 @@ systemd smoke test passed
 | 标题/时间/链接/核心内容/附件 | 运行结果 Word 与结构化记录 |
 | 定时与仅新增 | SQLite worker、版本账本、逐目标增量 Outbox |
 | 完整代码与操作步骤 | 源码 ZIP、零基础手册、API/配置/用户文档 |
-| 多问题完整 Demo | 3–5 分钟分镜覆盖正向、零结果、登录与订阅 |
+| 多问题完整 Demo | 5 分钟分镜覆盖正向、零结果、登录、机会动作、订阅与企业部署 |
 
 ## 7. 已知边界与风险披露
 
 - 真实网站可能调整 DOM、WAF 或服务策略；每轮来源诊断必须保留，不能用缓存伪装在线成功。
 - 普通 Webhook/SMTP 属于外部 `at-least-once`，外部已接收但本地回执前崩溃的极小窗口可能产生重复通知。
-- 内置 LAN 模式不是公网多用户系统；公网必须增加独立身份、TLS、角色权限与审计。
-- 千里马免费会员增强不能进入定时任务；这是一条主动遵守原站权益的硬边界。
+- 内置 LAN 模式不是公网多用户系统；企业服务器应使用 HTTPS gateway + enterprise 边界，后端 8000 不直接暴露。
+- 千里马会员监控默认关闭；只有取得书面授权或官方 API 权利并登记记录编号后才能启用，且仍受预算、互斥和付费详情禁用约束。
 - 本报告中的效率、覆盖率和转化指标是试点目标，不是既有客户业绩；需在超聚变真实基线中验证。
 
 ## 8. 审计结论
 
-本轮跨平台失败已经从日志证据出发完成根因修复，并通过独立 Linux、官方云 runner 和真实 systemd/容器三层验证。系统已具备 Windows 演示、Linux 后台运行和 macOS 开发/验收能力；登录来源在不导出千里马 Cookie、不绕过付费权限的前提下保持可用。
+本轮把登录持久化、企业网络与机会动作纳入同一发布门禁：系统具备 Windows 演示、Linux 后台运行和 macOS 开发/验收设计；千里马会话在不导出 Cookie、不绕过付费权限的前提下完成服务器式复验。最终是否发布由 main 提交的 7 个 GitHub 作业与交付哈希共同决定。

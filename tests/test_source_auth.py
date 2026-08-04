@@ -201,7 +201,8 @@ def test_qianlima_is_managed_as_persistent_browser_without_cookie_replay(tmp_pat
     assert status.state == "not_authorized"
     assert status.login_url == "https://search.vip.qianlima.com/"
     assert "不导出 Cookie" in status.authorization_scope
-    assert "不定时抓取" in status.authorization_scope
+    assert "管理员显式开启" in status.authorization_scope
+    assert "每日预算" in status.authorization_scope
 
 
 def test_qianlima_exposes_current_user_controlled_free_login_handoff(tmp_path: Path):
@@ -269,11 +270,58 @@ async def test_qianlima_persistent_profile_completes_tests_and_clears_without_co
     assert "免费登录态有效" in tested.message
     assert source.profile_available()
     assert manager.status("qianlima").state == "authorized"
+    assert context.closed is True
+    assert playwright.stopped is True
+    assert source._read_profile_state()["expires_at"] == ""
+
+    async def foreground_cooling_down(_spec, *, allow_unverified=False):
+        assert allow_unverified is True
+        return SourceSearchResult(
+            source=source.name,
+            status=SourceStatus.SKIPPED,
+            message="距上次免费会员查询不足冷却时间",
+        )
+
+    source.search_foreground = foreground_cooling_down  # type: ignore[method-assign]
+    retested = await manager.test("qianlima")
+    assert retested.status == "inconclusive"
+    assert manager.status("qianlima").state == "authorized"
 
     cleared = await manager.clear("qianlima")
     assert cleared.state == "not_authorized"
     assert not source.profile_dir.exists()
     assert manager.db.get_source_authorization("qianlima") is None
+
+
+def test_qianlima_status_uses_live_profile_health_not_legacy_timer(tmp_path: Path):
+    settings = make_settings(tmp_path)
+    source = QianlimaSource(settings)
+    manager = SourceAuthManager(Database(settings.database_path), settings, [source])
+    source.mark_profile("authorized")
+    manager.db.set_source_authorization(
+        source_id="qianlima",
+        encrypted_cookie=manager.vault.encrypt(source.profile_marker_value),
+        cookie_names=[],
+        domains=["search.vip.qianlima.com", "vip.qianlima.com"],
+        authorized_at="2026-08-01T00:00:00+00:00",
+        expires_at="2026-08-02T00:00:00+00:00",
+        message="legacy timer",
+    )
+    manager.db.update_source_authorization_test(
+        "qianlima",
+        status="passed",
+        message="verified",
+    )
+
+    healthy = manager.status("qianlima")
+    assert healthy.state == "authorized"
+    assert healthy.expires_at is None
+
+    source.mark_profile("expired")
+    expired = manager.status("qianlima")
+    assert expired.state == "expired"
+    assert expired.last_test_status == "failed"
+    assert "实时健康检查" in expired.message
 
 
 async def test_unverified_or_failed_session_is_never_loaded_for_background_search(

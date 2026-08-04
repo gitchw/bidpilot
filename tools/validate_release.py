@@ -18,6 +18,21 @@ def main() -> None:
         value = yaml.safe_load(handle)
     if not isinstance(value, dict) or not {"web", "worker"}.issubset(value.get("services", {})):
         raise ValueError("compose.yaml must define web and worker services")
+    enterprise_path = ROOT / "deploy" / "compose" / "compose.enterprise.yaml"
+    with enterprise_path.open(encoding="utf-8") as handle:
+        enterprise = yaml.safe_load(handle)
+    services = enterprise.get("services", {}) if isinstance(enterprise, dict) else {}
+    networks = enterprise.get("networks", {}) if isinstance(enterprise, dict) else {}
+    if not {"web", "worker", "gateway"}.issubset(services):
+        raise ValueError("enterprise compose must define web, worker and gateway")
+    if services["web"].get("ports") or "8000" not in services["web"].get("expose", []):
+        raise ValueError("enterprise web must expose but never publish port 8000")
+    if networks.get("bidpilot-backend", {}).get("internal") is not True:
+        raise ValueError("enterprise proxy network must stay internal")
+    if "bidpilot-egress" not in networks:
+        raise ValueError("enterprise web/worker require an un-published egress network")
+    if not (ROOT / "deploy" / "nginx" / "bidpilot.conf.template").exists():
+        raise ValueError("enterprise Nginx template is missing")
     for unit in ("bidpilot-web.service", "bidpilot-worker.service"):
         text = (ROOT / "deploy" / "systemd" / unit).read_text(encoding="utf-8")
         required = ("[Unit]", "[Service]", "[Install]", "Restart=on-failure")

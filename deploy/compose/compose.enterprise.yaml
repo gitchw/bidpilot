@@ -1,0 +1,97 @@
+name: bidpilot-enterprise
+
+x-bidpilot-environment: &bidpilot-environment
+  BIDPILOT_ENV: production
+  BIDPILOT_HOST: 0.0.0.0
+  BIDPILOT_PORT: 8000
+  BIDPILOT_NETWORK_ACCESS_MODE: enterprise
+  BIDPILOT_LAN_ACCESS_POLICY: admin_token
+  BIDPILOT_LAN_TRUSTED_NETWORKS: ${BIDPILOT_TRUSTED_CLIENT_NETWORKS:?set private client CIDRs}
+  BIDPILOT_LAN_ADMIN_TOKEN: ${BIDPILOT_LAN_ADMIN_TOKEN:?set a random admin token of at least 16 characters}
+  BIDPILOT_TRUSTED_PROXY_NETWORKS: 172.30.0.0/24
+  BIDPILOT_ENTERPRISE_ALLOWED_ORIGINS: https://${BIDPILOT_SERVER_NAME:?set the internal DNS name}
+  BIDPILOT_EMBEDDED_WORKER: "false"
+  BIDPILOT_TIMEZONE: ${BIDPILOT_TIMEZONE:-Asia/Shanghai}
+  BIDPILOT_DATA_DIR: /app/data
+  BIDPILOT_CONTROL_DIR: /app/data
+  BIDPILOT_DATABASE_PATH: /app/data/bidpilot.db
+  BIDPILOT_REPORT_DIR: /app/outputs/reports
+  BIDPILOT_QIANLIMA_BROWSER_MODE: ${BIDPILOT_QIANLIMA_BROWSER_MODE:-auto}
+  BIDPILOT_QIANLIMA_MEMBER_MAX_PAGES: "${BIDPILOT_QIANLIMA_MEMBER_MAX_PAGES:-2}"
+  BIDPILOT_QIANLIMA_MEMBER_MAX_RESULTS: "${BIDPILOT_QIANLIMA_MEMBER_MAX_RESULTS:-40}"
+  BIDPILOT_QIANLIMA_MEMBER_COOLDOWN_SECONDS: "${BIDPILOT_QIANLIMA_MEMBER_COOLDOWN_SECONDS:-30}"
+  BIDPILOT_QIANLIMA_MEMBER_DAILY_QUERY_BUDGET: "${BIDPILOT_QIANLIMA_MEMBER_DAILY_QUERY_BUDGET:-24}"
+  BIDPILOT_QIANLIMA_MEMBER_MONITORING_ENABLED: "${BIDPILOT_QIANLIMA_MEMBER_MONITORING_ENABLED:-false}"
+  BIDPILOT_QIANLIMA_MEMBER_MONITORING_AUTHORIZATION_REFERENCE: "${BIDPILOT_QIANLIMA_MEMBER_MONITORING_AUTHORIZATION_REFERENCE:-}"
+
+services:
+  web:
+    build:
+      context: ../..
+    init: true
+    restart: unless-stopped
+    environment: *bidpilot-environment
+    expose:
+      - "8000"
+    volumes:
+      - bidpilot-data:/app/data
+      - bidpilot-reports:/app/outputs/reports
+    networks:
+      bidpilot-backend:
+        ipv4_address: 172.30.0.10
+      bidpilot-egress: {}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    stop_grace_period: 30s
+
+  worker:
+    build:
+      context: ../..
+    init: true
+    restart: unless-stopped
+    command: ["python", "-m", "bidpilot", "worker"]
+    environment: *bidpilot-environment
+    volumes:
+      - bidpilot-data:/app/data
+      - bidpilot-reports:/app/outputs/reports
+    networks:
+      - bidpilot-backend
+      - bidpilot-egress
+    depends_on:
+      web:
+        condition: service_healthy
+    stop_grace_period: 30s
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    environment:
+      BIDPILOT_SERVER_NAME: ${BIDPILOT_SERVER_NAME:?set the internal DNS name}
+    ports:
+      - "${BIDPILOT_HTTPS_BIND:-0.0.0.0}:443:443"
+    volumes:
+      - ../nginx/bidpilot.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${BIDPILOT_TLS_CERT_DIR:?mount a directory containing fullchain.pem and privkey.pem}:/etc/nginx/tls:ro
+    networks:
+      bidpilot-backend:
+        ipv4_address: 172.30.0.2
+    depends_on:
+      web:
+        condition: service_healthy
+
+networks:
+  bidpilot-backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  bidpilot-egress:
+    driver: bridge
+
+volumes:
+  bidpilot-data:
+  bidpilot-reports:

@@ -163,8 +163,9 @@ class SourceAuthManager:
                 allowed_domains=("search.vip.qianlima.com", "vip.qianlima.com"),
                 setting_field=None,
                 authorization_scope=(
-                    "保留用户本人登录的独立浏览器配置文件；只允许即时任务执行一次首屏免费会员检索，"
-                    "不导出 Cookie、不定时抓取、不翻页、不读取付费详情。"
+                    "保留用户本人登录的独立浏览器配置文件；即时任务执行有界免费列表检索，"
+                    "只有已有书面授权或官方 API 记录编号且管理员显式开启后，监控任务才可复用；"
+                    "所有查询仍受页数、冷却和每日预算限制，不导出 Cookie、不读取付费详情。"
                 ),
                 verification_queries=("服务器",),
                 session_mode="persistent_browser",
@@ -512,7 +513,20 @@ class SourceAuthManager:
         authorized_at = self._parse_datetime(row.get("authorized_at"))
         expires_at = self._parse_datetime(row.get("expires_at"))
         last_test_status = row.get("last_test_status") or "not_tested"
-        if expires_at and expires_at <= self._now():
+        if spec.session_mode == "persistent_browser" and isinstance(source, QianlimaSource):
+            # The persisted Chromium profile, not the legacy seven-day DB
+            # timestamp, is authoritative. A failed live health check marks
+            # the profile expired and is reflected here immediately.
+            expires_at = None
+            if last_test_status == "passed" and source.profile_available():
+                state = "authorized"
+            elif last_test_status == "failed":
+                state = "failed"
+            elif source.profile_available(allow_unverified=True):
+                state = "captured_unverified"
+            else:
+                state = "expired"
+        elif expires_at and expires_at <= self._now():
             state: Literal["captured_unverified", "authorized", "expired", "failed"] = "expired"
         elif last_test_status == "passed":
             state = "authorized"
@@ -520,6 +534,15 @@ class SourceAuthManager:
             state = "failed"
         else:
             state = "captured_unverified"
+        display_last_test_status = last_test_status
+        display_message = row.get("last_message") or "会话已捕获，等待真实验证。"
+        if (
+            spec.session_mode == "persistent_browser"
+            and state == "expired"
+            and last_test_status == "passed"
+        ):
+            display_last_test_status = "failed"
+            display_message = "原站实时健康检查已判定持久会话失效，请重新登录后验证。"
         return SourceAuthView(
             source_id=source_id,
             source_name=name,
@@ -530,8 +553,8 @@ class SourceAuthManager:
             authorized_at=authorized_at,
             expires_at=expires_at,
             last_test_at=self._parse_datetime(row.get("last_test_at")),
-            last_test_status=last_test_status,
-            message=row.get("last_message") or "会话已捕获，等待真实验证。",
+            last_test_status=display_last_test_status,
+            message=display_message,
         )
 
     def list_status(self) -> list[SourceAuthView]:
@@ -548,7 +571,7 @@ class SourceAuthManager:
         if not row:
             raise SourceAuthError("尚未保存授权会话，请先开始并完成授权")
         expires_at = self._parse_datetime(row.get("expires_at"))
-        if expires_at and expires_at <= self._now():
+        if expires_at and expires_at <= self._now() and spec.session_mode != "persistent_browser":
             if spec.setting_field:
                 setattr(self.settings, spec.setting_field, "")
             raise SourceAuthError("授权会话已过期，请重新登录")
@@ -605,9 +628,9 @@ class SourceAuthManager:
                         success = True
                         outcome = "passed"
                         message = (
-                            "千里马免费登录态有效：已在可见浏览器执行一次首屏检索，"
+                            "千里马免费登录态有效：已在系统托管持久浏览器执行一次有界列表检索，"
                             f"读取到 {len(authenticated_items)} 条免费会员列表候选；"
-                            "未翻页、未读取付费详情。"
+                            "未读取付费详情、未导出 Cookie。"
                             if isinstance(source, QianlimaSource)
                             else (
                                 "授权有效：真实站内搜索与会员详情均已解锁，"
@@ -635,16 +658,33 @@ class SourceAuthManager:
             setattr(self.settings, spec.setting_field, "")
         verified_until = None
         if outcome == "passed":
-            verification_cap = self._now() + self.verification_ttl
-            verified_until = min(expires_at, verification_cap) if expires_at else verification_cap
             if isinstance(source, QianlimaSource):
-                source.mark_profile("authorized", expires_at=verified_until)
-        self.db.update_source_authorization_test(
-            source_id,
-            status=outcome,
-            message=message,
-            expires_at=verified_until.isoformat() if verified_until else None,
+                # The browser profile persists until the original site expires
+                # it. Every use performs a real health probe, so an arbitrary
+                # seven-day BidPilot timer would only create false negatives.
+                source.mark_profile("authorized")
+            else:
+                verification_cap = self._now() + self.verification_ttl
+                verified_until = (
+                    min(expires_at, verification_cap) if expires_at else verification_cap
+                )
+        preserve_verified_profile = (
+            isinstance(source, QianlimaSource)
+            and outcome == "inconclusive"
+            and row.get("last_test_status") == "passed"
+            and source.profile_available()
         )
+        if not preserve_verified_profile:
+            self.db.update_source_authorization_test(
+                source_id,
+                status=outcome,
+                message=message,
+                expires_at=verified_until.isoformat() if verified_until else None,
+            )
+        if isinstance(source, QianlimaSource):
+            # Release Chromium's profile lock so a standalone Linux worker can
+            # reopen the same verified profile after the web authorization flow.
+            await source.close_live_browser()
         return SourceAuthTestResult(
             source_id=source_id,
             success=success,

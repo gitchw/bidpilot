@@ -9,7 +9,11 @@ from urllib.parse import urlparse
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from bidpilot.network_access import parse_trusted_networks
+from bidpilot.network_access import (
+    parse_https_origins,
+    parse_trusted_networks,
+    parse_trusted_proxy_networks,
+)
 
 
 class Settings(BaseSettings):
@@ -26,10 +30,12 @@ class Settings(BaseSettings):
     env: str = "development"
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
-    network_access_mode: Literal["local", "lan"] = "local"
+    network_access_mode: Literal["local", "lan", "enterprise"] = "local"
     lan_access_policy: Literal["admin_token", "trusted_lan"] = "admin_token"
     lan_trusted_networks: str = "auto"
     lan_admin_token: str = ""
+    trusted_proxy_networks: str = ""
+    enterprise_allowed_origins: str = ""
     timezone: str = "Asia/Shanghai"
     embedded_worker: bool = True
     worker_poll_interval: float = Field(default=3.0, ge=0.2, le=300)
@@ -46,6 +52,12 @@ class Settings(BaseSettings):
     max_results_per_source: int = Field(default=20, ge=1, le=100)
     ccgp_max_pages: int = Field(default=2, ge=1, le=20)
     qianlima_browser_mode: Literal["auto", "visible", "headless"] = "auto"
+    qianlima_member_monitoring_enabled: bool = False
+    qianlima_member_monitoring_authorization_reference: str = Field(default="", max_length=200)
+    qianlima_member_max_pages: int = Field(default=2, ge=1, le=5)
+    qianlima_member_max_results: int = Field(default=40, ge=1, le=100)
+    qianlima_member_cooldown_seconds: float = Field(default=30.0, ge=10.0, le=3600.0)
+    qianlima_member_daily_query_budget: int = Field(default=24, ge=1, le=200)
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 "
@@ -155,14 +167,37 @@ class Settings(BaseSettings):
         parse_trusted_networks(cleaned)
         return cleaned
 
+    @field_validator("trusted_proxy_networks")
+    @classmethod
+    def validate_trusted_proxy_networks(cls, value: str) -> str:
+        cleaned = value.strip()
+        parse_trusted_proxy_networks(cleaned)
+        return cleaned
+
+    @field_validator("enterprise_allowed_origins")
+    @classmethod
+    def validate_enterprise_allowed_origins(cls, value: str) -> str:
+        cleaned = value.strip()
+        parse_https_origins(cleaned)
+        return cleaned
+
     @model_validator(mode="after")
     def validate_lan_access(self) -> Settings:
-        if (
-            self.network_access_mode == "lan"
-            and self.lan_access_policy == "admin_token"
-            and len(self.lan_admin_token.strip()) < 16
-        ):
+        token_required = self.network_access_mode == "enterprise" or (
+            self.network_access_mode == "lan" and self.lan_access_policy == "admin_token"
+        )
+        if token_required and len(self.lan_admin_token.strip()) < 16:
             raise ValueError("开启局域网管理前必须设置至少 16 个字符的管理员令牌")
+        if self.network_access_mode == "enterprise":
+            if self.lan_access_policy != "admin_token":
+                raise ValueError("企业内网模式必须使用管理员令牌，不能启用免令牌策略")
+            if not parse_https_origins(self.enterprise_allowed_origins):
+                raise ValueError("企业内网模式必须配置至少一个 HTTPS 浏览器来源")
+        if self.qianlima_member_monitoring_enabled:
+            reference = self.qianlima_member_monitoring_authorization_reference.strip()
+            if len(reference) < 8:
+                raise ValueError("启用千里马会员监控前必须配置书面授权或官方 API 的授权记录编号")
+            self.qianlima_member_monitoring_authorization_reference = reference
         return self
 
     def ensure_directories(self) -> None:

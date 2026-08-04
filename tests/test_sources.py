@@ -4,11 +4,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from bidpilot.clean import parse_datetime
 from bidpilot.config import Settings
 from bidpilot.fetch import FetchedPage
 from bidpilot.intent import IntentParser
-from bidpilot.models import EventType, SourceSearchResult, SourceStatus
+from bidpilot.models import EventType, ScheduleKind, SourceSearchResult, SourceStatus
 from bidpilot.pipeline import TenderPipeline
 from bidpilot.sources.base import SourceAdapter
 from bidpilot.sources.ccgp import CCGPSource
@@ -89,7 +91,247 @@ def test_qianlima_foreground_first_page_rows_are_free_member_list_evidence():
     assert items[0].source_url == "https://www.qianlima.com/bid-612802321.html"
     assert items[0].event_type == EventType.TENDER
     assert items[0].auth_level == "free_member"
-    assert items[0].source_metadata["coverage"] == "user_triggered_first_page"
+    assert items[0].source_metadata["coverage"] == "bounded_free_member_list"
+    assert items[0].source_metadata["detail_access"] == "blocked_by_adapter"
+
+
+def test_qianlima_member_profile_persists_until_real_session_health_fails(tmp_path):
+    source = QianlimaSource(Settings(data_dir=tmp_path))
+
+    source.mark_profile("authorized")
+
+    assert source.profile_available() is True
+    assert source._read_profile_state()["expires_at"] == ""
+
+    source.mark_profile(
+        "authorized",
+        expires_at=datetime(2020, 1, 1, tzinfo=ZoneInfo("UTC")),
+    )
+    assert source.profile_available() is True
+
+    source.mark_profile("expired")
+    assert source.profile_available() is False
+
+
+def test_qianlima_member_parser_mechanically_rejects_non_list_detail_urls():
+    base = {
+        "title": "服务器采购公告",
+        "published_at": "2026-08-03",
+        "event_label": "招标公告",
+        "region": "广东",
+        "category": "货物",
+    }
+
+    items = QianlimaSource.parse_foreground_rows(
+        [
+            {**base, "href": "https://www.qianlima.com/bid-612802321.html"},
+            {**base, "href": "https://vip.qianlima.com/paid/detail/123"},
+            {**base, "href": "https://evil.example/bid-612802322.html"},
+        ]
+    )
+
+    assert [item.source_url for item in items] == ["https://www.qianlima.com/bid-612802321.html"]
+
+
+def test_qianlima_member_budget_and_cooldown_persist_in_profile(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path,
+        qianlima_member_cooldown_seconds=30,
+        qianlima_member_daily_query_budget=2,
+    )
+    first_process = QianlimaSource(settings)
+    accepted, _, state = first_process._reserve_member_query(
+        query="服务器",
+        schedule_kind=ScheduleKind.IMMEDIATE,
+    )
+    assert accepted is True
+    assert state["queries_used"] == 1
+    assert state["last_query_hash"] != "服务器"
+
+    restarted_process = QianlimaSource(settings)
+    accepted, message, state = restarted_process._reserve_member_query(
+        query="服务器",
+        schedule_kind=ScheduleKind.IMMEDIATE,
+    )
+
+    assert accepted is False
+    assert "冷却时间" in message
+    assert state["queries_used"] == 1
+
+
+def test_qianlima_profile_lock_serializes_web_worker_and_clear(tmp_path):
+    first = QianlimaSource(Settings(data_dir=tmp_path))
+    second = QianlimaSource(Settings(data_dir=tmp_path))
+
+    first._acquire_profile_lock(wait_seconds=0)
+    try:
+        with pytest.raises(RuntimeError, match="另一个 Web、worker 或授权进程"):
+            second._acquire_profile_lock(wait_seconds=0.05)
+    finally:
+        first._release_profile_lock()
+
+    second._acquire_profile_lock(wait_seconds=0)
+    second._release_profile_lock()
+
+
+async def test_qianlima_monitoring_requires_explicit_server_opt_in(sample_spec, tmp_path):
+    source = QianlimaSource(
+        Settings(
+            data_dir=tmp_path,
+            qianlima_member_monitoring_enabled=False,
+        )
+    )
+    source.mark_profile("authorized")
+    sample_spec.schedule.kind = ScheduleKind.DAILY
+
+    result = await source.search_foreground(sample_spec)
+
+    assert result.status == SourceStatus.SKIPPED
+    assert "管理员显式开启" in result.message
+    assert not source.usage_state_path.exists()
+
+
+def test_qianlima_monitoring_requires_an_authorization_record_reference(tmp_path):
+    with pytest.raises(ValueError, match="书面授权或官方 API"):
+        Settings(
+            data_dir=tmp_path,
+            qianlima_member_monitoring_enabled=True,
+        )
+
+    settings = Settings(
+        data_dir=tmp_path,
+        qianlima_member_monitoring_enabled=True,
+        qianlima_member_monitoring_authorization_reference="QLM-API-2026-001",
+    )
+    assert settings.qianlima_member_monitoring_enabled is True
+    assert settings.qianlima_member_monitoring_authorization_reference == "QLM-API-2026-001"
+
+
+async def test_qianlima_member_search_reads_bounded_real_pager_and_records_audit(
+    sample_spec,
+    tmp_path,
+):
+    class CountLocator:
+        async def count(self):
+            return 1
+
+    class SearchBox(CountLocator):
+        async def fill(self, value):
+            assert value == "服务器"
+
+        async def press(self, key):
+            assert key == "Enter"
+
+    class PageLink:
+        def __init__(self, page, number):
+            self.page = page
+            self.number = number
+
+        async def count(self):
+            return 1 if self.number == "2" else 0
+
+        async def click(self):
+            self.page.current_page = int(self.number)
+
+    class Pager:
+        def __init__(self, page):
+            self.page = page
+
+        def locator(self, selector):
+            assert selector in {"a", "a.activP-d"}
+            return self
+
+        def filter(self, *, has_text):
+            return PageLink(self.page, has_text.pattern.strip("^$"))
+
+    class FakePage:
+        url = "https://search.vip.qianlima.com/index.html#?isSearchWord=1"
+
+        def __init__(self):
+            self.current_page = 1
+
+        def locator(self, selector):
+            if selector == 'input[placeholder="请输入您要搜索的内容"]':
+                return SearchBox()
+            if selector == 'a[href*="vip.qianlima.com/index.html"]':
+                return CountLocator()
+            if selector == "#dataListPager .pagingUl":
+                return Pager(self)
+            raise AssertionError(f"unexpected selector: {selector}")
+
+        def get_by_text(self, text, *, exact=False):
+            assert text == "会员中心"
+            assert exact is True
+            return CountLocator()
+
+        async def wait_for_timeout(self, _milliseconds):
+            return None
+
+        async def wait_for_function(self, _expression, page_number=None, **_kwargs):
+            if page_number is not None:
+                assert self.current_page == page_number
+
+        async def evaluate(self, _expression, payload):
+            page_number = payload["pageNumber"]
+            return [
+                {
+                    "title": f"第{page_number}页服务器采购公告",
+                    "href": f"//www.qianlima.com/bid-61280232{page_number}.html",
+                    "published_at": "2026-07-10",
+                    "event_label": "公告 - 招标公告",
+                    "region": "广东-深圳",
+                    "category": "货物",
+                    "page": str(page_number),
+                }
+            ]
+
+    class FakeContext:
+        def __init__(self):
+            self.pages = [FakePage()]
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakePlaywright:
+        def __init__(self):
+            self.stopped = False
+
+        async def stop(self):
+            self.stopped = True
+
+    settings = Settings(
+        data_dir=tmp_path,
+        qianlima_member_max_pages=2,
+        qianlima_member_max_results=40,
+        qianlima_member_cooldown_seconds=30,
+    )
+    source = QianlimaSource(settings)
+    source.mark_profile("authorized")
+    context = FakeContext()
+    playwright = FakePlaywright()
+
+    async def launch():
+        return playwright, None, context
+
+    source.launch_search_browser = launch  # type: ignore[method-assign]
+
+    result = await source.search_foreground(sample_spec)
+
+    assert result.status == SourceStatus.PARTIAL
+    assert result.scanned_count == 2
+    assert [item.source_metadata["page"] for item in result.items] == [1, 2]
+    assert all(
+        item.source_metadata["paid_detail_navigation"] == "mechanically_disabled"
+        for item in result.items
+    )
+    assert "读取 2 页、2 条" in result.message
+    assert context.closed is True
+    assert playwright.stopped is True
+    usage = source._read_usage_state()
+    assert usage["queries_used"] == 1
+    assert usage["last_outcome"] == "passed"
+    assert usage["last_pages_read"] == 2
 
 
 def test_qianlima_auto_browser_mode_is_headless_on_linux_without_display(tmp_path, monkeypatch):

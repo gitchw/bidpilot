@@ -158,6 +158,19 @@ docker compose down
 
 Compose 使用命名卷持久化 `/app/data` 与 `/app/outputs/reports`，并对 Web 和 worker 配置 `restart: unless-stopped`。端口默认只绑定 `127.0.0.1`；项目当前不内置多用户登录，不应直接暴露到公网。需要公网报告下载时，请通过带 TLS 和访问控制的反向代理发布，并在网页配置中心填写公网报告地址。
 
+公司内网服务器请使用独立的企业 Compose 文件，而不是修改基础 Compose 去裸露 8000 端口：
+
+```bash
+export BIDPILOT_SERVER_NAME=bidpilot.example.internal
+export BIDPILOT_TRUSTED_CLIENT_NETWORKS=10.20.0.0/16
+export BIDPILOT_LAN_ADMIN_TOKEN='至少16位随机值'
+export BIDPILOT_TLS_CERT_DIR=/etc/bidpilot/tls
+docker compose -f deploy/compose/compose.enterprise.yaml config
+docker compose -f deploy/compose/compose.enterprise.yaml up -d --build
+```
+
+该模式只发布 Nginx 的 443，后端 8000 留在隔离的内部 Docker 网络；Web/worker 另接仅出站的 bridge 网络访问受控互联网来源，不发布任何业务端口。所有业务 API（包括读取）同时校验 HTTPS、客户端私有网段、浏览器 Origin 和管理员令牌。`X-Forwarded-*` 只有来自固定代理子网时才参与判断。证书目录必须包含 `fullchain.pem` 和 `privkey.pem`；生产令牌应来自组织密钥系统，不能提交到仓库或写进 Compose 文件。
+
 本机当前环境没有 Docker，因此仓库不会声称镜像已在本机完成构建验证；CI 和有 Docker 的交付环境仍需实际执行上述命令。
 
 ## 长期任务如何工作
@@ -206,7 +219,7 @@ Web 的“机会工作台”支持：
 | 中国政府采购网 | 官方公开源 | 公告列表、详情和附件 |
 | 全国公共资源交易平台 | 官方公开源 | 当前读取首页最新公告流，不等同于全量历史检索 |
 | 商务部中国国际招标网 | 官方公开源 | 机电产品招标公告列表和详情 |
-| 千里马招标网 | 行业公开分类 + 持久免费会员浏览器检索 | 用户本人在可见图形会话登录；即时任务沿用独立持久浏览器配置读取一次首屏列表，Linux 无显示后台可复用已验证配置做有界无头检索；不导出/HTTP 重放 Cookie，不翻页、不读付费详情，定时任务仍只用公开分类 |
+| 千里马招标网 | 行业公开分类 + 持久免费会员浏览器检索 | 用户本人在可见图形会话登录；即时任务沿用独立持久 profile，Linux 无显示后台可复用已验证配置做有界无头检索；默认最多 2 页/40 条、30 秒冷却、每日 24 次，不导出/HTTP 重放 Cookie、不读付费详情；会员监控默认关闭 |
 | 中国招标投标公共服务平台 | 官方公开列表 + 用户授权详情入口 | 公开关键词列表可检索；不绕过详情站 WAF、验证码或会员权限 |
 | 中央政府采购网 | 官方公开源 | 官方关键词搜索；当前不承诺自动补齐全部详情正文 |
 | 军队采购网 | 官方公开列表 + 用户授权工作台入口 | 只使用公开公告；登录、CA 与角色工作台由用户本人操作 |
@@ -225,7 +238,9 @@ python bootstrap.py --auth
 
 也可在 Web“来源中心”点击授权。登录窗口始终在运行 BidPilot 的电脑上打开，局域网手机可以管理开始/完成/测试/清除，但不会把平台 Cookie 传给手机。点击“完成授权”后，网页会自动验证站内搜索与免费会员详情；只有验证通过的会话才会进入后台检索。捕获未验证、无法判定、失败或过期状态均不会显示为“已授权增强”。登录会话仅加密保存在本机数据库与 `data/secrets/` 密钥中；该目录已被 Git 忽略。
 
-千里马使用不同的持久浏览器模式：执行 `python bootstrap.py --auth` 后，在来源中心点击“在系统内免费登录”，由用户本人在可见图形会话扫码或输入账号。验证通过后，只有即时任务可打开同一个持久配置并执行一次首屏检索（最多 20 条）；Linux systemd 无图形会话时，`auto` 模式仅复用这个已验证配置启动有界 headless Chromium。会员 Cookie 不会被导出或交给 HTTP 客户端，会员检索不进入每日/每周/月度任务，不自动翻页或读取付费详情。浏览器配置保存在 `data/browser_profiles/qianlima/`，已被 Git 忽略；来源中心“清除”会删除该本机配置。
+千里马使用不同的持久浏览器模式：执行 `python bootstrap.py --auth` 后，在来源中心点击“在系统内免费登录”，由用户本人在可见图形会话扫码或输入账号。验证通过后，即时任务可打开同一个持久 profile；Linux systemd 无图形会话时，`auto` 模式仅复用已验证配置启动有界 headless Chromium。默认上限是 2 页、40 条、30 秒冷却和每日 24 次查询，每次仍会检查原站真实登录状态；会员 Cookie 不会被导出或交给 HTTP 客户端，适配器不会进入付费详情。浏览器配置和只含查询摘要的用量账本保存在 `data/browser_profiles/qianlima/`，已被 Git 忽略；来源中心“清除”会删除该本机配置。
+
+会员监控默认关闭，长期订阅继续使用公开分类流。只有部署方已经取得千里马书面授权或官方 API 权利，才可同时设置 `BIDPILOT_QIANLIMA_MEMBER_MONITORING_ENABLED=true` 和非空的 `BIDPILOT_QIANLIMA_MEMBER_MONITORING_AUTHORIZATION_REFERENCE`；后者填写合同、API 或变更记录编号，不填写账号凭据。配置开关不替代授权材料，未满足门禁时应用拒绝启动。
 
 ## 网页配置中心
 
@@ -259,6 +274,8 @@ python bootstrap.py --auth
 
 保存后页面会同时显示当前值和重启后值。Windows 运行 `.venv\Scripts\python.exe -m bidpilot restart`，macOS/Linux 运行 `.venv/bin/python -m bidpilot restart`。LAN 使用普通 HTTP，不要端口映射到公网。自动部署可在 `.env` 设置 `BIDPILOT_NETWORK_ACCESS_MODE`、`BIDPILOT_LAN_ACCESS_POLICY`、`BIDPILOT_LAN_TRUSTED_NETWORKS` 和可选管理员令牌。
 
+长期运行在公司服务器上时，选择 `enterprise`，并通过 Nginx/零信任网关提供 HTTPS。企业模式不提供“可信网段免令牌”：即使客户端来自允许 CIDR，业务 API 仍必须携带管理员令牌；代理头只接受 `BIDPILOT_TRUSTED_PROXY_NETWORKS` 中的直连节点，浏览器 Origin 必须精确命中 `BIDPILOT_ENTERPRISE_ALLOWED_ORIGINS`。后端可绑定明确的内网地址或 `0.0.0.0`，但 8000 端口仍应由主机防火墙限制为仅网关可达。
+
 ## 开发与验证
 
 ```text
@@ -267,7 +284,7 @@ python -m pytest
 node --check bidpilot/static/app.js
 ```
 
-仓库包含 Windows、macOS、Linux × Python 3.11/3.13 的 GitHub Actions 测试矩阵，并在 Ubuntu 独立校验 Compose 模型和构建 Linux 镜像。2026-08-03 终版完成 Windows 与 Debian 各 288 项测试、Debian systemd Web/worker 真实后台启动及 7 个 GitHub 作业全绿。真实网络来源会随站点结构变化，解析单测使用保存的最小夹具，端到端验收仍必须保留真实运行记录和来源诊断。
+仓库包含 Windows、macOS、Linux × Python 3.11/3.13 的 GitHub Actions 测试矩阵；Ubuntu 作业还校验基础/企业 Compose、构建带 Chromium 的 Linux 镜像并启动企业 HTTPS 栈。2026-08-04 增强版在 Windows 本地 305 项测试及全部静态门禁通过；Debian systemd 基线已完成真实 Web/worker 后台启动。最终交付只在同一 main 提交的 7 个作业全绿后成立。真实网络来源会随站点结构变化，解析单测使用保存的最小夹具，端到端验收仍必须保留真实运行记录和来源诊断。
 
 ## 合规原则
 

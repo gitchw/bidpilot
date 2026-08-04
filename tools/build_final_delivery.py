@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -333,9 +335,11 @@ def add_paragraph(document: Document, text: str, *, bold_lead: str | None = None
 
 def add_bullets(document: Document, items: list[str]) -> None:
     for item in items:
-        paragraph = document.add_paragraph(style="List Bullet")
+        paragraph = document.add_paragraph(style="Normal")
+        paragraph.paragraph_format.left_indent = Cm(0.7)
+        paragraph.paragraph_format.first_line_indent = Cm(-0.45)
         paragraph.paragraph_format.space_after = Pt(3)
-        run = paragraph.add_run(item)
+        run = paragraph.add_run(f"•  {item}")
         set_font(run, 10.3)
 
 
@@ -409,7 +413,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     add_callout(
         document,
         "一句话价值",
-        "把一句自然语言编译成可审计的即时检索或长期订阅任务，从真实多源公告出发，完成清洗、硬过滤、跨站去重、证据约束 AI、Word 与仅新增投递，并把可信标讯接入机会和买方经营闭环。",
+        "面向采购情报、业务跟进与审计复核，把一句自然语言编译成可确认的检索或订阅任务，从真实多源公告固定证据，完成硬过滤、生命周期聚合、Word 与仅新增投递，并把可信标讯转成有负责人、执行动作和计划时间的机会。",
         fill=ORANGE_LIGHT,
         accent=ORANGE,
     )
@@ -424,7 +428,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
         document,
         [
             "10 个真实来源适配器，包含 2 个经用户本人登录并真实验证的免费会员来源。",
-            "288 项测试在 Windows 与 Debian 原生环境分别通过，GitHub 跨平台与容器 7 个作业全部通过。",
+            "增强版 305 项测试通过；跨平台 7 作业、企业 HTTPS 容器和 Linux systemd 证据均以最终 main 提交与交付审计报告复核。",
             "不硬编码结果，不伪造登录，不导出千里马 Cookie，不绕过验证码、频率或付费权限。",
         ],
     )
@@ -481,7 +485,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
             [
                 "完整与落地 20%",
                 "Web/API/CLI、10 来源、登录态、定时、增量、可靠投递、Windows/Linux/macOS、文档与测试闭环",
-                "源代码、288 项测试、7 作业 CI、systemd/Compose",
+                "源代码、全量自动化测试、跨平台 CI、systemd 与 Compose",
             ],
         ],
         widths_cm=[3.2, 7.0, 6.0],
@@ -490,7 +494,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     add_callout(
         document,
         "建议阅读顺序",
-        "先抽查真实运行结果 Word 与原文链接，再核对详设、源码和测试记录，最后按 4 分 30 秒 Demo 脚本复现输入到输出。",
+        "先抽查真实运行结果 Word 与原文链接，再核对详设、源码和测试记录，最后按 5 分钟 Demo 脚本复现输入到输出。",
         fill=ORANGE_LIGHT,
         accent=ORANGE,
     )
@@ -533,7 +537,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
                 "登录态真假难判",
                 "看到 Cookie 或页面就当作登录成功",
                 "免费会员内容仍不可用，验收出现假绿灯",
-                "搜索与免费详情双验证；千里马真实首屏验证",
+                "真实会话健康检查；千里马持久 profile、用量预算、失效与清除",
             ],
             [
                 "转载重复与阶段割裂",
@@ -590,7 +594,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     add_callout(
         document,
         "创新 3｜登录不是 Cookie 存在，而是真实价值解锁",
-        "中国招标投标网必须同时证明站内搜索和免费会员详情可读；千里马由本人可见登录、系统托管持久配置，只允许即时单主题首屏。失败、无法判断和过期均不会进入增强检索。",
+        "中国招标投标网必须同时证明站内搜索和免费会员详情可读；千里马由本人可见登录、服务器专用持久 profile 与真实健康检查共同确认。即时查询受页数、结果数、冷却和每日预算约束；会话失效即停止增强，不导出 Cookie、不进入付费详情。",
         fill=ORANGE_LIGHT,
         accent=ORANGE,
     )
@@ -605,6 +609,13 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
         document,
         "创新 5｜可靠增量不是一句“去重”",
         "公告版本、目标级成功账本与 Outbox 在外发前原子持久化。成功目标不因其他目标失败而重发；失败目标有限退避，达到上限进入死信，可单目标恢复且无需重新抓取。",
+    )
+    add_callout(
+        document,
+        "创新 6｜企业服务器开放有明确边界",
+        "enterprise 模式将浏览器访问放在 HTTPS 网关之后，同时验证客户端私网、受信代理、精确 Origin 和管理员令牌；后端 8000 不直接发布。它支持 Linux 长期后台运行，也避免把“监听 0.0.0.0”误写成企业安全方案。",
+        fill=PURPLE_LIGHT,
+        accent=PURPLE,
     )
 
     add_heading(document, "3. 具体方案说明（突出 AI 能力）", page_break=True)
@@ -689,8 +700,8 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
             ],
             [
                 "千里马",
-                "公开分类 + 免费会员即时首屏",
-                "首次可见登录；最多 20 条；10 秒冷却；不定时、不翻页、不读付费详情、不导出 Cookie",
+                "公开分类 + 用户主动的有界免费会员列表检索",
+                "可见登录、服务器持久 profile、跨重启健康检查、跨进程互斥、页数/结果/冷却/日预算；不读付费详情、不导出 Cookie",
             ],
         ],
         widths_cm=[3.4, 6.2, 6.8],
@@ -698,7 +709,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     )
     add_paragraph(
         document,
-        "真实验证记录：千里马“服务器”搜索首屏读取 20 条免费会员候选；普通即时任务通过本地时间与相关性硬校验保留 3 条 `auth_level=free_member` 记录。全过程未翻页、未进入详情、未导出 Cookie。",
+        "真实验证记录：交付前使用用户本人已登录的持久 profile 执行一次“服务器”即时查询，并把会话状态、实际读取页数、列表条数、适配器诊断和时间写入验收记录。只有本次复验成功时才在 Demo 中展示“已验证”；全过程不进入付费详情、不导出 Cookie。",
         bold_lead="真实验证记录：",
     )
     add_heading(document, "3.4 清洗、去重与事实一致", level=2)
@@ -773,7 +784,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     )
     add_paragraph(
         document,
-        "机会只能从数据库中已存在的真实标讯创建，浏览器不能提交自造快照。生命周期新公告刷新证据并标记未读，但不会覆盖人工负责人、阶段、下一步、备注或标签。",
+        "机会只能从数据库中已存在的真实标讯创建，浏览器不能提交自造快照。生命周期新公告刷新证据并标记未读，但不会覆盖人工阶段、负责人、下一步执行动作、计划时间、备注或标签。执行动作与时间分栏保存，让审计复核者能回答“谁在何时做什么、依据是什么”。",
     )
 
     add_heading(document, "4. 方案价值", page_break=True)
@@ -816,6 +827,49 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
             ],
         ],
         widths_cm=[2.2, 7.3, 6.9],
+    )
+    add_heading(document, "五层评价体系｜让评委现场复核", level=2)
+    add_table(
+        document,
+        ["评价层", "核心指标", "取证方式", "事实状态"],
+        [
+            [
+                "来源可用性",
+                "来源状态准确、覆盖缺口披露",
+                "来源诊断、授权健康与运行日志",
+                "机制已实现；指标待试点",
+            ],
+            [
+                "情报可信度",
+                "字段可追溯、附件有据、无证据补写数",
+                "Word 随机抽样回到原文/附件",
+                "证据契约已实现",
+            ],
+            [
+                "检索质量",
+                "硬条件误保留、重复合并、零结果可解释",
+                "冻结样本、双人金标准、来源漏斗",
+                "方法已设计；指标待试点",
+            ],
+            [
+                "工程可靠性",
+                "单源隔离、重启恢复、逐目标可追踪",
+                "自动化、CI、systemd/容器、Outbox",
+                "随本次提交复核",
+            ],
+            [
+                "业务采用",
+                "人工复核时长、有效机会、动作完成率",
+                "4 周前后同口径业务台账",
+                "仅为试点目标",
+            ],
+        ],
+        widths_cm=[2.6, 4.7, 5.6, 3.4],
+        first_column_fill=PURPLE_LIGHT,
+    )
+    add_paragraph(
+        document,
+        "评委现场可以随机打开结果、Word、机会卡和投递账本验证证据与失败披露；效率、覆盖率和机会转化必须等客户真实试点后计算，演示数据不作为既有业绩。",
     )
     add_heading(document, "4 周验证设计", level=2)
     add_table(
@@ -861,12 +915,12 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
             ],
             [
                 "Linux 后台",
-                "按《Linux 部署与运维手册》安装 systemd Web/worker；默认仅监听 127.0.0.1",
+                "按《Linux 部署与运维手册》安装 systemd Web/worker；企业模式由 HTTPS 网关发布 443，后端 8000 仅对受信代理可达",
             ],
             ["源码", "https://github.com/gitchw/bidpilot"],
             [
                 "Demo 视频",
-                "终版交付目录 `04_Demo/` 提供 4 分 30 秒脚本与分镜；公开视频链接在录制并设为公开可读后回填，不提供虚构链接或测试账号",
+                "终版交付目录 `04_Demo/` 提供 5 分钟脚本与分镜；公开视频链接在录制并设为公开可读后回填，不提供虚构链接或测试账号",
             ],
         ],
         widths_cm=[3.2, 13.0],
@@ -878,7 +932,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
         [
             "最近一年广东省服务器招标信息——展示多来源、清洗去重、Word 与原文证据。",
             "最近一年物业小区劳务购买服务招标信息——展示 0 条漏斗和安全放宽建议。",
-            "服务器招标信息——展示千里马免费会员即时首屏 20 条扫描、3 条保留。",
+            "服务器招标信息——展示千里马持久会话状态、一次用户主动的有界免费会员列表检索及真实诊断。",
             "最近 3 个月上海充电桩招标信息，每天早上 9 点汇总后发送给我——展示计划、仅新增和多目标 Outbox。",
         ],
     )
@@ -891,11 +945,11 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
         [
             [
                 "Windows 本机",
-                "288 项 Pytest；Ruff、format、compileall、JavaScript、JSON/YAML/TOML 全通过",
+                "305 项 Pytest；Ruff、format、compileall、JavaScript、JSON/YAML/TOML 全通过",
             ],
             [
                 "Debian 13 / Python 3.13",
-                "原生目录 288 项 Pytest 全通过；lint/format/compile/config 全通过",
+                "以本次 GitHub Actions 的 Linux 原生作业为准；lint/format/compile/config 同步复核",
             ],
             [
                 "真实 systemd",
@@ -907,7 +961,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
             ],
             [
                 "真实登录来源",
-                "中国招标投标网搜索+免费详情验证；千里马首屏 20 条、普通任务保留 3 条",
+                "中国招标投标网搜索+免费详情验证；千里马用户持久 profile、真实健康复验和有界列表查询",
             ],
             [
                 "运行结果 Word",
@@ -927,7 +981,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     add_bullets(
         document,
         [
-            "默认只监听 127.0.0.1；LAN 仍不是公网身份系统。公网必须增加 HTTPS、登录、角色、限流和审计。",
+            "默认只监听 127.0.0.1；企业服务器使用 enterprise：HTTPS 网关、受信客户端/代理、精确 Origin 与管理员令牌同时校验，8000 不直接暴露公网。",
             "敏感配置和来源授权本机加密；Windows 收紧 ACL，POSIX 使用目录 0700、文件 0600。",
             "请求层对 Cookie/Authorization 要求 HTTPS 与来源域名白名单，跨域重定向不携带敏感头。",
             "模型上下文不含 Cookie、API Key、Webhook、完整数据库、投递账本或机会私密字段。",
@@ -955,7 +1009,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     )
     add_paragraph(
         document,
-        "团队没有把审计角色包装成核心研发，也没有虚构客户成果。审计同事的价值在于把“功能能跑”提升为“权限不越界、证据可回溯、指标可复核、验收不遗漏”。",
+        "审计与工程形成双人闭环：工程负责人保证功能可运行、可恢复，审计同事把来源授权、证据链、指标口径、样本抽查与交付清单固化为控制点，共同把“功能能跑”提升为“权限不越界、证据可回溯、指标可复核、验收不遗漏”。",
     )
 
     add_heading(document, "4. 路线图与推广", level=2)
@@ -1009,6 +1063,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     add_heading(document, "3. 参考资料", level=2)
     refs = [
         ("超聚变命题页", "https://activity.feishu.cn/future-talent?detail=chaojubian"),
+        ("千里马会员注册须知", "https://center.qianlima.com/register_xz.jsp"),
         ("BidPilot GitHub", "https://github.com/gitchw/bidpilot"),
         ("FastAPI", "https://fastapi.tiangolo.com/"),
         ("Playwright for Python", "https://playwright.dev/python/"),
@@ -1016,8 +1071,10 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
         ("SQLite", "https://www.sqlite.org/docs.html"),
     ]
     for label, url in refs:
-        paragraph = document.add_paragraph(style="List Bullet")
-        label_run = paragraph.add_run(f"{label}：")
+        paragraph = document.add_paragraph(style="Normal")
+        paragraph.paragraph_format.left_indent = Cm(0.7)
+        paragraph.paragraph_format.first_line_indent = Cm(-0.45)
+        label_run = paragraph.add_run(f"•  {label}：")
         set_font(label_run, 10.3)
         add_hyperlink(paragraph, url, url)
 
@@ -1102,9 +1159,12 @@ def build_markdown_docx(source: Path, output: Path, *, subtitle: str) -> None:
         elif re.match(r"^\s*[-*] ", line):
             add_bullets(document, [strip_inline_markdown(re.sub(r"^\s*[-*] ", "", line))])
         elif re.match(r"^\s*\d+[.)] ", line):
-            paragraph = document.add_paragraph(style="List Number")
+            number = re.match(r"^\s*(\d+)[.)] ", line).group(1)
+            paragraph = document.add_paragraph(style="Normal")
+            paragraph.paragraph_format.left_indent = Cm(0.7)
+            paragraph.paragraph_format.first_line_indent = Cm(-0.45)
             item = re.sub(r"^\s*\d+[.)] ", "", line)
-            run = paragraph.add_run(strip_inline_markdown(item))
+            run = paragraph.add_run(f"{number}.  {strip_inline_markdown(item)}")
             set_font(run, 10.3)
         elif line.startswith("> "):
             add_callout(document, "说明", strip_inline_markdown(line[2:]))
@@ -1127,6 +1187,73 @@ def copy_reports(source_dir: Path, target_dir: Path) -> None:
     for source in sorted(source_dir.glob("*.docx")):
         target_name = pattern.sub(r"_\1.docx", source.name)
         shutil.copy2(source, target_dir / target_name)
+
+
+def copy_operation_documents(repo: Path, target_dir: Path) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    mapping = {
+        repo / "README.md": "README.md",
+        repo / "docs" / "API_REFERENCE.md": "API参考.md",
+        repo / "docs" / "CONFIGURATION_GUIDE.md": "配置指南.md",
+        repo / "docs" / "USER_GUIDE.md": "用户指南.md",
+        repo / "docs" / "BEGINNER_MANUAL.md": "零基础操作说明.md",
+        repo / "docs" / "比赛验收指南.md": "比赛验收指南.md",
+        repo / "docs" / "交接手册_v0.8.0.md": "交接手册_v0.8.0.md",
+        repo / "docs" / "DELIVERY_CHECKLIST.md": "发布验收清单.md",
+    }
+    for source, name in mapping.items():
+        if not source.exists():
+            raise FileNotFoundError(source)
+        shutil.copy2(source, target_dir / name)
+
+
+def copy_beginner_manual(repo: Path, target_dir: Path) -> None:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    manuals = repo / "outputs" / "manuals"
+    for suffix in ("docx", "pdf"):
+        source = manuals / f"标擎BidPilot零基础操作说明书_v0.8.0.{suffix}"
+        if not source.exists():
+            raise FileNotFoundError(source)
+        shutil.copy2(source, target_dir / source.name)
+
+
+def build_source_archive(repo: Path, target: Path) -> None:
+    """Archive exactly the committed tree; ignored credentials and generated data stay out."""
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "archive", "--format=zip", f"--output={target}", "HEAD"],
+        cwd=repo,
+        check=True,
+    )
+
+
+def write_delivery_manifests(output: Path) -> None:
+    audit_dir = output / "05_验收与校验"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    file_list = audit_dir / "文件清单.txt"
+    checksum_list = audit_dir / "SHA256SUMS.txt"
+
+    relative_files = sorted(
+        path.relative_to(output).as_posix()
+        for path in output.rglob("*")
+        if path.is_file() and path not in {file_list, checksum_list}
+    )
+    relative_files.extend(
+        [
+            file_list.relative_to(output).as_posix(),
+            checksum_list.relative_to(output).as_posix(),
+        ]
+    )
+    file_list.write_text("\n".join(sorted(relative_files)) + "\n", encoding="utf-8")
+
+    checksum_lines: list[str] = []
+    for path in sorted(item for item in output.rglob("*") if item.is_file()):
+        if path == checksum_list:
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        checksum_lines.append(f"{digest}  {path.relative_to(output).as_posix()}")
+    checksum_list.write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -1173,7 +1300,11 @@ def main() -> None:
 
     copy_reports(args.previous_delivery / "01_运行结果Word", output / "01_运行结果Word")
 
-    for source in (repo / "docs" / "详设文档.md", repo / "SPEC.md"):
+    for source in (
+        repo / "docs" / "详设文档.md",
+        repo / "docs" / "FINALIST_BENCHMARK.md",
+        repo / "SPEC.md",
+    ):
         shutil.copy2(source, design_dir / source.name)
     for source in (
         repo / "docs" / "LINUX_DEPLOYMENT.md",
@@ -1182,12 +1313,19 @@ def main() -> None:
         target = design_dir if "LINUX" in source.name else audit_dir
         shutil.copy2(source, target / source.name)
 
+    code_dir = output / "03_代码与操作文档"
+    copy_beginner_manual(repo, code_dir)
+    copy_operation_documents(repo, code_dir / "操作指南")
+    build_source_archive(repo, code_dir / "标擎BidPilot_v0.8.0_源码.zip")
+
     demo_dir = output / "04_Demo"
     demo_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(repo / "docs" / "COMPETITION_DEMO_SCRIPT.md", demo_dir / "Demo录制脚本与分镜.md")
     previous_video = args.previous_delivery / "04_Demo" / "视频公开链接.txt"
     if previous_video.exists():
         shutil.copy2(previous_video, demo_dir / previous_video.name)
+
+    write_delivery_manifests(output)
 
     print(competition)
 

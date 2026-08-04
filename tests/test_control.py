@@ -119,6 +119,9 @@ def test_restart_bind_validation_matches_serve(tmp_path):
     with pytest.raises(typer.BadParameter, match="BIDPILOT_NETWORK_ACCESS_MODE=lan"):
         _validate_bind_host(settings, "0.0.0.0")
 
+    settings.network_access_mode = "enterprise"
+    _validate_bind_host(settings, "0.0.0.0")
+
 
 def test_cli_run_accepts_repeated_delivery_targets(tmp_path, monkeypatch):
     captured = {}

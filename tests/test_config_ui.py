@@ -103,13 +103,21 @@ def test_config_save_locks_inputs_and_unready_tests_stay_disabled():
 
 def test_network_card_exposes_safe_and_frictionless_lan_modes():
     document = _document()
+    access_mode = document.select_one('[data-config="network_access_mode"]')
     policy = document.select_one('[data-config="lan_access_policy"]')
 
+    assert {option.get("value") for option in access_mode.select("option")} == {
+        "local",
+        "lan",
+        "enterprise",
+    }
     assert {option.get("value") for option in policy.select("option")} == {
         "admin_token",
         "trusted_lan",
     }
     assert document.select_one('[data-config="lan_trusted_networks"]') is not None
+    assert document.select_one('[data-config="trusted_proxy_networks"]') is not None
+    assert document.select_one('[data-config="enterprise_allowed_origins"]') is not None
     assert document.select_one("#generate-lan-token") is not None
     assert document.select_one("#network-effective-state") is not None
     assert document.select_one("#lan-unlock-token") is not None
@@ -274,6 +282,22 @@ def test_frontend_cache_key_and_mobile_recovery_contract_are_current():
     assert ".delivery-outbox-row p" in css
     assert "white-space:normal" in css
     assert "opportunityLoadSequence" in script
+
+
+def test_opportunity_workspace_exposes_and_saves_an_explicit_next_action():
+    document = _document()
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+    stylesheet = Path("bidpilot/static/app.css").read_text(encoding="utf-8")
+
+    guide = document.select_one(".opportunity-guide").get_text(" ", strip=True)
+    assert "下一步做什么" in guide
+    assert "谁负责" in guide
+    assert 'class="opportunity-next-action-input"' in script
+    assert (
+        'next_action: card.querySelector(".opportunity-next-action-input").value.trim()' in script
+    )
+    assert "待明确具体动作" in script
+    assert ".opportunity-next .opportunity-next-action" in stylesheet
 
 
 def test_main_navigation_resets_scroll_before_and_after_async_panel_load():

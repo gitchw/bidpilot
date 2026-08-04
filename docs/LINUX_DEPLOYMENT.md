@@ -11,7 +11,7 @@
 | 形态 | 适用场景 | 生命周期管理 | 千里马免费登录 |
 |---|---|---|---|
 | systemd 原生部署 | 需要浏览器登录来源、便于运维审计 | `systemctl` | 支持；首次必须通过可见图形会话，随后可复用已验证持久配置做有界无头检索 |
-| Docker Compose | 快速部署公开来源和标准 Web/worker | Compose `up/stop/down` | 默认镜像不含 Chromium；若必须使用登录来源，优先 systemd 原生部署 |
+| Docker Compose | 企业网关或标准 Web/worker | Compose `up/stop/down` | 镜像包含 Playwright Chromium；首次登录仍须受保护的可见图形会话 |
 | 前台开发 | 本地调试与比赛演示 | CLI `serve/status/stop/restart` | 桌面环境可见授权 |
 
 无论采用哪种形态，默认只监听 `127.0.0.1`。不要直接把 8000 端口暴露到公网。公网访问必须由反向代理或零信任网关补齐 HTTPS、身份认证、角色权限、限流与审计。
@@ -36,8 +36,14 @@ sudo /opt/bidpilot/.venv/bin/python -m pip install /opt/bidpilot
 
 ```bash
 sudo /opt/bidpilot/.venv/bin/python -m pip install "/opt/bidpilot[auth]"
-sudo /opt/bidpilot/.venv/bin/python -m playwright install --with-deps chromium
+sudo env PLAYWRIGHT_BROWSERS_PATH=/opt/bidpilot/.playwright \
+  /opt/bidpilot/.venv/bin/python -m playwright install-deps chromium
+sudo install -d -o bidpilot -g bidpilot -m 0755 /opt/bidpilot/.playwright
+sudo -u bidpilot -H env PLAYWRIGHT_BROWSERS_PATH=/opt/bidpilot/.playwright \
+  /opt/bidpilot/.venv/bin/python -m playwright install chromium
 ```
+
+系统依赖由 root 安装，Chromium 文件由 `bidpilot` 用户写入固定的 `/opt/bidpilot/.playwright`。不要使用 root 默认的 `~/.cache/ms-playwright`，否则 `ProtectHome=true` 的 systemd 服务通常无法读取。
 
 ### 2.2 目录与环境
 
@@ -61,9 +67,15 @@ BIDPILOT_CONTROL_DIR=/opt/bidpilot/data
 BIDPILOT_DATABASE_PATH=/opt/bidpilot/data/bidpilot.db
 BIDPILOT_REPORT_DIR=/opt/bidpilot/outputs/reports
 BIDPILOT_QIANLIMA_BROWSER_MODE=auto
+PLAYWRIGHT_BROWSERS_PATH=/opt/bidpilot/.playwright
+BIDPILOT_QIANLIMA_MEMBER_MAX_PAGES=2
+BIDPILOT_QIANLIMA_MEMBER_MAX_RESULTS=40
+BIDPILOT_QIANLIMA_MEMBER_COOLDOWN_SECONDS=30
+BIDPILOT_QIANLIMA_MEMBER_DAILY_QUERY_BUDGET=24
+BIDPILOT_QIANLIMA_MEMBER_MONITORING_ENABLED=false
 ```
 
-`auto` 的含义：桌面 Linux 使用可见浏览器；无 `DISPLAY/WAYLAND_DISPLAY` 的后台服务，仅在已经通过人工可见登录与真实验证后，用同一持久浏览器配置执行一次首屏无头检索。它不会导出 Cookie，也不会把 Cookie 交给 HTTP 客户端。
+`auto` 的含义：桌面 Linux 使用可见浏览器；无 `DISPLAY/WAYLAND_DISPLAY` 的后台服务，仅在已经通过人工可见登录与真实验证后，用同一持久 profile 执行有界无头检索。它不会导出 Cookie，也不会把 Cookie 交给 HTTP 客户端。若已取得书面授权或官方 API 权利并需要会员监控，还须把开关改为 `true`，并设置 `BIDPILOT_QIANLIMA_MEMBER_MONITORING_AUTHORIZATION_REFERENCE` 为合同/API/变更记录编号；没有该记录时应用拒绝启动。
 
 ### 2.3 安装和启动服务
 
@@ -109,14 +121,38 @@ sudo systemctl start bidpilot-web.service bidpilot-worker.service
 
 禁止对数据库和浏览器配置目录做跨版本“挑文件式”覆盖。恢复时应先停止两个服务，并保证数据库、`data/secrets/` 和 `data/browser_profiles/` 来自同一备份点。
 
+### 2.5 企业内网 HTTPS 模式
+
+正式公司服务器不要使用 LAN 的普通 HTTP 便捷模式。推荐让 BidPilot 只监听回环地址，由同机 Nginx、Traefik 或组织零信任网关终止 TLS：
+
+```dotenv
+BIDPILOT_ENV=production
+BIDPILOT_NETWORK_ACCESS_MODE=enterprise
+BIDPILOT_HOST=127.0.0.1
+BIDPILOT_PORT=8000
+BIDPILOT_LAN_ACCESS_POLICY=admin_token
+BIDPILOT_LAN_TRUSTED_NETWORKS=10.20.0.0/16
+BIDPILOT_LAN_ADMIN_TOKEN=<至少16位密码学随机值>
+BIDPILOT_TRUSTED_PROXY_NETWORKS=127.0.0.1/32
+BIDPILOT_ENTERPRISE_ALLOWED_ORIGINS=https://bidpilot.example.internal
+```
+
+企业模式按顺序执行四道校验：从明确受信代理解析客户端地址、限制客户端私有 CIDR、要求 HTTPS 且精确校验浏览器 Origin、要求所有 `/api/` 读写携带管理员令牌。代理头来自其他地址时会被忽略；`trusted_lan` 免令牌策略会在启动或保存时被拒绝。Uvicorn 自身的隐式代理头解析已关闭，避免代理信任边界被提前改写。
+
+如果 `BIDPILOT_NETWORK_ACCESS_MODE=enterprise` 来自服务器环境，全部网络重启字段由环境强制锁定：旧 SQLite 中的 `lan/trusted_lan` 配置不会覆盖生产边界，网页保存也会被拒绝。变更这些字段必须走部署配置与重启流程。
+
+部署时还必须做到：后端 8000 不对用户网段开放；TLS 私钥只允许 root/网关读取；DNS 名称与证书 SAN 匹配；管理员令牌进入密钥系统而非 Git；网关启用限流、访问日志和组织身份认证。应用管理员令牌是纵深防御，不替代企业 SSO、MFA 或角色授权。
+
+仓库提供 `deploy/nginx/bidpilot-systemd.conf.example`。替换其中域名和证书路径后先运行 `sudo nginx -t`，再在维护窗口重载 Nginx；不要直接复制示例域名投入生产。
+
 ## 3. 千里马在 Linux 服务器上的安全登录
 
 ### 3.1 不变的边界
 
 - 首次登录必须由账号本人在可见浏览器中完成；系统不代填密码、不处理验证码、不扫码。
 - 不导出千里马会员 Cookie，不把 Cookie 重放到 HTTP 客户端。
-- 会员增强仅用于用户主动的即时任务、单个主题、一次首屏、最多 20 条、10 秒冷却。
-- 不进入每日/每周/月度任务，不自动翻页，不读取付费详情。
+- 会员增强默认仅用于用户主动的即时任务和单个主题；默认最多 2 页/40 条、30 秒冷却、每日 24 次，预算跨进程持久化。
+- 不读取付费详情。会员监控默认关闭；只有已取得书面授权或官方 API 权利，并填写授权记录编号后才允许显式开启。
 - 登录过期或页面无法证明会员状态时立即降级为 `auth_required/failed`，不会冒充成功。
 
 ### 3.2 有桌面 Linux
@@ -130,7 +166,7 @@ sudo -u bidpilot -H env DISPLAY="$DISPLAY" \
 sudo systemctl start bidpilot-web.service bidpilot-worker.service
 ```
 
-完成授权后的真实测试必须看到站内搜索与免费会员首屏结果，状态才会进入 `authorized`。
+完成授权后的真实测试必须看到站内搜索与免费会员列表结果，状态才会进入 `authorized`。profile 不使用人为 7 天过期；每次查询都会重新检查原站搜索框、会员中心和个人中心，会话失效即停止。
 
 ### 3.3 无桌面 Linux
 
@@ -169,6 +205,20 @@ docker compose down
 ```
 
 `docker compose down` 默认不删除命名卷；除非已经确认备份并明确要清空数据，不要执行 `down -v`。
+
+企业内网使用 `deploy/compose/compose.enterprise.yaml`。该文件增加 TLS Nginx、固定内部代理子网，且不发布后端 8000。Web/worker 同时接入不发布端口的出站 bridge 网络，用于访问招投标来源；内部代理网络保持 `internal`：
+
+```bash
+export BIDPILOT_SERVER_NAME=bidpilot.example.internal
+export BIDPILOT_TRUSTED_CLIENT_NETWORKS=10.20.0.0/16
+export BIDPILOT_LAN_ADMIN_TOKEN="$(openssl rand -hex 24)"
+export BIDPILOT_TLS_CERT_DIR=/etc/bidpilot/tls
+docker compose -f deploy/compose/compose.enterprise.yaml config
+docker compose -f deploy/compose/compose.enterprise.yaml up -d --build
+curl --cacert /path/to/corporate-ca.pem https://bidpilot.example.internal/health
+```
+
+证书目录必须存在 `fullchain.pem` 与 `privkey.pem`。示例不会伪造或自动签发证书；请使用企业 CA 或受信 ACME 流程。若前面再增加负载均衡器，必须把其固定私有 CIDR 加入代理信任链，并确认每一跳覆盖而非复制客户端提交的转发头。
 
 ## 5. 监控与故障处理
 

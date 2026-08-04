@@ -37,7 +37,10 @@ console = Console()
 def _load_service_settings():
     settings = get_settings()
     RuntimeConfiguration(Database(settings.database_path), settings)
-    settings.host = "0.0.0.0" if settings.network_access_mode == "lan" else "127.0.0.1"
+    if settings.network_access_mode == "local":
+        settings.host = "127.0.0.1"
+    elif settings.network_access_mode == "lan":
+        settings.host = "0.0.0.0"
     return settings
 
 
@@ -146,10 +149,10 @@ def _validate_bind_host(settings, bind_host: str) -> None:
         )
     except ValueError:
         loopback_bind = False
-    if settings.network_access_mode != "lan" and not loopback_bind:
+    if settings.network_access_mode == "local" and not loopback_bind:
         raise typer.BadParameter(
             "当前访问范围为“仅本机”，不能用 --host 暴露到其他设备。请先在网页配置中心"
-            "或 .env 设置 BIDPILOT_NETWORK_ACCESS_MODE=lan，保存后再启动。"
+            "或 .env 设置 BIDPILOT_NETWORK_ACCESS_MODE=lan/enterprise，保存后再启动。"
         )
 
 
@@ -180,8 +183,20 @@ def _serve(settings, host: str, port: int) -> None:
     url = local_control_url(host, port)
     try:
         web_app = create_app(settings)
-        web_app.state.service.runtime_config.set_effective_endpoint(host=host, port=port)
-        config = uvicorn.Config(web_app, host=host, port=port, log_level="info")
+        web_app.state.service.runtime_config.set_effective_endpoint(
+            host=host,
+            port=port,
+            access_mode=settings.network_access_mode,
+        )
+        config = uvicorn.Config(
+            web_app,
+            host=host,
+            port=port,
+            log_level="info",
+            # BidPilot applies an explicit trusted-proxy allowlist itself. Letting
+            # Uvicorn rewrite request.client first would destroy that trust boundary.
+            proxy_headers=False,
+        )
         server = uvicorn.Server(config)
 
         def request_shutdown() -> None:
@@ -195,6 +210,11 @@ def _serve(settings, host: str, port: int) -> None:
                 console.print("局域网设备可尝试打开：" + "  ·  ".join(lan_urls))
             else:
                 console.print("局域网模式已开启；请在系统网络设置中查看这台电脑的 IPv4 地址。")
+        elif settings.network_access_mode == "enterprise":
+            console.print(
+                "企业内网模式已开启：业务 API 同时校验 HTTPS、受信网段、浏览器来源和管理员令牌。"
+            )
+            console.print("请通过已配置的 HTTPS 反向代理地址访问，不要直接打开后端监听端口。")
         console.print(f"版本：v{__version__} · 数据库：{settings.database_path.resolve()}")
         console.print(
             f"报告目录：{settings.report_dir.resolve()} · 控制目录：{settings.control_dir.resolve()}"
@@ -221,12 +241,17 @@ def _service_target(settings) -> tuple[ControlPlane, dict | None, str]:
 def status_command() -> None:
     """检查服务是否可访问，并显示长期任务 worker 与订阅数量。"""
     settings = _load_service_settings()
-    _control, state, base_url = _service_target(settings)
+    control, state, base_url = _service_target(settings)
     try:
         with httpx.Client(timeout=3.0) as client:
             health = client.get(f"{base_url}/health")
             health.raise_for_status()
-            system = client.get(f"{base_url}/api/v1/system/status")
+            system_headers = {}
+            if settings.network_access_mode == "enterprise":
+                token = control.read_token()
+                if token:
+                    system_headers["X-BidPilot-Control-Token"] = token
+            system = client.get(f"{base_url}/api/v1/system/status", headers=system_headers)
             system.raise_for_status()
         data = system.json()
     except (httpx.HTTPError, ValueError):

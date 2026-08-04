@@ -171,9 +171,9 @@ data/
 
 ### 3.4 其他设备如何管理平台登录
 
-局域网设备可以点击来源中心的“打开浏览器授权”“完成授权”“测试授权”和“清除”。可见 Chromium 会在运行 BidPilot 服务的电脑上弹出，而不是在手机上弹出；你需要在服务电脑亲自登录，然后回到任意管理页面点击完成。中国招标投标网完成后验证搜索与免费会员详情；千里马保留独立持久浏览器配置并验证一次首屏免费会员查询。等待验证、无法判定、失败或过期都不会显示为已增强。只有平台官方提供 OAuth、扫码确认或设备码时，远端设备才可能直接完成。
+局域网设备可以点击来源中心的“打开浏览器授权”“完成授权”“测试授权”和“清除”。可见 Chromium 会在运行 BidPilot 服务的电脑上弹出，而不是在手机上弹出；你需要在服务电脑亲自登录，然后回到任意管理页面点击完成。中国招标投标网完成后验证搜索与免费会员详情；千里马保留独立持久 profile 并执行有界免费会员列表查询验证。等待验证、无法判定、失败或实时健康检查过期都不会显示为已增强。只有平台官方提供 OAuth、扫码确认或设备码时，远端设备才可能直接完成。
 
-BidPilot 不自动填写账号密码，不破解验证码，不绕过 WAF、付费墙、角色权限或频率限制。中国招标投标网只向允许域名发送加密保存的会话；千里马不导出或向 HTTP 客户端重放 Cookie，首次登录必须可见，已验证配置可在 Linux 后台由持久浏览器内部复用；会员检索仍限即时、单次、首屏，不进入定时任务。
+BidPilot 不自动填写账号密码，不破解验证码，不绕过 WAF、付费墙、角色权限或频率限制。中国招标投标网只向允许域名发送加密保存的会话；千里马不导出或向 HTTP 客户端重放 Cookie，首次登录必须可见，已验证 profile 可在 Linux 后台由持久浏览器内部复用。默认即时查询最多 2 页/40 条、30 秒冷却、每日 24 次；会员监控默认关闭，只有同时配置书面授权或官方 API 的记录编号时才允许启用。
 
 千里马浏览器策略由环境变量 `BIDPILOT_QIANLIMA_BROWSER_MODE` 控制：`auto` 为推荐值，桌面环境可见、Linux 无显示服务无头；`visible` 强制要求 `DISPLAY/WAYLAND_DISPLAY`，缺失时失败关闭；`headless` 只适合已经在可见会话完成登录与真实测试的持久配置，不能用于首次登录。
 
@@ -190,6 +190,12 @@ BIDPILOT_LAN_ADMIN_TOKEN=
 ```
 
 若改用 `BIDPILOT_LAN_ACCESS_POLICY=admin_token`，必须给 `BIDPILOT_LAN_ADMIN_TOKEN` 设置至少 16 个随机字符。网页保存值优先于 `.env`；可在字段下点击“恢复来源值”删除网页覆盖，回到环境变量或默认值。
+
+### 3.6 企业内网服务器模式
+
+长期部署在公司 Linux 服务器时选择 `enterprise`。它与 LAN 的差异是：全部业务 API（读取也包括）必须携带管理员令牌；只接受配置的私有客户端网段；明文 HTTP 被拒绝；浏览器 Origin 必须精确命中 HTTPS 白名单；`X-Forwarded-For/Proto` 只从明确受信的直连代理解析。企业模式禁止 `trusted_lan` 免令牌策略。
+
+典型同机 Nginx 配置使用 `BIDPILOT_HOST=127.0.0.1`、`BIDPILOT_TRUSTED_PROXY_NETWORKS=127.0.0.1/32`。容器方案使用仓库的 `deploy/compose/compose.enterprise.yaml` 和固定内部代理子网。无论哪种方式，都要在网关层继续配置企业 SSO/MFA、角色权限、限流和审计；应用令牌不是完整的多用户账号系统。
 
 ## 4. AI 模型配置
 
@@ -426,6 +432,10 @@ https://hooks.slack.com/services/{team}/{channel}/{secret}
 | `request_interval` | 同一来源两次请求之间至少等待 | 0.1～10 秒；默认 0.8 | 立即；过小更易被限流 |
 | `max_results_per_source` | 每来源进入统一过滤前的候选上限 | 1～100；默认 20 | 立即；不是最终结果数 |
 | `ccgp_max_pages` | 中国政府采购网最多读取页数 | 1～20；默认 2 | 立即；越大越慢、请求越多 |
+| `qianlima_member_max_pages` / `max_results` | 单次免费会员列表查询硬上限 | 默认 2 页 / 40 条；最大 5 页 / 100 条 | 环境变量；不访问详情 |
+| `qianlima_member_cooldown_seconds` / `daily_query_budget` | 跨进程持久冷却与每日预算 | 默认 30 秒 / 24 次 | 环境变量；用量只存查询摘要 |
+| `qianlima_member_monitoring_enabled` | 是否允许定时任务复用会员 profile | 默认 `false` | 仅有书面授权/官方 API 权利时启用 |
+| `qianlima_member_monitoring_authorization_reference` | 授权合同、API 或变更记录编号 | 启用监控时至少 8 字 | 不填写账号、密码或 Cookie |
 | `worker_poll_interval` | worker 空闲时多久检查一次任务 | 0.2～300 秒；默认 3 | 立即；过小只会增加空轮询 |
 | `worker_lease_seconds` | worker 领取订阅后一次租约多长 | 30～7200 秒；默认 900 | 立即；运行中自动续租 |
 | `worker_heartbeat_ttl` | 多久没心跳就显示 worker 离线 | 5～600 秒；默认 30 | 立即；只影响状态判断 |
@@ -434,9 +444,11 @@ https://hooks.slack.com/services/{team}/{channel}/{secret}
 
 | 字段 | 解释 | 范围/默认值 | 生效与风险 |
 |---|---|---|---|
-| `network_access_mode` | 只允许本机，还是允许局域网设备连接 | `local/lan`；默认 `local` | 重启；不是公网部署开关 |
+| `network_access_mode` | 本机、临时 LAN 或企业内网服务器边界 | `local/lan/enterprise`；默认 `local` | 重启；企业模式要求 HTTPS、受信网段、Origin 与令牌 |
 | `lan_access_policy` | LAN 写操作使用管理员令牌，还是可信私网免令牌 | `admin_token/trusted_lan` | 重启；便捷模式只适合可信网络 |
 | `lan_trusted_networks` | 可信私网 CIDR 列表 | 默认 `auto` | 重启；拒绝公网段和全网段 |
+| `trusted_proxy_networks` | 可提交转发头的直连代理 CIDR | 默认空 | 重启；只允许明确私有/回环网段，空值忽略全部代理头 |
+| `enterprise_allowed_origins` | 企业浏览器 HTTPS Origin 白名单 | 默认空；企业模式至少一项 | 重启；精确匹配，不允许 HTTP、路径或通配符 |
 | `port` | 原生 Python Web 服务端口 | 1～65535；默认 8000 | 重启；页面会同时显示当前与保存值；不修改 Compose 映射 |
 | `lan_admin_token` | 远端写操作管理员令牌 | LAN 令牌模式至少 16 字 | 重启；加密保存且不回显 |
 | `public_base_url` | 链接型渠道共用的安全报告根地址 | 完整 HTTP(S) URL；默认空 | 立即；必须先有 TLS、认证和访问控制 |
@@ -504,6 +516,8 @@ BIDPILOT_NETWORK_ACCESS_MODE=local
 BIDPILOT_LAN_ACCESS_POLICY=admin_token
 BIDPILOT_LAN_TRUSTED_NETWORKS=auto
 BIDPILOT_LAN_ADMIN_TOKEN=
+BIDPILOT_TRUSTED_PROXY_NETWORKS=
+BIDPILOT_ENTERPRISE_ALLOWED_ORIGINS=
 BIDPILOT_CONTROL_DIR=data
 BIDPILOT_FEISHU_WEBHOOK_URL=
 BIDPILOT_SMTP_HOST=

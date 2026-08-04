@@ -48,5 +48,46 @@ jobs:
       - uses: actions/checkout@v7
       - name: Validate Compose model
         run: docker compose config --quiet
+      - name: Validate enterprise Compose and systemd script
+        env:
+          BIDPILOT_SERVER_NAME: bidpilot.ci.internal
+          BIDPILOT_TRUSTED_CLIENT_NETWORKS: 172.16.0.0/12
+          BIDPILOT_LAN_ADMIN_TOKEN: ci-enterprise-admin-token-12345
+          BIDPILOT_TLS_CERT_DIR: ${{ github.workspace }}/.ci/tls
+        run: |
+          mkdir -p .ci/tls
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=bidpilot.ci.internal' \
+            -keyout .ci/tls/privkey.pem -out .ci/tls/fullchain.pem
+          docker compose -f deploy/compose/compose.enterprise.yaml config --quiet
+          bash -n deploy/systemd/smoke-test.sh
       - name: Build Linux runtime image
         run: docker build --tag bidpilot:ci .
+      - name: Start enterprise HTTPS stack
+        env:
+          BIDPILOT_SERVER_NAME: bidpilot.ci.internal
+          BIDPILOT_TRUSTED_CLIENT_NETWORKS: 172.16.0.0/12
+          BIDPILOT_LAN_ADMIN_TOKEN: ci-enterprise-admin-token-12345
+          BIDPILOT_TLS_CERT_DIR: ${{ github.workspace }}/.ci/tls
+          BIDPILOT_HTTPS_BIND: 127.0.0.1
+        run: |
+          docker compose -f deploy/compose/compose.enterprise.yaml up -d --build
+          for attempt in $(seq 1 30); do
+            if curl -kfsS --resolve bidpilot.ci.internal:443:127.0.0.1 \
+              https://bidpilot.ci.internal/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f deploy/compose/compose.enterprise.yaml ps
+          docker compose -f deploy/compose/compose.enterprise.yaml logs
+          exit 1
+      - name: Stop enterprise stack
+        if: always()
+        env:
+          BIDPILOT_SERVER_NAME: bidpilot.ci.internal
+          BIDPILOT_TRUSTED_CLIENT_NETWORKS: 172.16.0.0/12
+          BIDPILOT_LAN_ADMIN_TOKEN: ci-enterprise-admin-token-12345
+          BIDPILOT_TLS_CERT_DIR: ${{ github.workspace }}/.ci/tls
+          BIDPILOT_HTTPS_BIND: 127.0.0.1
+        run: docker compose -f deploy/compose/compose.enterprise.yaml down --remove-orphans
