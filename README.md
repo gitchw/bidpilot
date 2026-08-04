@@ -171,6 +171,8 @@ docker compose -f deploy/compose/compose.enterprise.yaml up -d --build
 
 该模式只发布 Nginx 的 443，后端 8000 留在隔离的内部 Docker 网络；Web/worker 另接仅出站的 bridge 网络访问受控互联网来源，不发布任何业务端口。所有业务 API（包括读取）同时校验 HTTPS、客户端私有网段、浏览器 Origin 和管理员令牌。`X-Forwarded-*` 只有来自固定代理子网时才参与判断。证书目录必须包含 `fullchain.pem` 和 `privkey.pem`；生产令牌应来自组织密钥系统，不能提交到仓库或写进 Compose 文件。
 
+启动环境直接声明 `BIDPILOT_NETWORK_ACCESS_MODE=enterprise` 时，网络模式、策略、网段、代理、Origin、管理员令牌和端口会被环境强制锁定；旧数据库或网页配置不能把生产实例降级为 LAN/免令牌，页面对应控件保持只读。
+
 本机当前环境没有 Docker，因此仓库不会声称镜像已在本机完成构建验证；CI 和有 Docker 的交付环境仍需实际执行上述命令。
 
 ## 长期任务如何工作

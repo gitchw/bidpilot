@@ -129,6 +129,9 @@ def test_network_card_exposes_safe_and_frictionless_lan_modes():
     script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
     assert "effective_access_policy" in script
     assert "pending_restart" in script
+    assert "configuration_locked" in script
+    assert "NETWORK_SECURITY_FIELDS" in script
+    assert "服务器环境锁定" in script
     assert "window.crypto.getRandomValues" in script
     assert "requestLanAdminToken" in script
     assert "window.prompt" not in script

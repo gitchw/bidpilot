@@ -197,6 +197,8 @@ BIDPILOT_LAN_ADMIN_TOKEN=
 
 典型同机 Nginx 配置使用 `BIDPILOT_HOST=127.0.0.1`、`BIDPILOT_TRUSTED_PROXY_NETWORKS=127.0.0.1/32`。容器方案使用仓库的 `deploy/compose/compose.enterprise.yaml` 和固定内部代理子网。无论哪种方式，都要在网关层继续配置企业 SSO/MFA、角色权限、限流和审计；应用令牌不是完整的多用户账号系统。
 
+如果进程启动时的环境值已经是 `enterprise`，网络模式、LAN 策略、客户端/代理网段、Origin、管理员令牌和端口会被强制锁定。旧 SQLite 配置不会覆盖它们，网页对应控件呈只读，API 也拒绝清除、恢复或覆盖这些字段。生产变更必须走环境配置与重启流程。
+
 ## 4. AI 模型配置
 
 ### 必填项

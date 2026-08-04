@@ -634,6 +634,7 @@ class WorkerConfigView(BaseModel):
 
 
 class NetworkConfigView(BaseModel):
+    configuration_locked: bool = Field(description="企业部署是否已由启动环境锁定全部网络安全字段")
     access_mode: Literal["local", "lan", "enterprise"] = Field(
         description="已保存、重启后生效的访问范围"
     )
@@ -918,6 +919,7 @@ class RuntimeConfiguration:
                 heartbeat_ttl=self.settings.worker_heartbeat_ttl,
             ),
             network=NetworkConfigView(
+                configuration_locked=bool(self.environment_locked_fields),
                 access_mode=self.settings.network_access_mode,
                 access_policy=self.settings.lan_access_policy,
                 trusted_networks=self.settings.lan_trusted_networks,

@@ -66,6 +66,10 @@ const DELIVERY_STATUS_LABELS = {
   succeeded: "发送成功", dead_letter: "需要人工处理", skipped: "已跳过",
 };
 const ACTIVE_DELIVERY_STATUSES = new Set(["pending", "sending", "retrying"]);
+const NETWORK_SECURITY_FIELDS = new Set([
+  "network_access_mode", "lan_access_policy", "lan_trusted_networks",
+  "trusted_proxy_networks", "enterprise_allowed_origins", "lan_admin_token", "port",
+]);
 const API_FIELD_LABELS = {
   query: "查询问题", name: "名称", intent_snapshot: "意图确认",
   delivery_channel: "交付渠道", delivery_targets: "交付目标", delivery_policy: "无新增通知策略",
@@ -1626,8 +1630,14 @@ function savedDeliveryChannelReady(channel) {
 
 function syncConfigInputAvailability() {
   const locked = !state.configLoaded || state.configSaving;
-  $$('[data-config], [data-clear], .field-reset').forEach((control) => { control.disabled = locked; });
-  const generator = $("#generate-lan-token"); if (generator) generator.disabled = locked;
+  const environmentLocked = Boolean(state.config?.network?.configuration_locked);
+  $$('[data-config], [data-clear], .field-reset').forEach((control) => {
+    const field = control.dataset.config || control.dataset.clear || control.dataset.resetField;
+    const networkLocked = environmentLocked && NETWORK_SECURITY_FIELDS.has(field);
+    control.disabled = locked || networkLocked;
+    if (networkLocked) control.title = "企业部署的网络安全边界由服务器环境锁定";
+  });
+  const generator = $("#generate-lan-token"); if (generator) generator.disabled = locked || environmentLocked;
   const reload = $("#reload-config"); if (reload) reload.disabled = state.configSaving;
   const panel = $("#tab-config");
   if (panel) { panel.classList.toggle("config-saving", state.configSaving); panel.setAttribute("aria-busy", String(state.configSaving)); }
@@ -1745,7 +1755,8 @@ function renderConfig(config, { preserveFields = new Set() } = {}) {
   const scopeText = (mode, host, port, policy) => mode === "enterprise" ? `企业内网 ${host}:${port} · HTTPS + 受信网段 + 管理员令牌` : (mode === "lan" ? `局域网 ${host}:${port} · ${policyLabels[policy] || policy}` : `仅本机 ${host}:${port}`);
   const effectiveScope = scopeText(config.network.effective_access_mode, config.network.effective_bind_host, config.network.effective_port, config.network.effective_access_policy);
   const nextScope = scopeText(config.network.access_mode, config.network.bind_host_after_restart, config.network.port, config.network.access_policy);
-  $("#network-effective-state").textContent = config.network.pending_restart ? `现在：${effectiveScope}。保存的是：${nextScope}；请重启服务后生效。` : `现在：${effectiveScope}。没有等待重启的网络修改。`;
+  const lockText = config.network.configuration_locked ? " 企业部署已由服务器环境锁定，网页不能降低该边界。" : "";
+  $("#network-effective-state").textContent = (config.network.pending_restart ? `现在：${effectiveScope}。保存的是：${nextScope}；请重启服务后生效。` : `现在：${effectiveScope}。没有等待重启的网络修改。`) + lockText;
   syncLanPolicyHelp();
   renderConfigMetadata(config);
   setConfigControlsAvailable(true);

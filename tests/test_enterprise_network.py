@@ -167,6 +167,7 @@ def test_enterprise_network_fields_round_trip_through_runtime_config(tmp_path: P
         )
         assert saved.status_code == 200
         network = saved.json()["network"]
+        assert network["configuration_locked"] is False
         assert network["access_mode"] == "enterprise"
         assert network["trusted_proxy_networks"] == "127.0.0.1/32"
         assert network["enterprise_allowed_origins"] == "https://bidpilot.corp.example"
@@ -243,6 +244,12 @@ def test_enterprise_environment_boundary_cannot_be_downgraded_by_old_database(tm
         )
         assert update.status_code == 422
         assert "环境强制锁定" in update.json()["detail"]
+        locked_view = client.get(
+            "/api/v1/config",
+            headers={**forwarded, "X-BidPilot-Admin-Token": settings.lan_admin_token},
+        ).json()
+        assert locked_view["network"]["configuration_locked"] is True
+        assert locked_view["field_metadata"]["network_access_mode"]["source"] == "environment"
 
 
 def test_enterprise_local_control_token_keeps_cli_status_and_shutdown_available(tmp_path: Path):

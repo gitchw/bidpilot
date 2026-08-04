@@ -206,7 +206,7 @@ docker compose down
 
 `docker compose down` 默认不删除命名卷；除非已经确认备份并明确要清空数据，不要执行 `down -v`。
 
-企业内网使用 `deploy/compose/compose.enterprise.yaml`。该文件增加 TLS Nginx、固定内部代理子网，且不发布后端 8000。Web/worker 同时接入不发布端口的出站 bridge 网络，用于访问招投标来源；内部代理网络保持 `internal`：
+企业内网使用 `deploy/compose/compose.enterprise.yaml`。该文件让 TLS Nginx 同时接入可发布 443 的 ingress bridge 与固定的内部代理子网，且不发布后端 8000；容器地址由 Compose 动态分配，避免并发启动时争用固定 IP。Web/worker 同时接入不发布端口的出站 bridge 网络，用于访问招投标来源；内部代理网络保持 `internal`：
 
 ```bash
 export BIDPILOT_SERVER_NAME=bidpilot.example.internal

@@ -37,8 +37,7 @@ services:
       - bidpilot-data:/app/data
       - bidpilot-reports:/app/outputs/reports
     networks:
-      bidpilot-backend:
-        ipv4_address: 172.30.0.10
+      bidpilot-backend: {}
       bidpilot-egress: {}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
@@ -77,13 +76,15 @@ services:
       - ../nginx/bidpilot.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${BIDPILOT_TLS_CERT_DIR:?mount a directory containing fullchain.pem and privkey.pem}:/etc/nginx/tls:ro
     networks:
-      bidpilot-backend:
-        ipv4_address: 172.30.0.2
+      - bidpilot-ingress
+      - bidpilot-backend
     depends_on:
       web:
         condition: service_healthy
 
 networks:
+  bidpilot-ingress:
+    driver: bridge
   bidpilot-backend:
     internal: true
     ipam:

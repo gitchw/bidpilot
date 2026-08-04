@@ -29,6 +29,13 @@ def main() -> None:
         raise ValueError("enterprise web must expose but never publish port 8000")
     if networks.get("bidpilot-backend", {}).get("internal") is not True:
         raise ValueError("enterprise proxy network must stay internal")
+    if networks.get("bidpilot-ingress", {}).get("internal") is True:
+        raise ValueError("enterprise gateway ingress network must permit published HTTPS")
+    gateway_networks = services["gateway"].get("networks", [])
+    if not {"bidpilot-ingress", "bidpilot-backend"}.issubset(gateway_networks):
+        raise ValueError(
+            "enterprise gateway must bridge HTTPS ingress to the internal proxy network"
+        )
     if "bidpilot-egress" not in networks:
         raise ValueError("enterprise web/worker require an un-published egress network")
     if not (ROOT / "deploy" / "nginx" / "bidpilot.conf.template").exists():
