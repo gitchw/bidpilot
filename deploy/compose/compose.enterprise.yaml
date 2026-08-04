@@ -72,7 +72,7 @@ services:
     environment:
       BIDPILOT_SERVER_NAME: ${BIDPILOT_SERVER_NAME:?set the internal DNS name}
     ports:
-      - "${BIDPILOT_HTTPS_BIND:-0.0.0.0}:443:443"
+      - "${BIDPILOT_HTTPS_BIND:-0.0.0.0}:${BIDPILOT_HTTPS_PORT:-443}:443"
     volumes:
       - ../nginx/bidpilot.conf.template:/etc/nginx/templates/default.conf.template:ro
       - ${BIDPILOT_TLS_CERT_DIR:?mount a directory containing fullchain.pem and privkey.pem}:/etc/nginx/tls:ro

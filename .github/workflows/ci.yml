@@ -70,11 +70,12 @@ jobs:
           BIDPILOT_LAN_ADMIN_TOKEN: ci-enterprise-admin-token-12345
           BIDPILOT_TLS_CERT_DIR: ${{ github.workspace }}/.ci/tls
           BIDPILOT_HTTPS_BIND: 127.0.0.1
+          BIDPILOT_HTTPS_PORT: 18443
         run: |
           docker compose -f deploy/compose/compose.enterprise.yaml up -d --build
           for attempt in $(seq 1 30); do
-            if curl -kfsS --resolve bidpilot.ci.internal:443:127.0.0.1 \
-              https://bidpilot.ci.internal/health; then
+            if curl -kfsS --resolve bidpilot.ci.internal:18443:127.0.0.1 \
+              https://bidpilot.ci.internal:18443/health; then
               exit 0
             fi
             sleep 2
@@ -90,4 +91,5 @@ jobs:
           BIDPILOT_LAN_ADMIN_TOKEN: ci-enterprise-admin-token-12345
           BIDPILOT_TLS_CERT_DIR: ${{ github.workspace }}/.ci/tls
           BIDPILOT_HTTPS_BIND: 127.0.0.1
+          BIDPILOT_HTTPS_PORT: 18443
         run: docker compose -f deploy/compose/compose.enterprise.yaml down --remove-orphans
