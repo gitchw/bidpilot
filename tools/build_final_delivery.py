@@ -436,7 +436,7 @@ def build_competition_docx(template: Path, output: Path, repo: Path) -> None:
     add_heading(document, "一、参赛方案信息卡【必须包含】", page_break=True)
     add_table(
         document,
-        ["项目", "填写内容"],
+        ["项目", "参赛应答"],
         [
             ["队名", "聚标成擎"],
             ["命题", "超聚变｜招投标信息聚合工具"],
