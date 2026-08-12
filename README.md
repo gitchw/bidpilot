@@ -276,7 +276,7 @@ python -m pytest
 node --check bidpilot/static/app.js
 ```
 
-仓库包含 Windows、macOS、Linux × Python 3.11/3.13 的 GitHub Actions 测试矩阵；Ubuntu 作业还校验基础/企业 Compose、构建带 Chromium 的 Linux 镜像并启动企业 HTTPS 栈。2026-08-11 当前工作树已扩展到 311 项测试，并通过 Ruff、Python 编译、JavaScript 语法与发布结构门禁；上一已提交基线的 7 个 CI 作业全部成功，当前版本仍以最终 main 提交的新 7/7 结果为远端发布证据。真实网站会随结构、频率和授权变化，解析单测使用保存的最小夹具，端到端验收必须保留真实运行记录和来源诊断。
+仓库包含 Windows、macOS、Linux × Python 3.11/3.13 的 GitHub Actions 测试矩阵；Ubuntu 作业还校验基础/企业 Compose、构建带 Chromium 的 Linux 镜像并启动企业 HTTPS 栈。2026-08-13 当前版本包含 311 项测试，并通过 Ruff、Python 编译、JavaScript 语法与发布结构门禁；代码终版与审计文档两次远端运行均为 7/7 成功，链接见跨平台测试与审计报告。真实网站会随结构、频率和授权变化，解析单测使用保存的最小夹具，端到端验收必须保留真实运行记录和来源诊断。
 
 ## 合规原则
 
@@ -288,6 +288,7 @@ node --check bidpilot/static/app.js
 
 ## 完整文档
 
+- [v0.8.0 更新说明：本轮变化、当前功能与升级提示](docs/RELEASE_NOTES_v0.8.0.md)
 - [零基础项目交接手册](docs/交接手册_v0.8.0.md)
 - [零基础操作说明书](docs/BEGINNER_MANUAL.md)
 - [用户操作手册](docs/USER_GUIDE.md)

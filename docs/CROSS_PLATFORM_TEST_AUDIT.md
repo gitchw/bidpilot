@@ -6,7 +6,7 @@
 
 本次 Windows 工作树已完成 311 项 Pytest、Ruff 规则与格式、Python 编译、JavaScript 语法、发布结构和差异检查。此前审计发现 13 项时间敏感失败：测试来源固定写死 2026-07-10，在 2026-08-11 已落到“最近 1 个月”窗口之外。夹具现改为使用查询 `end_date` 当天，受影响用例与完整 311 项均重新通过。
 
-代码终版提交 `eb3bb2fe01e355985f4b098ba0fb3bd101dac9d2` 已直接推送 `main`。GitHub Actions run [`31614778648`](https://github.com/gitchw/bidpilot/actions/runs/31614778648) 于 2026-08-12 完成：Windows、Ubuntu、macOS × Python 3.11/3.13，以及 Ubuntu 企业 HTTPS 容器共 7 个作业全部成功；六个 Python 作业均执行同一套 311 项测试。
+代码终版提交 `eb3bb2fe01e355985f4b098ba0fb3bd101dac9d2` 已直接推送 `main`，run [`31614778648`](https://github.com/gitchw/bidpilot/actions/runs/31614778648) 7/7 成功。随后审计文档提交 `5be08cf5101b31f9686fc4647d1b1dc7cfe3cdb0` 的 run [`31615271600`](https://github.com/gitchw/bidpilot/actions/runs/31615271600) 也于 2026-08-13 完成 7/7；Windows、Ubuntu、macOS × Python 3.11/3.13 均执行同一套 311 项测试，Ubuntu 企业 HTTPS 容器完成真实构建和健康检查。
 
 ## 2. Windows 本地门禁
 
@@ -29,12 +29,12 @@ Starlette 的 `httpx` 兼容提示属于依赖未来迁移提醒，不影响本�
 
 | 作业 | 覆盖内容 | 当前证据 |
 |---|---|---|
-| Ubuntu × Python 3.11 / 3.13 | 安装、Ruff、编译、JS、发布结构、Pytest | run `31614778648`：2/2 成功 |
-| Windows × Python 3.11 / 3.13 | 同上，覆盖 Windows 路径与进程行为 | run `31614778648`：2/2 成功 |
-| macOS × Python 3.11 / 3.13 | 同上，覆盖 POSIX/macOS 解释器与路径 | run `31614778648`：2/2 成功 |
-| Ubuntu container | 基础/企业 Compose、Linux 镜像、企业 HTTPS 栈、端口绑定、`/health`、清理 | run `31614778648`：1/1 成功 |
+| Ubuntu × Python 3.11 / 3.13 | 安装、Ruff、编译、JS、发布结构、Pytest | run `31615271600`：2/2 成功 |
+| Windows × Python 3.11 / 3.13 | 同上，覆盖 Windows 路径与进程行为 | run `31615271600`：2/2 成功 |
+| macOS × Python 3.11 / 3.13 | 同上，覆盖 POSIX/macOS 解释器与路径 | run `31615271600`：2/2 成功 |
+| Ubuntu container | 基础/企业 Compose、Linux 镜像、企业 HTTPS 栈、端口绑定、`/health`、清理 | run `31615271600`：1/1 成功 |
 
-远端证据：[cross-platform-ci #31614778648](https://github.com/gitchw/bidpilot/actions/runs/31614778648)。该运行严格对应代码终版提交 `eb3bb2f`；随后只允许更新本审计记录与构建材料，并需再次等待最终文档提交的 7/7 结果。
+远端证据：[代码终版 run #31614778648](https://github.com/gitchw/bidpilot/actions/runs/31614778648)、[审计记录 run #31615271600](https://github.com/gitchw/bidpilot/actions/runs/31615271600)。两次均为 7/7 成功；后续若只更新说明文档，仍需等待对应最终 HEAD 的同一矩阵通过。
 
 ## 4. 发布结构校验实际检查什么
 
@@ -63,5 +63,5 @@ Starlette 的 `httpx` 兼容提示属于依赖未来迁移提醒，不影响本�
 - [x] 时间敏感夹具不再依赖会过期的固定日期；
 - [x] 代码终版提交已推送 `main`；
 - [x] 代码终版提交的 7 个 GitHub Actions 作业全部成功；
-- [ ] 最终文档提交的新 run URL、commit 与源码 ZIP / 构建信息一致；
+- [x] 审计文档提交 `5be08cf` 的 run `31615271600` 已 7/7 成功；
 - [x] Word、截图和真实运行样本均来自当前实现或明确标注生成时间。

@@ -660,6 +660,7 @@ def copy_operation_documents(repo: Path, target_dir: Path) -> None:
     target_dir.mkdir(parents=True, exist_ok=True)
     mapping = {
         repo / "README.md": "README.md",
+        repo / "docs" / "RELEASE_NOTES_v0.8.0.md": "v0.8.0更新说明.md",
         repo / "docs" / "API_REFERENCE.md": "API参考.md",
         repo / "docs" / "CONFIGURATION_GUIDE.md": "配置指南.md",
         repo / "docs" / "USER_GUIDE.md": "用户指南.md",
@@ -740,7 +741,12 @@ def git_text(repo: Path, *args: str) -> str:
 
 
 def write_build_metadata(
-    repo: Path, output: Path, report_count: int, *, incremental_evidence_included: bool
+    repo: Path,
+    output: Path,
+    report_count: int,
+    *,
+    incremental_evidence_included: bool,
+    ci_run_url: str | None = None,
 ) -> None:
     audit_dir = output / "05_验收与校验"
     audit_dir.mkdir(parents=True, exist_ok=True)
@@ -752,6 +758,9 @@ def write_build_metadata(
         "git_worktree_clean": not bool(status),
         "report_count": report_count,
         "incremental_evidence_included": incremental_evidence_included,
+        "ci_run_url": ci_run_url,
+        "ci_conclusion": "success" if ci_run_url else "not_recorded",
+        "ci_job_count": 7 if ci_run_url else None,
         "source_archive_scope": "git archive HEAD",
         "notes": [
             "测试数量与 CI 结论以同目录跨平台测试与审计报告为准。",
@@ -815,6 +824,7 @@ def main() -> None:
     parser.add_argument("--previous-delivery", type=Path)
     parser.add_argument("--video-link-file", type=Path)
     parser.add_argument("--demo-video", type=Path)
+    parser.add_argument("--ci-run-url")
     args = parser.parse_args()
 
     repo = args.repo.resolve()
@@ -859,6 +869,11 @@ def main() -> None:
         repo / "docs" / "CROSS_PLATFORM_TEST_AUDIT.md",
         audit_dir / "跨平台测试与审计报告.docx",
         subtitle="Windows / Linux / macOS / Container",
+    )
+    build_markdown_docx(
+        repo / "docs" / "RELEASE_NOTES_v0.8.0.md",
+        audit_dir / "v0.8.0版本更新说明.docx",
+        subtitle="本轮变化、当前功能、升级方式与已知边界",
     )
     copy_ui_evidence(repo, audit_dir / "UI响应式验收截图")
     checklist_dir = output / "00_提交说明与清单"
@@ -922,6 +937,7 @@ def main() -> None:
         output,
         report_count,
         incremental_evidence_included=incremental_evidence_included,
+        ci_run_url=args.ci_run_url,
     )
     if local_video_ready and public_link_ready:
         status_text = "四类官方交付物已齐备；本地 Demo 视频已纳入，公开视频链接已验证。"
