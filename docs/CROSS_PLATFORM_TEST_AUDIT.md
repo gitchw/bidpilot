@@ -1,12 +1,12 @@
 # 标擎 BidPilot 跨平台测试与发布审计
 
-报告日期：2026-08-11｜版本：v0.8.0｜分支：`main`
+报告日期：2026-08-12｜版本：v0.8.0｜分支：`main`
 
 ## 1. 当前结论
 
 本次 Windows 工作树已完成 311 项 Pytest、Ruff 规则与格式、Python 编译、JavaScript 语法、发布结构和差异检查。此前审计发现 13 项时间敏感失败：测试来源固定写死 2026-07-10，在 2026-08-11 已落到“最近 1 个月”窗口之外。夹具现改为使用查询 `end_date` 当天，受影响用例与完整 311 项均重新通过。
 
-最近一个已提交基线为 2026-08-04 的 GitHub Actions run `30872704489`：Windows、Ubuntu、macOS × Python 3.11/3.13 以及 Ubuntu 企业 HTTPS 容器共 7 个作业全部成功，当时每个 Python 矩阵作业为 305 项测试。当前工作树新增到 311 项；只有最终提交推送后产生的新 7/7 运行，才能作为本版远端证据。
+代码终版提交 `eb3bb2fe01e355985f4b098ba0fb3bd101dac9d2` 已直接推送 `main`。GitHub Actions run [`31614778648`](https://github.com/gitchw/bidpilot/actions/runs/31614778648) 于 2026-08-12 完成：Windows、Ubuntu、macOS × Python 3.11/3.13，以及 Ubuntu 企业 HTTPS 容器共 7 个作业全部成功；六个 Python 作业均执行同一套 311 项测试。
 
 ## 2. Windows 本地门禁
 
@@ -16,7 +16,7 @@
 |---|---|---|
 | 完整测试 | `.venv\Scripts\python.exe -m pytest -p no:cacheprovider` | 311 passed，1 个 Starlette 弃用提示；本地隔离运行与 CI 以同一套测试为准 |
 | Ruff 规则 | `.venv\Scripts\python.exe -m ruff check .` | 通过 |
-| Ruff 格式 | `.venv\Scripts\python.exe -m ruff format --check .` | 73 个文件已合规 |
+| Ruff 格式 | `.venv\Scripts\python.exe -m ruff format --check .` | 72 个 Python 文件已合规 |
 | Python 编译 | `.venv\Scripts\python.exe -m compileall -q bidpilot tests tools bootstrap.py` | 通过 |
 | JavaScript | `node --check bidpilot/static/app.js` | 通过 |
 | 发布结构 | `.venv\Scripts\python.exe tools/validate_release.py` | 通过 |
@@ -29,12 +29,12 @@ Starlette 的 `httpx` 兼容提示属于依赖未来迁移提醒，不影响本�
 
 | 作业 | 覆盖内容 | 当前证据 |
 |---|---|---|
-| Ubuntu × Python 3.11 / 3.13 | 安装、Ruff、编译、JS、发布结构、Pytest | 旧基线 run 成功；待本次最终提交刷新 |
-| Windows × Python 3.11 / 3.13 | 同上，覆盖 Windows 路径与进程行为 | 旧基线 run 成功；本机当前 311 项已通过 |
-| macOS × Python 3.11 / 3.13 | 同上，覆盖 POSIX/macOS 解释器与路径 | 旧基线 run 成功；待本次最终提交刷新 |
-| Ubuntu container | 基础/企业 Compose、Linux 镜像、企业 HTTPS 栈、端口绑定、`/health`、清理 | 旧基线 run 成功；待本次最终提交刷新 |
+| Ubuntu × Python 3.11 / 3.13 | 安装、Ruff、编译、JS、发布结构、Pytest | run `31614778648`：2/2 成功 |
+| Windows × Python 3.11 / 3.13 | 同上，覆盖 Windows 路径与进程行为 | run `31614778648`：2/2 成功 |
+| macOS × Python 3.11 / 3.13 | 同上，覆盖 POSIX/macOS 解释器与路径 | run `31614778648`：2/2 成功 |
+| Ubuntu container | 基础/企业 Compose、Linux 镜像、企业 HTTPS 栈、端口绑定、`/health`、清理 | run `31614778648`：1/1 成功 |
 
-旧基线链接：[cross-platform-ci #30872704489](https://github.com/gitchw/bidpilot/actions/runs/30872704489)。最终交付前应把本段替换为当前提交的新 run 链接、commit 和 7 个作业结果。
+远端证据：[cross-platform-ci #31614778648](https://github.com/gitchw/bidpilot/actions/runs/31614778648)。该运行严格对应代码终版提交 `eb3bb2f`；随后只允许更新本审计记录与构建材料，并需再次等待最终文档提交的 7/7 结果。
 
 ## 4. 发布结构校验实际检查什么
 
@@ -61,7 +61,7 @@ Starlette 的 `httpx` 兼容提示属于依赖未来迁移提醒，不影响本�
 
 - [x] Windows 当前工作树 311 项测试及本地静态门禁通过；
 - [x] 时间敏感夹具不再依赖会过期的固定日期；
-- [ ] 当前提交已推送 `main`；
-- [ ] 当前提交的 7 个 GitHub Actions 作业全部成功；
-- [ ] 新 run URL、commit 与最终源码 ZIP / 构建信息一致；
-- [ ] Word、截图和真实运行样本均来自同一提交或明确标注生成时间。
+- [x] 代码终版提交已推送 `main`；
+- [x] 代码终版提交的 7 个 GitHub Actions 作业全部成功；
+- [ ] 最终文档提交的新 run URL、commit 与源码 ZIP / 构建信息一致；
+- [x] Word、截图和真实运行样本均来自当前实现或明确标注生成时间。
