@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
@@ -43,7 +43,7 @@ class StableTenderSource(SourceAdapter):
             source=self.name,
             source_url="https://example.com/outbox/1",
             title="安徽大学 GPU 服务器采购招标公告",
-            published_at=datetime(2026, 7, 10, 9, 0),
+            published_at=datetime.combine(spec.end_date, time(9, 0)),
             region="安徽",
             buyer="安徽大学",
             body=body,

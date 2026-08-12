@@ -21,6 +21,10 @@ outputs/manuals/*_candidate*.docx
 outputs/manuals/rendered*/
 outputs/manuals/candidate*_word_v*/
 outputs/manuals/qa_*/
+outputs/.release_samples_work_*/
+outputs/release_samples_*/
+outputs/incremental_evidence_*/
+outputs/demo_*/
 tmp/
 dist/
 build/

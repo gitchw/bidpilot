@@ -66,6 +66,8 @@ const DELIVERY_STATUS_LABELS = {
   succeeded: "发送成功", dead_letter: "需要人工处理", skipped: "已跳过",
 };
 const ACTIVE_DELIVERY_STATUSES = new Set(["pending", "sending", "retrying"]);
+const SCHEDULED_INTENT_KINDS = new Set(["once", "daily", "weekly", "monthly"]);
+const PRIMARY_ACTION_DEFAULT_LABEL = $("#run-button span").textContent.trim();
 const NETWORK_SECURITY_FIELDS = new Set([
   "network_access_mode", "lan_access_policy", "lan_trusted_networks",
   "trusted_proxy_networks", "enterprise_allowed_origins", "lan_admin_token", "port",
@@ -397,7 +399,7 @@ async function parseIntent() {
     if (sequence !== state.intentRequestSequence || currentQuery() !== query) return null;
     state.spec = spec; renderIntent(spec); return spec;
   } finally {
-    if (sequence === state.intentRequestSequence && !state.runInFlight) { button.disabled = false; button.textContent = "解析意图"; }
+    if (sequence === state.intentRequestSequence && !state.runInFlight) { button.disabled = false; button.textContent = "预览检索口径"; }
   }
 }
 
@@ -427,7 +429,22 @@ function renderIntent(spec) {
   $("#intent-resolution").innerHTML = `<div class="resolution-head"><span class="resolution-badge ${resolutionTone}">${escapeHtml(resolutionLabel)}</span><p>${escapeHtml(resolution.summary)}${resolution.latency_ms ? ` · ${resolution.latency_ms} ms` : ""}</p></div>${reasons ? `<details><summary>为什么触发智能复核</summary><ul>${reasons}</ul></details>` : ""}${decisions ? `<details ${resolution.llm_status === "applied" || resolution.llm_status === "rejected" ? "open" : ""}><summary>字段级校验记录</summary><ul class="decision-list">${decisions}</ul></details>` : ""}`;
   $("#intent-warnings").innerHTML = (spec.warnings || []).map((warning) => `⚠ ${escapeHtml(warning)}`).join("<br>");
   $("#create-subscription-button").classList.toggle("hidden", spec.schedule.kind === "immediate");
+  syncPrimaryActionLabel(spec);
   $("#intent-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function isScheduledIntent(spec) {
+  return SCHEDULED_INTENT_KINDS.has(spec?.schedule?.kind);
+}
+
+function syncPrimaryActionLabel(spec = state.spec) {
+  const label = $("#run-button span");
+  if (!label) return;
+  if (state.runInFlight) {
+    label.textContent = isScheduledIntent(spec) ? "正在创建计划任务…" : "多源采集中…";
+    return;
+  }
+  label.textContent = isScheduledIntent(spec) ? "创建计划任务" : PRIMARY_ACTION_DEFAULT_LABEL;
 }
 
 async function parseScheduledIntentForConfirmation(query, actionLabel) {
@@ -461,7 +478,8 @@ function setRunControlsBusy(busy) {
   $$("#run-delivery-targets input, #run-delivery-targets button").forEach((control) => { control.disabled = busy || (control.matches("[data-delivery-target]") && control.closest(".unconfigured") && !control.checked); });
   $$("[data-query]").forEach((control) => { control.disabled = busy; });
   const button = $("#run-button"); button.disabled = busy;
-  button.querySelector("span").textContent = busy ? "多源采集中…" : "启动情报任务";
+  button.setAttribute("aria-busy", String(busy));
+  syncPrimaryActionLabel();
 }
 
 async function runQuery() {
@@ -478,6 +496,10 @@ async function runQuery() {
       const parsed = await parseIntent();
       if (!parsed || currentQuery() !== query) throw new Error("查询内容在解析期间发生变化，请确认后重新启动");
     }
+    if (isScheduledIntent(state.spec)) {
+      await createSubscriptionFromQuery();
+      return;
+    }
     $("#run-panel").classList.remove("hidden"); $("#results-panel").classList.add("hidden"); animatePipeline();
     $("#run-panel").scrollIntoView({ behavior: "smooth", block: "center" });
     const run = await api("/api/v1/runs", { method: "POST", body: JSON.stringify({ query, intent_snapshot: state.spec.confirmation_snapshot, ...deliveryPayload(targets) }) });
@@ -493,7 +515,7 @@ async function runQuery() {
     clearInterval(window.__pipeTimer);
     if (!runCompleted) {
       if (error.status === 409) state.spec = null;
-      toast(error.transient ? `${error.message}；请先查看“报告历史”，避免重复执行` : error.message, 8000);
+      toast(error.transient ? `${error.message}；请先查看“Word 报告”，避免重复执行` : error.message, 8000);
       $("#run-state").textContent = error.transient ? "结果待确认" : error.status === 409 ? "请重新解析确认" : "执行失败";
     }
   }
@@ -553,7 +575,7 @@ function scheduleRunDeliveryPolling(runId, delay = 4000) {
       state.runDeliveryPollFailures += 1;
       if (error.status === 404) {
         stopRunDeliveryPolling();
-        setRunDeliveryRefreshState("运行记录已不存在；请到报告历史核对本机文件。", true);
+        setRunDeliveryRefreshState("运行记录已不存在；请到 Word 报告核对本机文件。", true);
         return;
       }
       setRunDeliveryRefreshState(`自动刷新暂时失败：${error.message}。系统会继续重试，也可手动刷新。`, true);
@@ -577,7 +599,7 @@ function renderDeliveryReceipts(run) {
   }).join("");
   const completed = receipts.filter((item) => ["succeeded", "skipped"].includes(item.status)).length;
   const active = hasActiveDeliveryRows(receipts);
-  root.innerHTML = `<div class="delivery-receipts-head"><div><p class="eyebrow">DELIVERY RECEIPTS</p><h3>逐目标投递回执</h3></div><div class="delivery-refresh-controls"><span>${completed} / ${receipts.length} 已完成</span><button class="secondary-button compact refresh-run-delivery" type="button">刷新投递状态</button><small class="delivery-refresh-state">${active ? "后台处理中 · 每 4 秒自动刷新" : "当前状态已确认"}</small></div></div><p class="delivery-semantics">成功目标不会因其他目标失败而重发；外部平台已接收但本地确认前崩溃的极小窗口仍可能产生重复。</p><div class="delivery-receipt-grid">${cards}</div>`;
+  root.innerHTML = `<div class="delivery-receipts-head"><div><p class="eyebrow">投递状态</p><h3>逐目标投递回执</h3></div><div class="delivery-refresh-controls"><span>${completed} / ${receipts.length} 已完成</span><button class="secondary-button compact refresh-run-delivery" type="button">刷新投递状态</button><small class="delivery-refresh-state">${active ? "后台处理中 · 每 4 秒自动刷新" : "当前状态已确认"}</small></div></div><p class="delivery-semantics">成功目标不会因其他目标失败而重发；外部平台已接收但本地确认前崩溃的极小窗口仍可能产生重复。</p><div class="delivery-receipt-grid">${cards}</div>`;
   root.classList.remove("hidden");
   root.querySelector(".refresh-run-delivery")?.addEventListener("click", async (event) => {
     const button = event.currentTarget; button.disabled = true; button.textContent = "刷新中…";
@@ -603,7 +625,7 @@ function renderResults(run, scroll = true) {
   $("#results-panel").classList.remove("hidden");
   const refreshAssessments = $("#refresh-assessments"); if (refreshAssessments) { refreshAssessments.disabled = !run?.run_id; refreshAssessments.textContent = "刷新适配判断"; }
   const limitedSources = run.diagnostics.filter((item) => ["partial", "auth_required", "failed"].includes(item.status)).length;
-  $("#result-summary").textContent = `${run.new_count} 条可信结果 · ${limitedSources ? `${limitedSources} 个来源覆盖受限` : "已配置来源均正常"}`;
+  $("#result-summary").textContent = `${run.new_count} 条可信结果 · ${limitedSources ? `${limitedSources} 个来源覆盖受限` : "本轮未发现覆盖限制"}`;
   const download = $("#download-report");
   if (run.report_path) { const name = run.report_path.replaceAll("\\", "/").split("/").pop(); download.href = `/api/v1/reports/${encodeURIComponent(name)}`; download.classList.remove("hidden"); } else download.classList.add("hidden");
   const high = run.records.filter((item) => item.opportunity_score >= 80).length;
@@ -629,10 +651,16 @@ function renderResults(run, scroll = true) {
     empty.classList.add("hidden");
     const assessments = new Map((run.opportunity_assessments?.assessments || []).map((item) => [feedbackKey(item.canonical_id, item.version_hash), item]));
     list.innerHTML = run.records.map((item) => {
-      const links = item.source_urls.map((url, i) => { const sourceUrl = safeUrl(url); return sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">来源 ${i + 1} ↗</a>` : ""; }).join("");
+      const links = item.source_urls.map((url, i) => {
+        const sourceUrl = safeUrl(url); const sourceName = item.sources?.[i] || `来源 ${i + 1}`;
+        return sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(sourceName)} ↗</a>` : "";
+      }).join("");
       const tracked = state.opportunityProjectKeys.has(item.project_key);
       const key = feedbackKey(item.canonical_id, item.version_hash);
-      return `<article class="result-card" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}"><div class="result-top"><div><h3>${escapeHtml(item.title)}</h3><div class="record-meta"><span><b>${escapeHtml(item.event_type)}</b></span><span>${escapeHtml(item.published_at.slice(0,10))}</span><span>${escapeHtml(item.region || "地域未标注")}</span><span>${escapeHtml(item.buyer || "采购人未提取")}</span><span>合并 ${item.duplicate_count} 条</span></div></div><div class="score" title="原始机会分">${Math.round(item.opportunity_score)}</div></div><p class="summary">${escapeHtml(item.summary)}</p>${renderFitAssessment(assessments.get(key), run.opportunity_assessments)}${renderFeedbackControls(item)}<div class="record-links">${links}<button class="add-opportunity" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}" ${tracked ? "disabled" : ""}>${tracked ? "✓ 已加入" : "＋ 加入机会"}</button></div></article>`;
+      const assessment = assessments.get(key);
+      const evidenceBadge = assessment?.evidence_id ? `<span class="result-evidence-id">${escapeHtml(assessment.evidence_id)}</span>` : "";
+      const accessLabel = item.auth_level === "free_member" ? "免费会员列表可见" : "公开信息";
+      return `<article class="result-card" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}"><div class="result-top"><div><h3>${evidenceBadge}${escapeHtml(item.title)}</h3><div class="record-meta"><span><b>${escapeHtml(item.event_type)}</b></span><span>${escapeHtml(item.published_at.slice(0,10))}</span><span>${escapeHtml(item.region || "地域未标注")}</span><span>${escapeHtml(item.buyer || "采购人未提取")}</span><span class="record-access ${item.auth_level === "free_member" ? "member" : ""}">${accessLabel}</span><span>合并 ${item.duplicate_count} 条</span></div></div><div class="score" role="img" aria-label="机会分 ${Math.round(item.opportunity_score)} 分">${Math.round(item.opportunity_score)}</div></div><p class="summary">${escapeHtml(item.summary)}</p>${renderFitAssessment(assessment, run.opportunity_assessments)}${renderFeedbackControls(item)}<div class="record-links">${links}<button class="add-opportunity" data-canonical="${escapeHtml(item.canonical_id)}" data-version="${escapeHtml(item.version_hash)}" ${tracked ? "disabled" : ""}>${tracked ? "✓ 已加入" : "＋ 加入机会"}</button></div></article>`;
     }).join("");
     bindResultOpportunityActions();
     bindResultFeedbackActions();
@@ -775,7 +803,7 @@ function renderRunQAError(message) {
 }
 
 async function askRunEvidence() {
-  if (!state.run?.run_id) return toast("请先完成一次情报检索");
+  if (!state.run?.run_id) return toast("请先完成一次情报查找");
   if (state.qaInFlight) return toast("正在核对上一条问题，请等待回答完成");
   const question = $("#run-question").value.trim(); if (question.length < 2) return toast("请先输入至少 2 个字的问题");
   const runId = state.run.run_id;
@@ -826,7 +854,7 @@ function renderIntelligenceBrief(run) {
   const risks = (brief.risks || []).map((item) => `<li class="${escapeHtml(item.level)}"><b>${escapeHtml(riskLabels[item.level] || item.level)}</b><p>${escapeHtml(item.text)}</p><span>${references(item.evidence_ids)}</span></li>`).join("");
   const actions = (brief.actions || []).map((item) => `<li><b>${escapeHtml(item.priority)}</b><p>${escapeHtml(item.text)}</p><span>${references(item.evidence_ids)}</span></li>`).join("");
   const fallback = brief.mode !== "llm_grounded";
-  root.innerHTML = `<div class="brief-head"><div><p class="eyebrow">EVIDENCE-GROUNDED COPILOT</p><h3>AI 情报副驾驶</h3></div><span class="state-badge ${fallback ? "warning" : "success"}">${escapeHtml(statusLabels[brief.status] || brief.status)}</span></div><p class="brief-overview">${escapeHtml(brief.overview)}</p><small class="brief-summary">${escapeHtml(brief.summary)}</small>${priorities ? `<div class="brief-priorities">${priorities}</div>` : ""}<div class="brief-grid">${needs ? `<section><h4>采购需求判断</h4><ul class="brief-claims">${needs}</ul></section>` : ""}${risks ? `<section><h4>风险提示</h4><ul class="brief-risks">${risks}</ul></section>` : ""}${actions ? `<section class="wide"><h4>建议行动</h4><ul class="brief-actions">${actions}</ul></section>` : ""}</div>`;
+  root.innerHTML = `<div class="brief-head"><div><p class="eyebrow">本轮行动建议</p><h3>情报简报</h3></div><span class="state-badge ${fallback ? "warning" : "success"}">${escapeHtml(statusLabels[brief.status] || brief.status)}</span></div><p class="brief-overview">${escapeHtml(brief.overview)}</p><small class="brief-summary">${escapeHtml(brief.summary)}</small>${priorities ? `<div class="brief-priorities">${priorities}</div>` : ""}<div class="brief-grid">${needs ? `<section><h4>采购需求判断</h4><ul class="brief-claims">${needs}</ul></section>` : ""}${risks ? `<section><h4>风险提示</h4><ul class="brief-risks">${risks}</ul></section>` : ""}${actions ? `<section class="wide"><h4>建议行动</h4><ul class="brief-actions">${actions}</ul></section>` : ""}</div>`;
 }
 
 function renderRetrievalTrace(run) {
@@ -859,7 +887,7 @@ function renderRetrievalTrace(run) {
   const rejectionReasons = Object.entries(run.search_explanation?.rejection_reasons || {}).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `<span>${escapeHtml(FILTER_REASON_LABELS[reason] || reason)} <b>${count}</b></span>`).join("");
   const semanticDecisions = (trace.semantic_decisions || []).slice(0, 8).map((item) => `<li class="${escapeHtml(item.outcome)}"><b>${item.outcome === "accepted" ? "✓" : item.outcome === "rejected" ? "×" : "·"} ${escapeHtml(item.title)}</b><span>${Math.round(item.confidence * 100)}% · ${escapeHtml(item.reason)}</span></li>`).join("");
   const merged = run.records.reduce((sum, item) => sum + Math.max(0, item.duplicate_count - 1), 0);
-  root.innerHTML = `<div class="retrieval-trace-head"><div><p class="eyebrow">AUDITABLE AI RETRIEVAL</p><h3>这批结果是怎么找出来的</h3></div><span class="state-badge ${plan.mode === "hybrid" ? "success" : "muted"}">${escapeHtml(statusLabels[plan.llm_status] || plan.mode)}</span></div><p class="retrieval-summary">${escapeHtml(trace.summary || plan.summary)}</p><div class="retrieval-terms"><b>受控检索词</b><div>${terms || "只使用核心主题"}</div></div><div class="retrieval-flow"><div class="retrieval-stage"><span>01</span><div><b>AI 查询计划</b><p>${escapeHtml(plan.summary)}</p><small>最多 ${plan.max_rounds} 轮 · 每来源 ${plan.query_budget_per_source} 个查询预算${plan.source_priorities?.length ? ` · 优先 ${escapeHtml(plan.source_priorities.join("、"))}` : ""}</small></div></div>${roundCard(1)}<div class="retrieval-stage ${gaps ? "warning" : "muted"}"><span>03</span><div><b>缺口判断</b>${gaps ? `<ul>${gaps}</ul>` : "<p>首轮覆盖没有触发额外缺口说明</p>"}</div></div>${roundCard(2)}<div class="retrieval-stage"><span>05</span><div><b>硬过滤</b><p>日期、地域、公告类型和排除词不允许模型越权。</p><div class="hard-filter-tags">${rejectionReasons || "本轮无硬过滤淘汰"}</div></div></div><div class="retrieval-stage"><span>06</span><div><b>AI 边界复核</b><p>${escapeHtml(reviewStatusLabels[trace.semantic_review_status] || trace.semantic_review_status)}</p>${semanticDecisions ? `<ul class="semantic-decision-list">${semanticDecisions}</ul>` : "<small>没有需要模型裁决的边界候选。</small>"}</div></div><div class="retrieval-stage"><span>07</span><div><b>去重保留</b><p>${trace.unique_raw_candidates} 个唯一原始候选 → ${run.records.length} 条可信记录</p><small>合并 ${merged} 条跨站转载/重复版本；更正和中标生命周期仍单独保留。</small></div></div></div>`;
+  root.innerHTML = `<div class="retrieval-trace-head"><div><p class="eyebrow">检索与筛选记录</p><h3>这批结果是怎么找出来的</h3></div><span class="state-badge ${plan.mode === "hybrid" ? "success" : "muted"}">${escapeHtml(statusLabels[plan.llm_status] || plan.mode)}</span></div><p class="retrieval-summary">${escapeHtml(trace.summary || plan.summary)}</p><div class="retrieval-terms"><b>受控检索词</b><div>${terms || "只使用核心主题"}</div></div><div class="retrieval-flow"><div class="retrieval-stage"><span>01</span><div><b>查询计划</b><p>${escapeHtml(plan.summary)}</p><small>最多 ${plan.max_rounds} 轮 · 每来源 ${plan.query_budget_per_source} 个查询预算${plan.source_priorities?.length ? ` · 优先 ${escapeHtml(plan.source_priorities.join("、"))}` : ""}</small></div></div>${roundCard(1)}<div class="retrieval-stage ${gaps ? "warning" : "muted"}"><span>03</span><div><b>缺口判断</b>${gaps ? `<ul>${gaps}</ul>` : "<p>首轮覆盖没有触发额外缺口说明</p>"}</div></div>${roundCard(2)}<div class="retrieval-stage"><span>05</span><div><b>硬过滤</b><p>日期、地域、公告类型和排除词不允许模型越权。</p><div class="hard-filter-tags">${rejectionReasons || "本轮无硬过滤淘汰"}</div></div></div><div class="retrieval-stage"><span>06</span><div><b>边界复核</b><p>${escapeHtml(reviewStatusLabels[trace.semantic_review_status] || trace.semantic_review_status)}</p>${semanticDecisions ? `<ul class="semantic-decision-list">${semanticDecisions}</ul>` : "<small>没有需要模型裁决的边界候选。</small>"}</div></div><div class="retrieval-stage"><span>07</span><div><b>去重保留</b><p>${trace.unique_raw_candidates} 个唯一原始候选 → ${run.records.length} 条可信记录</p><small>合并 ${merged} 条跨站转载/重复版本；更正和中标生命周期仍单独保留。</small></div></div></div>`;
 }
 
 function renderEmptyDiagnosis(explanation, root) {
@@ -873,7 +901,7 @@ function renderEmptyDiagnosis(explanation, root) {
     const suggestion = explanation.suggestions[Number(button.dataset.suggestionIndex)];
     $("#query-input").value = suggestion.query; state.spec = null;
     await activateTab("search"); $("#query-input").focus();
-    window.scrollTo({ top: 0, behavior: "smooth" }); toast("建议已填入，请先解析意图，确认后再执行");
+    window.scrollTo({ top: 0, behavior: "smooth" }); toast("建议已填入，请先预览检索口径，确认后再执行");
   }));
 }
 
@@ -926,6 +954,11 @@ async function loadOpportunities() {
   if (filter) params.set("stage", filter); if (search) params.set("search", search);
   const rows = await api(`/api/v1/opportunities${params.size ? `?${params}` : ""}`);
   if (sequence !== state.opportunityLoadSequence) return [];
+  const homeOpportunityCount = $("#home-opportunity-count");
+  if (homeOpportunityCount) {
+    const actionable = rows.filter((item) => ["new", "following", "bidding"].includes(item.stage)).length;
+    homeOpportunityCount.textContent = `${actionable} 个待处理`;
+  }
   if (!filter && !search) state.opportunityProjectKeys = new Set(rows.map((item) => item.project_key));
   else rows.forEach((item) => state.opportunityProjectKeys.add(item.project_key));
   $$(".add-opportunity[data-canonical][data-version]").forEach((button) => {
@@ -1140,7 +1173,7 @@ function bindBuyerRadarActions() {
             run_immediately: runImmediately,
           }),
         });
-        status.textContent = `已锁定：${subscription.spec.buyer_keywords.join("、")}；正在打开订阅中心。`;
+        status.textContent = `已锁定：${subscription.spec.buyer_keywords.join("、")}；正在打开自动订阅。`;
         toast(`精准监控已创建：${subscription.name}`, 5000);
         await activateTab("subscriptions");
         if (runImmediately) pollSubscription(subscription.id, subscription.last_run_at);
@@ -1178,7 +1211,7 @@ async function loadBuyerRadar() {
     ].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
     coverage.innerHTML = `<b>先看数据边界：</b><span>当前只统计本机已保存的 ${result.total_local_notice_count} 条去重公告；返回 ${result.returned_buyer_count} 家。项目数是估算，不代表采购方官方项目总量。${result.invalid_version_count ? `另有 ${result.invalid_version_count} 个损坏历史版本未参与统计。` : "历史快照均可读取。"}</span>`;
     if (!result.buyers.length) {
-      grid.innerHTML = `<section class="buyer-radar-zero"><span>◎</span><h2>${search ? "没有匹配的本地采购单位" : "本地还没有可识别的采购单位"}</h2><p>${search ? "换一个采购单位简称、产品主题或来源名称，也可以清空搜索查看全部。" : "先去“情报检索”执行真实查询；系统只会聚合实际保存的公告，不填充演示假数据。"}</p><button class="secondary-button" data-buyer-empty-action="${search ? "clear" : "search"}">${search ? "清空搜索" : "去情报检索"}</button></section>`;
+      grid.innerHTML = `<section class="buyer-radar-zero"><span>◎</span><h2>${search ? "没有匹配的本地采购单位" : "本地还没有可识别的采购单位"}</h2><p>${search ? "换一个采购单位简称、产品主题或来源名称，也可以清空搜索查看全部。" : "先去“查找情报”执行真实查询；系统只会聚合实际保存的公告，不填充演示假数据。"}</p><button class="secondary-button" data-buyer-empty-action="${search ? "clear" : "search"}">${search ? "清空搜索" : "去查找情报"}</button></section>`;
       grid.querySelector("[data-buyer-empty-action]").addEventListener("click", async (event) => {
         if (event.currentTarget.dataset.buyerEmptyAction === "clear") { $("#buyer-radar-search").value = ""; await loadBuyerRadar(); }
         else { await activateTab("search"); $("#query-input").focus(); }
@@ -1296,11 +1329,10 @@ function sourceAuthActions(row) {
 function renderSourceCenter(rows) {
   const summary = $("#source-summary"), root = $("#source-center-list");
   if (!summary || !root) return;
-  const configured = rows.filter((row) => row.configured).length;
   const official = rows.filter((row) => row.official).length;
-  const healthy = rows.filter((row) => row.health?.health_level === "healthy").length;
-  const samples = rows.reduce((sum, row) => sum + (row.health?.sample_count || 0), 0);
-  summary.innerHTML = [["已接入来源", rows.length], ["官方平台", official], ["当前可运行", configured], ["健康 / 样本", `${healthy} / ${samples}`]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
+  const memberVerified = rows.filter((row) => row.member_enhanced).length;
+  const contributed = rows.filter((row) => (row.last_kept_count || 0) > 0).length;
+  summary.innerHTML = [["已接入来源", rows.length], ["官方平台", official], ["登录增强已验证", memberVerified], ["最近实际有产出", contributed]].map(([label, value]) => `<div class="metric"><small>${label}</small><b>${value}</b></div>`).join("");
   root.innerHTML = rows.map((row) => {
     const [label, tone] = sourceState(row);
     const access = row.member_enhanced ? `${row.mode} · 已授权增强` : row.mode;
@@ -1460,7 +1492,7 @@ async function loadDecisionCenter() {
   if (feedbackResult.status === "fulfilled") renderFeedbackMemory(feedbackResult.value);
   else $("#feedback-memory").innerHTML = `<div class="feedback-zero"><span>!</span><b>反馈记忆暂时读取失败</b><p>${escapeHtml(feedbackResult.reason?.message || "请检查本地服务后重试")}</p></div>`;
   renderDecisionSummary();
-  if (profileResult.status === "rejected" || feedbackResult.status === "rejected") toast("决策中心有部分数据暂未读取，请按页面提示重试", 8000);
+  if (profileResult.status === "rejected" || feedbackResult.status === "rejected") toast("判断与复盘有部分数据暂未读取，请按页面提示重试", 8000);
 }
 
 function profileConfigured(profile = state.profile) {
@@ -1898,7 +1930,7 @@ function channelTestGroup(channel) {
 async function testDeliveryChannel(button) {
   const channel = button.dataset.testChannel, group = channelTestGroup(channel);
   if (dirtyConfigFields(group).length) return toast("本卡有未保存修改；请先保存本卡，再测试已保存配置", 6000);
-  if (!window.confirm("此操作会通过所选通道真实发送一条“配置中心连通性测试”消息。确定继续吗？")) return;
+  if (!window.confirm("此操作会通过所选通道真实发送一条“系统设置连通性测试”消息。确定继续吗？")) return;
   button.disabled = true; const original = button.textContent; button.textContent = "发送中…";
   try {
     const result = await configApi(`/api/v1/config/channels/${encodeURIComponent(channel)}/test`, { method: "POST" });
@@ -1934,8 +1966,10 @@ async function loadSubscriptions() {
   const sequence = ++state.subscriptionLoadSequence;
   const [, rows] = await Promise.all([loadSystemStatus(), api("/api/v1/subscriptions")]);
   if (sequence !== state.subscriptionLoadSequence) return [];
+  const homeSubscriptionCount = $("#home-subscription-count");
+  if (homeSubscriptionCount) homeSubscriptionCount.textContent = `${rows.filter((item) => item.enabled).length} 个运行中`;
   const root = $("#subscription-list");
-  if (!rows.length) { stopAllSubscriptionLogPolling(); state.subscriptionExpandedLogs.clear(); state.subscriptionDrafts.clear(); root.innerHTML = `<div class="loading-card">尚无订阅。在情报检索中输入“每天 / 每周 / 今天 9:00 发送”即可创建。</div>`; return []; }
+  if (!rows.length) { stopAllSubscriptionLogPolling(); state.subscriptionExpandedLogs.clear(); state.subscriptionDrafts.clear(); root.innerHTML = `<div class="loading-card">尚无订阅。在“查找情报”中输入“每天 / 每周 / 今天 9:00 发送”即可创建。</div>`; return []; }
   root.innerHTML = rows.map((row) => {
     const [label, tone] = subscriptionState(row);
     const targets = normalizeDeliveryTargets(row.delivery_targets?.length ? row.delivery_targets : [row.delivery_channel]);
@@ -2183,6 +2217,8 @@ async function loadSubscriptionLog(card, id, { background = false } = {}) {
 
 async function loadReports() {
   const rows = await api("/api/v1/reports"); const root = $("#report-list");
+  const homeReportCount = $("#home-report-count");
+  if (homeReportCount) homeReportCount.textContent = `${rows.length} 份已生成`;
   if (!rows.length) { root.innerHTML = `<div class="loading-card">尚无报告。完成一次情报任务后，Word 报告会出现在这里。</div>`; return; }
   root.innerHTML = rows.map((row) => { const name = row.path.replaceAll("\\", "/").split("/").pop(); return `<article class="data-row"><div><h3>${escapeHtml(name)}</h3><p>${row.item_count} 条 · ${formatTime(row.created_at)}</p></div><div class="row-actions"><span class="tag">DOCX</span><a class="secondary-button" href="/api/v1/reports/${encodeURIComponent(name)}">下载</a></div></article>`; }).join("");
 }
@@ -2204,7 +2240,7 @@ async function createSubscriptionFromQuery() {
     if (error.status === 409) {
       state.spec = null;
       $("#parse-button").disabled = false;
-      $("#parse-button").textContent = "重新解析意图";
+      $("#parse-button").textContent = "重新预览检索口径";
       toast("意图确认已过期或问题已经变化，创建订阅前请重新解析", 7000);
       return;
     }
@@ -2217,7 +2253,7 @@ function pollSubscription(id, previousLastRunAt = null) {
   window.__subscriptionPoll = setInterval(async () => {
     if (Date.now() - started > 300000) {
       clearInterval(window.__subscriptionPoll);
-      return toast("任务仍保存在后台；可在订阅中心继续查看状态和日志", 5000);
+      return toast("任务仍保存在后台；可在自动订阅继续查看状态和日志", 5000);
     }
     if (state.activeTab === "subscriptions" && state.subscriptionDrafts.size) return;
     try {
@@ -2225,13 +2261,13 @@ function pollSubscription(id, previousLastRunAt = null) {
       if (row.last_run_at && row.last_run_at !== previousLastRunAt) { clearInterval(window.__subscriptionPoll); toast(row.last_status === "failed" ? `本轮执行失败，系统已安排重试：${row.last_message}` : `本轮执行完成：新增 ${row.last_new_count} 条`, 5000); }
     } catch (error) {
       clearInterval(window.__subscriptionPoll);
-      toast(`自动跟踪暂时中断：${error.message}。任务仍保存在后台，请到订阅中心点击“刷新状态”。`, 8000);
+      toast(`自动跟踪暂时中断：${error.message}。任务仍保存在后台，请到自动订阅点击“刷新状态”。`, 8000);
     }
   }, 3000);
 }
 
 async function activateTab(tab) {
-  if (state.activeTab === "config" && tab !== "config" && state.configDirty.size && !window.confirm(`配置中心还有 ${state.configDirty.size} 项未保存修改，确定离开并保留草稿吗？`)) return false;
+  if (state.activeTab === "config" && tab !== "config" && state.configDirty.size && !window.confirm(`系统设置还有 ${state.configDirty.size} 项未保存修改，确定离开并保留草稿吗？`)) return false;
   const subscriptionViewWillReload = state.activeTab === "subscriptions" && tab === "subscriptions";
   if (state.activeTab === "subscriptions" && (tab !== "subscriptions" || subscriptionViewWillReload) && state.subscriptionDrafts.size) {
     if (!window.confirm(`有 ${state.subscriptionDrafts.size} 条订阅规则尚未保存；离开或重新打开会丢弃这些草稿，确定继续吗？`)) return false;
@@ -2239,18 +2275,41 @@ async function activateTab(tab) {
   }
   if (state.activeTab === "subscriptions" && tab !== "subscriptions") stopAllSubscriptionLogPolling();
   state.activeTab = tab;
-  $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.tab === tab));
+  const activeNavigationItem = $(`.nav-link[data-tab="${tab}"]`);
+  $$(".nav-link").forEach((node) => {
+    const active = node.dataset.tab === tab;
+    node.classList.toggle("active", active);
+    node.setAttribute("aria-selected", String(active));
+    node.tabIndex = active ? 0 : -1;
+  });
   $$(".tab-panel").forEach((node) => node.classList.remove("active")); $(`#tab-${tab}`).classList.add("active");
   resetPageScroll();
   if (tab === "decision") await loadDecisionCenter(); if (tab === "opportunities") await setOpportunityWorkspaceView(state.opportunityView); if (tab === "subscriptions") await loadSubscriptions(); if (tab === "sources") await loadSources(); if (tab === "config") await loadConfig(false); if (tab === "reports") await loadReports();
   await waitForLayout();
   resetPageScroll();
+  const navigation = activeNavigationItem?.closest("nav");
+  if (navigation && navigation.scrollWidth > navigation.clientWidth) {
+    activeNavigationItem.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }
   return true;
 }
 
 $$(".nav-link").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.tab).catch((error) => toast(error.message))));
+$$(".nav-link").forEach((button, index, buttons) => button.addEventListener("keydown", (event) => {
+  const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+  if (!keys.includes(event.key)) return;
+  event.preventDefault();
+  const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+  const next = buttons[nextIndex];
+  activateTab(next.dataset.tab).then((activated) => { if (activated !== false) next.focus(); }).catch((error) => toast(error.message));
+}));
+$$("[data-home-tab]").forEach((button) => button.addEventListener("click", () => activateTab(button.dataset.homeTab).catch((error) => toast(error.message))));
 $$("[data-workspace-view]").forEach((button) => button.addEventListener("click", () => setOpportunityWorkspaceView(button.dataset.workspaceView).catch((error) => toast(error.message, 5000))));
-$$("[data-query]").forEach((button) => button.addEventListener("click", () => { $("#query-input").value = button.dataset.query; state.spec = null; state.intentRequestSequence += 1; }));
+$$("[data-query]").forEach((button) => button.addEventListener("click", () => { $("#query-input").value = button.dataset.query; state.spec = null; state.intentRequestSequence += 1; syncPrimaryActionLabel(); }));
 $("#parse-button").addEventListener("click", () => parseIntent().catch((error) => toast(error.message)));
 $("#run-button").addEventListener("click", runQuery);
 $("#create-subscription-button").addEventListener("click", () => createSubscriptionFromQuery().catch((error) => toast(error.message, 5000)));
@@ -2302,7 +2361,8 @@ $("#profile-fields").addEventListener("input", () => { if (state.profileLoaded) 
 $("#profile-fields").addEventListener("change", () => { if (state.profileLoaded) { state.profileDirty = true; $("#profile-save-result").textContent = "有未保存的修改"; } });
 $("#query-input").addEventListener("input", () => {
   state.spec = null; state.intentRequestSequence += 1;
-  if (!state.runInFlight) { $("#parse-button").disabled = false; $("#parse-button").textContent = "解析意图"; }
+  syncPrimaryActionLabel();
+  if (!state.runInFlight) { $("#parse-button").disabled = false; $("#parse-button").textContent = "预览检索口径"; }
 });
 $("#query-input").addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runQuery(); });
 document.addEventListener("keydown", (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#query-input").focus(); } });

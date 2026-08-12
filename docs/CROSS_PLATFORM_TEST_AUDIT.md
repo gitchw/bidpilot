@@ -1,120 +1,67 @@
-# 标擎 BidPilot 跨平台测试与审计报告
+# 标擎 BidPilot 跨平台测试与发布审计
 
-报告日期：2026-08-04
+报告日期：2026-08-11｜版本：v0.8.0｜分支：`main`
 
-审计对象：`gitchw/bidpilot` 主分支跨平台终版
+## 1. 当前结论
 
-结论：当前增强版在 Windows 本地 305 项测试与全部静态门禁通过；最终交付以同一 main 提交的 Windows、Ubuntu、macOS 双 Python 矩阵及 Ubuntu 企业 HTTPS 容器作业为准。上一基线已完成 Debian systemd 真实运行。
+本次 Windows 工作树已完成 311 项 Pytest、Ruff 规则与格式、Python 编译、JavaScript 语法、发布结构和差异检查。此前审计发现 13 项时间敏感失败：测试来源固定写死 2026-07-10，在 2026-08-11 已落到“最近 1 个月”窗口之外。夹具现改为使用查询 `end_date` 当天，受影响用例与完整 311 项均重新通过。
 
-## 1. 执行摘要
+最近一个已提交基线为 2026-08-04 的 GitHub Actions run `30872704489`：Windows、Ubuntu、macOS × Python 3.11/3.13 以及 Ubuntu 企业 HTTPS 容器共 7 个作业全部成功，当时每个 Python 矩阵作业为 305 项测试。当前工作树新增到 311 项；只有最终提交推送后产生的新 7/7 运行，才能作为本版远端证据。
 
-本轮修复前，Windows 3.11/3.13 通过，Ubuntu 与 macOS 均在同一项 CLI 测试失败。日志证明业务安全拒绝已经生效，失败来自 Rich/Typer 在 POSIX 终端插入 ANSI 样式码，测试对裸 `--host` 的字符串比较不具备跨平台稳定性。
+## 2. Windows 本地门禁
 
-修复后：
+环境：Windows 11 专业版 64 位（10.0.26200）、Python 3.13.9、Ruff 0.15.22、Node.js v24.18.0。
 
-- Windows 本地增强版 305 项 Pytest 全通过；
-- Debian 13 / Python 3.13 基线版 288 项 Pytest 全通过；
-- Debian WSL2 `systemd 257` 真实启动 Web/worker，两个单元均为 `active`，API 与 CLI 均确认 worker 在线；
-- GitHub Actions 共 7 个作业：Windows/Ubuntu/macOS × Python 3.11/3.13，以及 Ubuntu Compose/镜像/企业 HTTPS 栈；最终结论按交付 main 提交的 run 核验；
-- Ruff lint、Ruff format、compileall、前端 JavaScript、JSON/YAML/TOML 与 Compose 模型均通过。
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 完整测试 | `.venv\Scripts\python.exe -m pytest -p no:cacheprovider` | 311 passed，1 个 Starlette 弃用提示；本地隔离运行与 CI 以同一套测试为准 |
+| Ruff 规则 | `.venv\Scripts\python.exe -m ruff check .` | 通过 |
+| Ruff 格式 | `.venv\Scripts\python.exe -m ruff format --check .` | 73 个文件已合规 |
+| Python 编译 | `.venv\Scripts\python.exe -m compileall -q bidpilot tests tools bootstrap.py` | 通过 |
+| JavaScript | `node --check bidpilot/static/app.js` | 通过 |
+| 发布结构 | `.venv\Scripts\python.exe tools/validate_release.py` | 通过 |
+| 差异检查 | `git diff --check` | 通过；只有 Git 的 LF→CRLF 提示 |
+| OpenAPI | `create_app().openapi()` | 41 条路径、52 个操作、52 个唯一 operationId |
 
-## 2. 失败根因与修复
+Starlette 的 `httpx` 兼容提示属于依赖未来迁移提醒，不影响本次断言；`.pytest_cache` 历史 Windows ACL 拒绝写入，因此完整发布命令使用 `-p no:cacheprovider`，测试产物不进入交付包。
 
-### 2.1 原始失败
+## 3. CI 矩阵与职责
 
-测试 `test_local_mode_rejects_non_loopback_host_override` 要求：当系统处于仅本机模式时，`serve --host 0.0.0.0` 必须拒绝启动，并提示使用 `BIDPILOT_NETWORK_ACCESS_MODE=lan`。
+| 作业 | 覆盖内容 | 当前证据 |
+|---|---|---|
+| Ubuntu × Python 3.11 / 3.13 | 安装、Ruff、编译、JS、发布结构、Pytest | 旧基线 run 成功；待本次最终提交刷新 |
+| Windows × Python 3.11 / 3.13 | 同上，覆盖 Windows 路径与进程行为 | 旧基线 run 成功；本机当前 311 项已通过 |
+| macOS × Python 3.11 / 3.13 | 同上，覆盖 POSIX/macOS 解释器与路径 | 旧基线 run 成功；待本次最终提交刷新 |
+| Ubuntu container | 基础/企业 Compose、Linux 镜像、企业 HTTPS 栈、端口绑定、`/health`、清理 | 旧基线 run 成功；待本次最终提交刷新 |
 
-Linux/macOS 输出包含 ANSI 样式序列，视觉上仍是 `--host`，但程序捕获的字符串不再连续。Windows runner 未启用相同样式，因此只有 Windows 通过。
+旧基线链接：[cross-platform-ci #30872704489](https://github.com/gitchw/bidpilot/actions/runs/30872704489)。最终交付前应把本段替换为当前提交的新 run 链接、commit 和 7 个作业结果。
 
-### 2.2 修复原则
+## 4. 发布结构校验实际检查什么
 
-- 不放宽安全规则；仍拒绝本机模式绑定非回环地址。
-- 不把测试改成只看退出码；继续核验两条关键用户提示。
-- 在断言前统一剥离 ANSI 终端样式，核验跨平台一致的可见语义。
+`tools/validate_release.py` 会检查：
 
-### 2.3 加固项
+- `feature_list.json`、`pyproject.toml` 可解析；
+- 基础 Compose 同时包含 `web`、`worker`；
+- 企业 Compose 同时包含 `web`、`worker`、`gateway`；
+- Web 只 `expose` 8000，不直接 `publish`；
+- 企业后端网络为 internal，网关连接 HTTPS 入口与后端网络；
+- Web/worker 具备未发布的出站网络；
+- Nginx 模板、两个 systemd unit 与 Bash smoke test 存在且结构完整。
 
-- CI 新增格式检查、`compileall`、结构化配置校验；
-- Ubuntu 独立运行 `docker compose config --quiet` 与 Linux 镜像构建；
-- Actions 升级到官方 v7 主版本，消除旧 Node 运行时弃用告警；
-- systemd 单元加入最小权限、专用用户、只读系统、私有临时目录和严格写目录；
-- 千里马增加 `auto/visible/headless` 策略，区分首次可见登录与后台已验证配置复用。
-- enterprise 环境会锁定网络安全字段，旧 SQLite 不能降级；内部代理网络与仅出站来源网络分离。
-- 千里马授权、Web、worker 与清除共用 OS 级跨进程 profile 锁；实时健康检查替代人为 7 天过期。
+## 5. 真实覆盖和未覆盖范围
 
-## 3. 验证矩阵
+- 本机没有 Docker，不能把 Windows 开发机写成已完成 Compose 或 Linux 镜像实跑；该部分由 Ubuntu container 作业负责。
+- 本机有 WSL2 Debian 和 Bash，但本次本地门禁不把 WSL 结果替代原生 Linux CI。
+- CI 的 Windows/macOS 作业覆盖 Python、静态检查和测试，没有声称存在原生安装包或系统后台服务。
+- 容器启动验证只在 Ubuntu 运行；Python 3.12 没有单独矩阵，声明范围由 3.11 和 3.13 两端覆盖。
+- CI 尚未执行真实浏览器 E2E；本次额外使用 Playwright 做桌面、平板和 390×844 手工截图/布局验收，结果记录在交付材料与截图目录。
+- 真实外部来源会随站点、验证码、频率和授权变化；单测使用冻结最小夹具，线上验证必须同时保留来源诊断。
 
-| 平台 | Python | 范围 | 结果 |
-|---|---:|---|---|
-| Windows 本机 | 3.11 | 305 项测试 + 全部静态检查 | 通过 |
-| Debian 13 WSL2 | 3.13.5 | 288 项测试 + lint/format/compile/config | 通过 |
-| Debian 13 WSL2 | 3.13.5 | 真实 systemd Web/worker、健康与心跳 | 通过 |
-| GitHub Windows | 3.11 / 3.13 | 完整 CI | 通过 |
-| GitHub Ubuntu | 3.11 / 3.13 | 完整 CI | 通过 |
-| GitHub macOS | 3.11 / 3.13 | 完整 CI | 通过 |
-| GitHub Ubuntu | Docker | 基础/企业 Compose + Chromium 镜像 + HTTPS 健康启动 | 以最终 main run 为准 |
+## 6. 最终提交闸门
 
-GitHub Actions 基线证据：`cross-platform-ci` run `30865890049`，7 个作业 `success`。增强版以最终推送到 `main` 的最新 run 为交付证据。
-
-## 4. 登录来源审计
-
-### 4.1 中国招标投标网
-
-- 用户本人登录后，仅保存允许域名的加密会话；
-- 搜索与至少一条免费会员详情同时真实解锁，才进入 `authorized`；
-- 捕获任意 Cookie、零候选或无法判断均不能冒充授权成功；
-- Cookie 仅发送到严格 HTTPS 与来源白名单，不随重定向泄露到其他域名。
-
-### 4.2 千里马
-
-- 真实用户持久 profile 已验证“服务器”无头查询读取 2 页、40 条免费会员列表结果；
-- 本次服务器式健康复验结果为 `authorized`，用量账本记录 `last_outcome=passed`、`pages_read=2`、`last_kept=40`；
-- 不导出 Cookie，不把 Cookie 交给 HTTP 客户端；
-- 默认仅用户主动的即时、单主题查询；最多 2 页/40 条、30 秒冷却、每日 24 次；
-- 会员监控默认关闭，只有书面授权/官方 API 记录编号门禁满足后才可启用；始终不访问付费详情；
-- Linux 后台只允许复用已经通过可见登录与真实测试的持久浏览器配置。
-
-## 5. systemd 真实运行记录
-
-验证环境：WSL2 Debian，Linux 6.6.87.2，systemd 257，Python 3.13.5。
-
-关键结果：
-
-```text
-Web 服务        在线 · v0.8.0 · http://127.0.0.1:8000
-长期任务 worker 在线
-数据库          /opt/bidpilot/data/bidpilot.db
-报告目录        /opt/bidpilot/outputs/reports
-User=bidpilot
-Group=bidpilot
-ActiveState=active
-SubState=running
-systemd smoke test passed
-```
-
-测试结束后脚本停止服务并删除临时单元、用户与测试目录，没有遗留后台进程。
-
-## 6. 竞争交付核验映射
-
-| 官方要求 | 证据 |
-|---|---|
-| 自然语言识别主题/地域/时间/频率 | 意图与混合意图测试、Web 确认快照 |
-| 来源至少 2 个 | 10 个真实来源适配器，来源中心可见 |
-| 至少 1 个免费登录来源 | 中国招标投标网与千里马均完成真实验证 |
-| 内容清洗、去重与筛选 | 证据流水线、跨站聚类、硬过滤漏斗 |
-| 标题/时间/链接/核心内容/附件 | 运行结果 Word 与结构化记录 |
-| 定时与仅新增 | SQLite worker、版本账本、逐目标增量 Outbox |
-| 完整代码与操作步骤 | 源码 ZIP、零基础手册、API/配置/用户文档 |
-| 多问题完整 Demo | 5 分钟分镜覆盖正向、零结果、登录、机会动作、订阅与企业部署 |
-
-## 7. 已知边界与风险披露
-
-- 真实网站可能调整 DOM、WAF 或服务策略；每轮来源诊断必须保留，不能用缓存伪装在线成功。
-- 普通 Webhook/SMTP 属于外部 `at-least-once`，外部已接收但本地回执前崩溃的极小窗口可能产生重复通知。
-- 内置 LAN 模式不是公网多用户系统；企业服务器应使用 HTTPS gateway + enterprise 边界，后端 8000 不直接暴露。
-- 千里马会员监控默认关闭；只有取得书面授权或官方 API 权利并登记记录编号后才能启用，且仍受预算、互斥和付费详情禁用约束。
-- 本报告中的效率、覆盖率和转化指标是试点目标，不是既有客户业绩；需在超聚变真实基线中验证。
-
-## 8. 审计结论
-
-本轮把登录持久化、企业网络与机会动作纳入同一发布门禁：系统具备 Windows 演示、Linux 后台运行和 macOS 开发/验收设计；千里马会话在不导出 Cookie、不绕过付费权限的前提下完成服务器式复验。最终是否发布由 main 提交的 7 个 GitHub 作业与交付哈希共同决定。
+- [x] Windows 当前工作树 311 项测试及本地静态门禁通过；
+- [x] 时间敏感夹具不再依赖会过期的固定日期；
+- [ ] 当前提交已推送 `main`；
+- [ ] 当前提交的 7 个 GitHub Actions 作业全部成功；
+- [ ] 新 run URL、commit 与最终源码 ZIP / 构建信息一致；
+- [ ] Word、截图和真实运行样本均来自同一提交或明确标注生成时间。

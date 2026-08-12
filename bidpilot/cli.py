@@ -151,7 +151,7 @@ def _validate_bind_host(settings, bind_host: str) -> None:
         loopback_bind = False
     if settings.network_access_mode == "local" and not loopback_bind:
         raise typer.BadParameter(
-            "当前访问范围为“仅本机”，不能用 --host 暴露到其他设备。请先在网页配置中心"
+            "当前访问范围为“仅本机”，不能用 --host 暴露到其他设备。请先在网页系统设置"
             "或 .env 设置 BIDPILOT_NETWORK_ACCESS_MODE=lan/enterprise，保存后再启动。"
         )
 

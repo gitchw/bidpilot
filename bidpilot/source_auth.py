@@ -29,7 +29,7 @@ class SourceAuthError(RuntimeError):
 class SourceAuthView(BaseModel):
     source_id: str = Field(description="稳定来源 ID")
     source_name: str = Field(description="来源中文名称")
-    managed: bool = Field(description="是否支持由来源中心管理授权会话")
+    managed: bool = Field(description="是否支持由来源状态页面管理授权会话")
     state: Literal[
         "not_supported",
         "not_authorized",
@@ -117,7 +117,7 @@ class _LiveSession:
     status: Literal["authorizing", "completed", "failed", "expired"] = "authorizing"
     message: str = (
         "可见浏览器已在运行 BidPilot 服务的电脑上打开。请在那台电脑亲自完成登录，"
-        "再回到当前来源中心点击“完成授权”。"
+        "再回到当前来源状态页面点击“完成授权”。"
     )
 
 

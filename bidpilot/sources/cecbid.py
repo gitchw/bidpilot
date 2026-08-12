@@ -290,9 +290,9 @@ class CECBidSource(SourceAdapter):
                 if status == SourceStatus.AUTH_REQUIRED
                 else "已使用验证通过的会员态执行搜索；本轮没有匹配候选。"
                 if cookie and not items
-                else "已携带授权会话，但本轮没有证明会员正文已解锁；请在来源中心测试或重新授权。"
+                else "已携带授权会话，但本轮没有证明会员正文已解锁；请在来源状态页面测试或重新授权。"
                 if cookie
-                else "已获取公开搜索摘要；可在来源中心打开可见浏览器授权会员会话。"
+                else "已获取公开搜索摘要；可在来源状态页面打开可见浏览器授权会员会话。"
             )
             return SourceSearchResult(
                 source=self.name,

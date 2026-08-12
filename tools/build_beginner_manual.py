@@ -28,7 +28,7 @@ WHITE = "FFFFFF"
 CONTENT_WIDTH_DXA = 9360
 TABLE_INDENT_DXA = 120
 RELEASE_VERSION = "0.8.0"
-RELEASE_DATE = "2026-07-24"
+RELEASE_DATE = "2026-08-11"
 
 
 @dataclass(frozen=True)
@@ -42,13 +42,13 @@ class ScreenshotSpec:
 SCREENSHOTS = {
     "6. 网页七个区域": ScreenshotSpec(
         "01-home.png",
-        "图 1  v0.8.0 情报检索首页：多目标交付、自然语言任务和系统在线状态",
-        "标擎 BidPilot v0.8.0 情报检索首页与多目标交付选择器",
+        "图 1  查找情报首页：一句需求、检索口径与默认 Word 交付",
+        "标擎 BidPilot 查找情报首页与折叠式交付设置",
     ),
     "9. 网页配置模型：逐字段解释": ScreenshotSpec(
         "02-config.png",
-        "图 2  配置中心：模型地址、名称、模式和阈值均可在网页设置",
-        "标擎 BidPilot 配置中心的模型配置区域",
+        "图 2  系统设置：模型地址、名称、模式和阈值均可在网页设置",
+        "标擎 BidPilot 系统设置的模型配置区域",
     ),
     "10.7 Telegram Bot": ScreenshotSpec(
         "09-telegram-config.png",
@@ -62,15 +62,15 @@ SCREENSHOTS = {
     ),
     "11. 长期订阅：为什么关闭网页后还能跑": ScreenshotSpec(
         "03-subscriptions.png",
-        "图 5  订阅中心：查看 worker、多目标、下次执行和管理操作",
-        "标擎 BidPilot 多目标订阅中心",
+        "图 5  自动订阅：查看 worker、多目标、下次执行和管理操作",
+        "标擎 BidPilot 多目标自动订阅页面",
     ),
     "11.3 状态解释": ScreenshotSpec(
         "11-delivery-outbox.png",
         "图 6  交付控制塔：按运行与目标查看状态；出现死信时可只恢复失败渠道",
         "标擎 BidPilot 订阅 Outbox 与死信单目标重试界面",
     ),
-    "12. 机会工作台、买方雷达与决策中心": ScreenshotSpec(
+    "12. 机会跟进、买方雷达与判断复盘": ScreenshotSpec(
         "04-opportunities.png",
         "图 7  我的机会：按项目管理阶段、负责人、下一步、归档和删除",
         "标擎 BidPilot 我的机会项目工作台",
@@ -80,15 +80,15 @@ SCREENSHOTS = {
         "图 8  买方雷达：只聚合本机真实公告并创建采购单位锁定监控",
         "标擎 BidPilot 买方雷达与真实采购单位证据",
     ),
-    "12.7 第一次使用决策中心": ScreenshotSpec(
+    "12.7 第一次使用判断与复盘": ScreenshotSpec(
         "06-decision.png",
-        "图 9  决策中心：企业画像、证据约束适配判断、反馈和本轮追问",
-        "标擎 BidPilot 决策中心企业画像与证据智能",
+        "图 9  判断与复盘：企业画像、证据约束适配判断、反馈和本轮追问",
+        "标擎 BidPilot 判断与复盘页面的企业画像与证据智能",
     ),
-    "13. 来源中心与授权边界": ScreenshotSpec(
+    "13. 来源状态与授权边界": ScreenshotSpec(
         "07-sources.png",
-        "图 10  来源中心：能力、健康趋势和用户可见授权生命周期",
-        "标擎 BidPilot 来源健康与网页授权中心",
+        "图 10  来源状态：能力、健康趋势和用户可见授权生命周期",
+        "标擎 BidPilot 来源健康与网页授权状态",
     ),
 }
 

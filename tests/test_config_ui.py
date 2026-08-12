@@ -251,7 +251,7 @@ def test_errors_and_subscription_drafts_have_beginner_recovery_guards():
     assert "subscriptionDrafts: new Set()" in script
     assert "尚未保存；离开或重新打开会丢弃这些草稿" in script
     assert "state.configDirty.size || state.subscriptionDrafts.size" in script
-    assert "任务仍保存在后台，请到订阅中心点击“刷新状态”" in script
+    assert "任务仍保存在后台，请到自动订阅点击“刷新状态”" in script
 
 
 def test_confirmed_intent_snapshot_follows_run_and_subscription_requests():
@@ -270,6 +270,26 @@ def test_confirmed_intent_snapshot_follows_run_and_subscription_requests():
     assert "创建订阅前请重新解析" in script
 
 
+def test_primary_action_routes_all_future_and_recurring_intents_to_subscription_creation():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+    scheduled_block = script.split("const SCHEDULED_INTENT_KINDS", 1)[1].split(";", 1)[0]
+    run_block = script.split("async function runQuery()", 1)[1].split(
+        "function hasActiveDeliveryRows", 1
+    )[0]
+
+    assert '["once", "daily", "weekly", "monthly"]' in scheduled_block
+    assert "if (isScheduledIntent(state.spec))" in run_block
+    assert "await createSubscriptionFromQuery();" in run_block
+    assert run_block.index("await createSubscriptionFromQuery();") < run_block.index(
+        'api("/api/v1/runs"'
+    )
+    assert (
+        'label.textContent = isScheduledIntent(spec) ? "创建计划任务" '
+        ": PRIMARY_ACTION_DEFAULT_LABEL"
+    ) in script
+    assert 'isScheduledIntent(spec) ? "正在创建计划任务…" : "多源采集中…"' in script
+
+
 def test_frontend_cache_key_and_mobile_recovery_contract_are_current():
     document = _document()
     stylesheet = document.select_one('link[rel="stylesheet"]')
@@ -277,14 +297,72 @@ def test_frontend_cache_key_and_mobile_recovery_contract_are_current():
     css = Path("bidpilot/static/app.css").read_text(encoding="utf-8")
     script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
 
-    assert stylesheet.get("href").endswith("?v=0.8.0")
-    assert script_asset.get("src").endswith("?v=0.8.0")
+    assert stylesheet.get("href").endswith("?v=0.8.0-20260811")
+    assert script_asset.get("src").endswith("?v=0.8.0-20260811")
     assert "min-height:44px" in css
     assert ".checkbox-config > .config-origin { grid-column:1/-1; }" in css
     assert "@media (max-width: 1660px)" in css
     assert ".delivery-outbox-row p" in css
     assert "white-space:normal" in css
     assert "opportunityLoadSequence" in script
+
+
+def test_primary_navigation_and_home_return_are_keyboard_accessible():
+    document = _document()
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+    stylesheet = Path("bidpilot/static/app.css").read_text(encoding="utf-8")
+
+    navigation = document.select_one('nav[role="tablist"]')
+    tabs = navigation.select('[role="tab"][aria-controls]')
+    panels = document.select('.tab-panel[role="tabpanel"][aria-labelledby]')
+    assert len(tabs) == 7
+    assert len(panels) == 7
+    assert tabs[0]["aria-selected"] == "true"
+    assert all(tab["aria-controls"] == f"tab-{tab['data-tab']}" for tab in tabs)
+    assert len(document.select("[data-home-tab]")) == 3
+    assert 'keys = ["ArrowLeft", "ArrowRight", "Home", "End"]' in script
+    assert 'node.setAttribute("aria-selected", String(active))' in script
+    assert "node.tabIndex = active ? 0 : -1" in script
+    assert "activeNavigationItem.scrollIntoView" in script
+    assert '$("#home-report-count")' in script
+    assert '$("#home-opportunity-count")' in script
+    assert '$("#home-subscription-count")' in script
+    assert "overflow-x:auto" in stylesheet
+    assert "scrollbar-width:none" in stylesheet
+    assert "overflow-wrap:anywhere" in stylesheet
+    assert "scroll-margin-top:92px" in stylesheet
+    assert "font-size:12px" in stylesheet
+    assert "prefers-reduced-motion: reduce" in stylesheet
+
+
+def test_results_use_plain_business_language_for_progressive_detail():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+
+    assert "本轮行动建议" in script
+    assert "<h3>情报简报</h3>" in script
+    assert "检索与筛选记录" in script
+    assert "<b>查询计划</b>" in script
+    assert "<b>边界复核</b>" in script
+    assert "EVIDENCE-GROUNDED COPILOT" not in script
+    assert "AUDITABLE AI RETRIEVAL" not in script
+
+
+def test_result_cards_disclose_source_names_and_access_level():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+
+    assert "item.sources?.[i] || `来源 ${i + 1}`" in script
+    assert 'item.auth_level === "free_member" ? "免费会员列表可见" : "公开信息"' in script
+    assert 'class="result-evidence-id"' in script
+    assert 'aria-label="机会分 ${Math.round(item.opportunity_score)} 分"' in script
+
+
+def test_source_summary_separates_adapter_count_login_and_real_contribution():
+    script = Path("bidpilot/static/app.js").read_text(encoding="utf-8")
+
+    assert '["已接入来源", rows.length]' in script
+    assert '["登录增强已验证", memberVerified]' in script
+    assert '["最近实际有产出", contributed]' in script
+    assert '["当前可运行", configured]' not in script
 
 
 def test_opportunity_workspace_exposes_and_saves_an_explicit_next_action():

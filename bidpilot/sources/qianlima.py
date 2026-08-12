@@ -55,7 +55,7 @@ class QianlimaSource(SourceAdapter):
     authorization_url = "https://search.vip.qianlima.com/"
     authorization_action_label = "在系统内免费登录"
     coverage_note = (
-        "定时任务只读取无需登录的公开分类列表。用户本人在来源中心完成免费登录后，"
+        "定时任务只读取无需登录的公开分类列表。用户本人在来源状态页面完成免费登录后，"
         "即时任务可通过系统托管的同一个持久浏览器配置执行有界免费列表检索；只有已有书面授权或"
         "官方 API 记录编号且管理员显式开启后，监控任务才可在页数、间隔和每日预算内复用。"
         "授权、Web、worker 与清除使用跨进程 profile 锁。不导出或后台重放 Cookie，"
@@ -538,7 +538,7 @@ class QianlimaSource(SourceAdapter):
             return SourceSearchResult(
                 source=self.name,
                 status=SourceStatus.AUTH_REQUIRED,
-                message="千里马免费登录态尚未验证或已过期，请到来源中心重新登录。",
+                message="千里马免费登录态尚未验证或已过期，请到来源状态页面重新登录。",
             )
         query = normalize_space(spec.topic)
         if not 2 <= len(query) <= 40:

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -43,7 +43,7 @@ class FakeSource(SourceAdapter):
             source=self.name,
             source_url="https://example.com/tender/1",
             title="安徽大学 GPU 服务器采购公开招标公告",
-            published_at=datetime(2026, 7, 10, 9, 0),
+            published_at=datetime.combine(spec.end_date, time(9, 0)),
             region="安徽",
             buyer="安徽大学",
             body=body,
@@ -78,7 +78,7 @@ class SequencedLifecycleSource(SourceAdapter):
             title=(
                 "安徽大学 GPU 服务器采购更正公告" if changed else "安徽大学 GPU 服务器采购招标公告"
             ),
-            published_at=datetime(2026, 7, 10, 9, 0),
+            published_at=datetime.combine(spec.end_date, time(9, 0)),
             region="安徽",
             buyer="安徽大学",
             body=body,
@@ -212,6 +212,19 @@ def test_confirmed_intent_snapshot_prevents_second_llm_parse_and_rejects_drift(t
         )
         assert run.status_code == 200, run.text
         assert run.json()["spec"]["region"] == "安徽"
+
+        immediate_subscription = client.post(
+            "/api/v1/subscriptions",
+            json={
+                "name": "即时查询不能误建订阅",
+                "query": immediate_query,
+                "intent_snapshot": immediate_token,
+                "delivery_targets": ["local"],
+                "run_immediately": False,
+            },
+        )
+        assert immediate_subscription.status_code == 422
+        assert "必须包含" in immediate_subscription.json()["detail"]
 
         subscription = client.post(
             "/api/v1/subscriptions",
@@ -1264,11 +1277,11 @@ async def test_opportunity_workspace_is_project_idempotent_and_persistent(tmp_pa
         ]
         assert {item.get("maxLength") for item in next_action_schema["anyOf"]} == {None, 500}
         delete_contract = openapi["paths"]["/api/v1/opportunities/{opportunity_id}"]["delete"]
-        assert delete_contract["summary"] == "从机会工作台删除卡片"
+        assert delete_contract["summary"] == "从机会跟进删除卡片"
         assert delete_contract["responses"]["200"]["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/DeleteResultResponse"
         }
-        assert delete_contract["tags"] == ["机会工作台"]
+        assert delete_contract["tags"] == ["机会跟进"]
         for section in (
             "### 用途",
             "### 参数与请求体",

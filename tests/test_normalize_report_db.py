@@ -138,6 +138,37 @@ async def test_report_contains_required_fields_and_filename(sample_spec, tmp_pat
         assert required in combined
 
 
+async def test_report_names_sources_and_discloses_free_member_access(sample_spec, tmp_path: Path):
+    record = await normalize_item(
+        raw_tender(
+            "千里马招标网",
+            "https://www.qianlima.com/bid-123.html",
+            "安徽服务器采购公告",
+            "采购服务器设备。",
+        ),
+        sample_spec,
+        EvidenceSummarizer(Settings()),
+    )
+    record.auth_level = "free_member"
+    path = generate_report(
+        sample_spec,
+        [record],
+        [
+            SourceDiagnostic(
+                source="千里马招标网", status=SourceStatus.OK, fetched_count=1, kept_count=1
+            )
+        ],
+        tmp_path,
+        generated_at=datetime(2026, 8, 10, 10, 0),
+    )
+    generated = Document(path)
+    text = "\n".join(paragraph.text for paragraph in generated.paragraphs)
+    assert "来源链接（免费会员列表可见）" in text
+    assert "千里马招标网" in text
+    assert generated.styles["Heading 2"].paragraph_format.keep_together is True
+    assert generated.styles["Heading 2"].paragraph_format.keep_with_next is True
+
+
 async def test_report_uses_audit_suffix_only_for_a_real_same_minute_collision(
     sample_spec, tmp_path: Path
 ):

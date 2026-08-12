@@ -104,6 +104,8 @@ def _configure_document(document: Document) -> None:
         style.font.bold = True
         style.paragraph_format.space_before = Pt(12)
         style.paragraph_format.space_after = Pt(6)
+        style.paragraph_format.keep_together = True
+        style.paragraph_format.keep_with_next = True
 
     footer = section.footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -310,7 +312,7 @@ def generate_report(
     document.add_heading("重点标讯", level=1)
     for index, record in enumerate(records, start=1):
         heading = document.add_heading(level=2)
-        heading.add_run(f"{index:02d}  {record.title}")
+        heading.add_run(f"结果 {index:02d}  {record.title}")
 
         info = document.add_table(rows=2, cols=4)
         info.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -338,12 +340,18 @@ def generate_report(
         summary.add_run(record.summary)
 
         sources = document.add_paragraph()
-        source_label = sources.add_run("来源链接  ")
+        access_label = "免费会员列表可见" if record.auth_level == "free_member" else "公开信息"
+        source_label = sources.add_run(f"来源链接（{access_label}）  ")
         source_label.bold = True
         for source_index, url in enumerate(record.source_urls, start=1):
             if source_index > 1:
                 sources.add_run("  ·  ")
-            _add_hyperlink(sources, f"来源 {source_index}", url)
+            source_name = (
+                record.sources[source_index - 1]
+                if source_index <= len(record.sources)
+                else f"来源 {source_index}"
+            )
+            _add_hyperlink(sources, source_name, url)
 
         attachments = document.add_paragraph()
         attachment_label = attachments.add_run("附件链接  ")

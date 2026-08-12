@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="标擎 BidPilot - 证据优先的招投标情报 Agent">
+  <meta name="description" content="标擎 BidPilot - 把分散公告整理成可核验、可跟进的招投标情报">
   <title>标擎 BidPilot</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=0.8.0">
+  <link rel="stylesheet" href="/static/app.css?v=0.8.0-20260811">
 </head>
 <body>
   <div class="noise"></div>
@@ -15,36 +15,36 @@
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span><strong>标擎</strong><small>BidPilot</small></span>
     </a>
-    <nav aria-label="主导航">
-      <button class="nav-link active" data-tab="search">情报检索</button>
-      <button class="nav-link" data-tab="decision">决策中心</button>
-      <button class="nav-link" data-tab="opportunities">机会工作台</button>
-      <button class="nav-link" data-tab="subscriptions">订阅中心</button>
-      <button class="nav-link" data-tab="sources">来源中心</button>
-      <button class="nav-link" data-tab="config">配置中心</button>
-      <button class="nav-link" data-tab="reports">报告历史</button>
+    <nav aria-label="主导航" role="tablist">
+      <button class="nav-link active" id="nav-search" data-tab="search" role="tab" aria-selected="true" aria-controls="tab-search">查找情报</button>
+      <button class="nav-link" id="nav-decision" data-tab="decision" role="tab" aria-selected="false" aria-controls="tab-decision" tabindex="-1">判断与复盘</button>
+      <button class="nav-link" id="nav-opportunities" data-tab="opportunities" role="tab" aria-selected="false" aria-controls="tab-opportunities" tabindex="-1">机会跟进</button>
+      <button class="nav-link" id="nav-subscriptions" data-tab="subscriptions" role="tab" aria-selected="false" aria-controls="tab-subscriptions" tabindex="-1">自动订阅</button>
+      <button class="nav-link" id="nav-sources" data-tab="sources" role="tab" aria-selected="false" aria-controls="tab-sources" tabindex="-1">来源状态</button>
+      <button class="nav-link" id="nav-config" data-tab="config" role="tab" aria-selected="false" aria-controls="tab-config" tabindex="-1">系统设置</button>
+      <button class="nav-link" id="nav-reports" data-tab="reports" role="tab" aria-selected="false" aria-controls="tab-reports" tabindex="-1">Word 报告</button>
     </nav>
     <div class="top-actions">
-      <span class="status-dot"><i></i> 系统在线</span>
+      <span class="status-dot"><i></i> 服务可用</span>
       <a class="ghost-button" href="/docs" target="_blank" rel="noreferrer">API 文档 ↗</a>
     </div>
   </header>
 
   <main>
-    <section class="tab-panel active" id="tab-search">
+    <section class="tab-panel active" id="tab-search" role="tabpanel" aria-labelledby="nav-search">
       <div class="hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow">EVIDENCE-FIRST TENDER INTELLIGENCE</p>
-          <h1>一句话，<br><span>追踪每个真实商机。</span></h1>
-          <p class="lede">自然语言驱动多源采集、证据约束摘要、项目生命周期去重与成功确认后的版本级防重复。</p>
+          <p class="eyebrow">真实来源 · 可回到原文 · 可交付 Word</p>
+          <h1>把分散公告，<br><span>变成能跟进的项目。</span></h1>
+          <p class="lede">输入一句需求，系统会说明查了哪些来源、为什么保留或排除，并交付带原文链接的 Word 和下一步行动。</p>
           <div class="proof-line">
-            <span><b id="proof-source-count">10</b> 真实来源</span><span><b>0</b> 硬编码结果</span><span><b>100%</b> 可回溯</span>
+            <span><b id="proof-source-count">10</b> 个已接入来源</span><span><b>Word</b> 可下载交付</span><span><b>原文</b> 随结果保留</span>
           </div>
         </div>
         <div class="query-console">
           <div class="console-head">
-            <span>自然语言任务</span>
-            <span class="kbd">⌘ K</span>
+            <span>先说清要找什么</span>
+            <span class="kbd">Ctrl / ⌘ K</span>
           </div>
           <textarea id="query-input" rows="4" aria-label="招投标查询" placeholder="例如：最近3个月上海充电桩招标信息，请每天9:00汇总后发送给我"></textarea>
           <div class="examples" aria-label="查询示例">
@@ -52,27 +52,37 @@
             <button data-query="最近1个月上海充电桩招标信息">上海 · 充电桩 · 近1月</button>
             <button data-query="最近3个月上海充电桩招标信息，请每天9:00汇总后发送给我">每日增量订阅</button>
           </div>
-          <div class="task-options">
-            <fieldset class="delivery-target-control" id="run-delivery-targets">
-              <legend>交付目标（可以同时选择多个）</legend>
-              <div class="delivery-target-picker"><div class="delivery-target-loading">正在读取可用渠道…</div></div>
-              <input class="delivery-channel-compat" id="delivery-channel" type="hidden" value="local">
-              <p class="delivery-target-selection" aria-live="polite">已选择：报告中心</p>
-            </fieldset>
-            <label><span>无新增时</span><select id="delivery-policy" aria-label="无新增通知策略"><option value="always">仍发送运行回执</option><option value="on_change">保持安静</option></select></label>
-          </div>
-          <p class="channel-hint" id="channel-hint">报告中心只保存文件；如需主动提醒，请配置飞书通道。</p>
+          <details class="delivery-advanced">
+            <summary><span>交付方式</span><small>默认保存 Word；需要时再设置消息推送</small></summary>
+            <div class="task-options">
+              <fieldset class="delivery-target-control" id="run-delivery-targets">
+                <legend>交付目标（可以同时选择多个）</legend>
+                <div class="delivery-target-picker"><div class="delivery-target-loading">正在读取可用渠道…</div></div>
+                <input class="delivery-channel-compat" id="delivery-channel" type="hidden" value="local">
+                <p class="delivery-target-selection" aria-live="polite">已选择：报告中心</p>
+              </fieldset>
+              <label><span>无新增时</span><select id="delivery-policy" aria-label="无新增通知策略"><option value="always">仍发送运行回执</option><option value="on_change">保持安静</option></select></label>
+            </div>
+            <p class="channel-hint" id="channel-hint">报告中心只保存文件；如需主动提醒，请配置飞书通道。</p>
+          </details>
           <div class="console-actions">
-            <button class="secondary-button" id="parse-button">解析意图</button>
-            <button class="primary-button" id="run-button"><span>启动情报任务</span><b>→</b></button>
+            <button class="secondary-button" id="parse-button">预览检索口径</button>
+            <button class="primary-button" id="run-button"><span>开始查找</span><b>→</b></button>
           </div>
-          <p class="privacy-note">仅抓取公开信息或你主动授权的免费会员可见信息</p>
+          <p class="privacy-note">仅在公开信息与本人已授权的免费会员可见范围内查询</p>
         </div>
       </div>
 
+      <section class="work-return" aria-label="继续上次工作">
+        <div><p>不必每次从头开始</p><h2>继续上次工作</h2></div>
+        <button type="button" data-home-tab="reports"><span>最近报告</span><b id="home-report-count">读取中</b><small>下载已经生成的 Word</small></button>
+        <button type="button" data-home-tab="opportunities"><span>待跟进机会</span><b id="home-opportunity-count">读取中</b><small>回到负责人和下一步动作</small></button>
+        <button type="button" data-home-tab="subscriptions"><span>自动订阅</span><b id="home-subscription-count">读取中</b><small>查看下次执行与送达状态</small></button>
+      </section>
+
       <section class="intent-panel hidden" id="intent-panel" aria-live="polite">
         <div class="section-head">
-          <div><p class="eyebrow">QUERY COMPILER</p><h2>任务已编译</h2></div>
+          <div><p class="eyebrow">检索口径</p><h2>先确认系统理解</h2></div>
           <div class="intent-actions">
             <span class="confidence" id="intent-confidence">高置信</span>
             <button class="secondary-button hidden" id="create-subscription-button">创建并验证订阅 ＋</button>
@@ -85,7 +95,7 @@
 
       <section class="run-panel hidden" id="run-panel" aria-live="polite">
         <div class="section-head">
-          <div><p class="eyebrow">LIVE PIPELINE</p><h2>证据流水线</h2></div>
+          <div><p class="eyebrow">真实处理进度</p><h2>正在查找和核验</h2></div>
           <span class="running-badge" id="run-state"><i></i> 执行中</span>
         </div>
         <div class="pipeline">
@@ -101,17 +111,18 @@
 
       <section class="results-panel hidden" id="results-panel">
         <div class="section-head results-head">
-          <div><p class="eyebrow">ACTIONABLE SIGNALS</p><h2>可行动情报</h2></div>
+          <div><p class="eyebrow">本次结果</p><h2>完成了，先看能跟进什么</h2></div>
           <div class="results-actions"><span id="result-summary"></span><button class="secondary-button compact" id="refresh-assessments" disabled>刷新适配判断</button><a class="primary-button compact hidden" id="download-report">下载 Word ↓</a></div>
         </div>
         <div class="metric-strip" id="metric-strip"></div>
         <div class="source-coverage" id="source-coverage"></div>
-        <section class="delivery-receipts hidden" id="delivery-receipts" aria-live="polite"></section>
+        <p class="result-guidance">先核对结果，再下载 Word 或加入机会；来源限制与处理细节保留在结果下方。</p>
+        <div class="result-list" id="result-list"></div>
+        <div class="empty-state hidden" id="empty-state"><span>◎</span><h3>本次没有匹配的新情报</h3><p>这也是可信结果：系统不会用无关内容填充报告。可尝试扩大时间或地域。</p></div>
         <section class="intelligence-brief hidden" id="intelligence-brief"></section>
-        <section class="retrieval-trace hidden" id="retrieval-trace"></section>
         <section class="run-qa hidden" id="run-qa">
           <div class="run-qa-head">
-            <div><p class="eyebrow">RUN-SCOPED EVIDENCE Q&amp;A</p><h3>只问这一轮的证据</h3></div>
+            <div><p class="eyebrow">围绕本次结果追问</p><h3>答案只来自这一轮证据</h3></div>
             <span class="state-badge muted" id="run-qa-state">等待提问</span>
           </div>
           <p>回答只引用本次运行固定的 E 编号，不会混入后来公告。模型只选择逐字原文，标题、日期、阶段和链接由本地回填。</p>
@@ -126,17 +137,17 @@
           </div>
           <div class="run-qa-answer hidden" id="run-qa-answer" aria-live="polite"></div>
         </section>
-        <div class="result-list" id="result-list"></div>
-        <div class="empty-state hidden" id="empty-state"><span>◎</span><h3>本次没有匹配的新情报</h3><p>这也是可信结果：系统不会用无关内容填充报告。可尝试扩大时间或地域。</p></div>
+        <section class="delivery-receipts hidden" id="delivery-receipts" aria-live="polite"></section>
+        <section class="retrieval-trace hidden" id="retrieval-trace"></section>
       </section>
     </section>
 
-    <section class="tab-panel" id="tab-decision">
-      <div class="page-heading"><p class="eyebrow">COMPANY FIT &amp; LEARNING</p><h1>决策中心</h1><p>先告诉系统“我们能做什么、哪里优先、明确不做什么”，再用真实反馈让后续判断越来越贴近团队。</p></div>
+    <section class="tab-panel" id="tab-decision" role="tabpanel" aria-labelledby="nav-decision">
+      <div class="page-heading"><p class="eyebrow">企业适配与复盘</p><h1>判断与复盘</h1><p>先告诉系统“我们能做什么、哪里优先、明确不做什么”，再用真实反馈让后续判断越来越贴近团队。</p></div>
       <div class="decision-summary" id="decision-summary"><div class="loading-card">正在读取企业画像与反馈…</div></div>
       <div class="decision-layout">
         <article class="decision-card profile-card">
-          <div class="decision-card-head"><div><p class="eyebrow">COMPANY PROFILE</p><h2>企业能力画像</h2></div><span class="state-badge muted" id="profile-state">尚未保存</span></div>
+          <div class="decision-card-head"><div><p class="eyebrow">判断依据</p><h2>企业能力画像</h2></div><span class="state-badge muted" id="profile-state">尚未保存</span></div>
           <p>每行填写一个词，也可用逗号分隔。画像只发送给你配置的模型做语义复核，不会发送给招标网站。</p>
           <fieldset class="profile-fields" id="profile-fields" disabled>
             <label class="wide"><span>企业 / 团队名称</span><input id="profile-company-name" maxlength="120" placeholder="例如：深圳示例科技有限公司"></label>
@@ -151,7 +162,7 @@
         </article>
 
         <aside class="decision-card decision-rules">
-          <p class="eyebrow">HOW IT WORKS</p><h2>AI 能做什么，不能做什么</h2>
+          <p class="eyebrow">判断边界</p><h2>模型能做什么，不能做什么</h2>
           <ol>
             <li><b>本地先守边界</b><span>日期、地域、阶段与排除词先由程序校验。</span></li>
             <li><b>AI 只找语义关联</b><span>只能选择画像词并逐字摘录 E 编号证据。</span></li>
@@ -162,24 +173,24 @@
         </aside>
 
         <article class="decision-card feedback-card">
-          <div class="decision-card-head"><div><p class="eyebrow">FEEDBACK MEMORY</p><h2>反馈记忆</h2></div><button class="danger-button" id="clear-feedback">清空全部反馈</button></div>
+          <div class="decision-card-head"><div><p class="eyebrow">人工反馈</p><h2>反馈记忆</h2></div><button class="danger-button" id="clear-feedback">清空全部反馈</button></div>
           <p>这里的每条判断都来自你在真实结果卡上的操作；可以修改、撤销或全部清空，不会删除原公告和报告。</p>
           <div class="feedback-memory" id="feedback-memory"><div class="loading-card">正在读取反馈…</div></div>
         </article>
       </div>
     </section>
 
-    <section class="tab-panel" id="tab-opportunities">
-      <div class="page-heading"><p class="eyebrow">OPPORTUNITY WORKSPACE</p><h1>机会工作台</h1><p>这里不是另一个搜索页，而是把你决定跟进的真实标讯变成销售 / 投标待办：谁负责、下一步做什么、目前走到哪一步，都集中管理。</p></div>
-      <div class="workspace-mode-switch" role="tablist" aria-label="机会工作台功能">
+    <section class="tab-panel" id="tab-opportunities" role="tabpanel" aria-labelledby="nav-opportunities">
+      <div class="page-heading"><p class="eyebrow">从情报到行动</p><h1>机会跟进</h1><p>把你决定跟进的真实标讯变成销售 / 投标待办：谁负责、下一步做什么、目前走到哪一步，都集中管理。</p></div>
+      <div class="workspace-mode-switch" role="tablist" aria-label="机会跟进功能">
         <button class="active" type="button" role="tab" aria-selected="true" data-workspace-view="opportunities"><b>我的机会</b><span>管理已决定跟进的项目卡片</span></button>
         <button type="button" role="tab" aria-selected="false" data-workspace-view="buyers"><b>买方雷达</b><span>从本地真实公告发现活跃采购单位</span></button>
       </div>
       <div id="opportunity-workspace-view">
-      <section class="opportunity-guide" aria-label="机会工作台使用说明">
-        <div class="opportunity-guide-head"><div><p class="eyebrow">START HERE</p><h2>第一次使用，按这 4 步走</h2></div><span>建议先归档，确认无用再删除</span></div>
+      <section class="opportunity-guide" aria-label="机会跟进使用说明">
+        <div class="opportunity-guide-head"><div><p class="eyebrow">第一次使用</p><h2>按这 4 步走</h2></div><span>建议先归档，确认无用再删除</span></div>
         <ol>
-          <li><b>1. 加入</b><span>在“情报检索”的真实结果卡点击“加入机会”。同一项目不会重复建卡。</span></li>
+          <li><b>1. 加入</b><span>在“查找情报”的真实结果卡点击“加入机会”。同一项目不会重复建卡。</span></li>
           <li><b>2. 分工</b><span>打开“跟进设置”，明确谁负责、下一步做什么、何时完成，再补充标签和团队备注。</span></li>
           <li><b>3. 推进</b><span>按待评估 → 跟进中 → 投标准备流转；结束后标记已中标或未中标。</span></li>
           <li><b>4. 收尾</b><span>归档会保留整张卡和跟进历史；删除只移除工作台卡片，不删除原公告、报告或反馈。</span></li>
@@ -198,8 +209,8 @@
       </div>
       <section id="buyer-radar-view" class="hidden" aria-label="买方雷达">
         <div class="buyer-radar-guide">
-          <div><p class="eyebrow">LOCAL EVIDENCE RADAR</p><h2>哪些采购单位值得持续关注？</h2><p>这里把你已经检索并保存在本机的真实公告按采购单位聚合，展示近期活动、生命周期和高频主题。它不会联网补数、猜联系人或把局部数据冒充全市场。</p></div>
-          <ol><li><b>1. 先积累证据</b><span>在“情报检索”运行真实查询，公告才会进入本地雷达。</span></li><li><b>2. 看活动与主题</b><span>公告数是本机已收录数量，项目数是基于现有项目键的估算。</span></li><li><b>3. 核验原文</b><span>展开近期活动，点击官方原文确认需求和公告阶段。</span></li><li><b>4. 创建监控</b><span>选定采购单位后，用自然语言配置定时规则和投递方式。</span></li></ol>
+          <div><p class="eyebrow">基于已有公告</p><h2>哪些采购单位值得持续关注？</h2><p>这里把你已经检索并保存在本机的真实公告按采购单位聚合，展示近期活动、生命周期和高频主题。它不会联网补数、猜联系人或把局部数据冒充全市场。</p></div>
+          <ol><li><b>1. 先积累证据</b><span>在“查找情报”运行真实查询，公告才会进入本地雷达。</span></li><li><b>2. 看活动与主题</b><span>公告数是本机已收录数量，项目数是基于现有项目键的估算。</span></li><li><b>3. 核验原文</b><span>展开近期活动，点击官方原文确认需求和公告阶段。</span></li><li><b>4. 创建监控</b><span>选定采购单位后，用自然语言配置定时规则和投递方式。</span></li></ol>
         </div>
         <div class="buyer-radar-toolbar">
           <label><span>搜索采购单位、主题或来源</span><input id="buyer-radar-search" type="search" maxlength="100" placeholder="例如：大学、服务器、政府采购网"></label>
@@ -212,38 +223,38 @@
       </section>
     </section>
 
-    <section class="tab-panel" id="tab-subscriptions">
-      <div class="page-heading"><p class="eyebrow">CONFIRMED DELIVERY LEDGER</p><h1>订阅中心</h1><p>同一公告版本经成功确认后不再重复投递；更正与中标作为生命周期新事件继续提醒。</p></div>
+    <section class="tab-panel" id="tab-subscriptions" role="tabpanel" aria-labelledby="nav-subscriptions">
+      <div class="page-heading"><p class="eyebrow">长期任务与送达记录</p><h1>自动订阅</h1><p>同一公告版本经成功确认后不再重复投递；更正与中标作为生命周期新事件继续提醒。</p></div>
       <div class="scheduler-health" id="scheduler-health"><div><i></i><b>正在检查长期任务 worker…</b><p>订阅先持久化，再由 worker 领取；进程重启不会丢失。</p></div><button class="secondary-button" id="refresh-subscriptions">刷新状态</button></div>
       <div class="data-list" id="subscription-list"><div class="loading-card">正在读取订阅…</div></div>
     </section>
 
-    <section class="tab-panel" id="tab-reports">
-      <div class="page-heading"><p class="eyebrow">AUDITABLE OUTPUTS</p><h1>报告历史</h1><p>每份 Word 都保留查询口径、来源覆盖、原文链接与证据片段。</p></div>
+    <section class="tab-panel" id="tab-reports" role="tabpanel" aria-labelledby="nav-reports">
+      <div class="page-heading"><p class="eyebrow">可下载交付</p><h1>Word 报告</h1><p>每份 Word 都保留查询口径、来源覆盖、原文链接与证据片段。</p></div>
       <div class="data-list" id="report-list"><div class="loading-card">正在读取报告…</div></div>
     </section>
 
-    <section class="tab-panel" id="tab-sources">
-      <div class="page-heading"><p class="eyebrow">SOURCE OPERATIONS</p><h1>来源中心</h1><p>查看每个数据源的接入模式、授权边界、最近运行、健康率、耗时、产出趋势与逐次诊断；地域跳过不会被误报为故障。</p></div>
+    <section class="tab-panel" id="tab-sources" role="tabpanel" aria-labelledby="nav-sources">
+      <div class="page-heading"><p class="eyebrow">覆盖与授权边界</p><h1>来源状态</h1><p>查看每个数据源的接入模式、授权边界、最近运行、健康率、耗时、产出趋势与逐次诊断；地域跳过不会被误报为故障。</p></div>
       <div class="source-summary" id="source-summary"><div class="loading-card">正在读取来源状态…</div></div>
       <div class="source-center-grid" id="source-center-list"><div class="loading-card">正在读取来源状态…</div></div>
       <div class="source-guide">
-        <div><p class="eyebrow">VISIBLE BROWSER AUTHORIZATION</p><h2>网页点击授权，账号始终由你掌控</h2><p>点击来源卡的授权按钮，在弹出的可见浏览器里亲自登录；中国招标投标网只加密保存允许域名 Cookie，千里马持续复用同一个可见浏览器进程且不导出 Cookie。两者都不保存密码，也不绕过验证码、CA、付费、角色或频率权限。</p></div>
+        <div><p class="eyebrow">本人账号授权</p><h2>网页点击授权，账号始终由你掌控</h2><p>点击来源卡的授权按钮，在弹出的可见浏览器里亲自登录；中国招标投标网只加密保存允许域名 Cookie，千里马持续复用同一个可见浏览器进程且不导出 Cookie。两者都不保存密码，也不绕过验证码、CA、付费、角色或频率权限。</p></div>
         <div><small>首次使用若提示缺少浏览器组件，只需在项目目录执行一条跨平台命令：</small><code>python bootstrap.py --auth</code></div>
       </div>
     </section>
 
-    <section class="tab-panel" id="tab-config">
-      <div class="page-heading"><p class="eyebrow">RUNTIME CONTROL CENTER</p><h1>模型、投递与服务设置</h1><p>模型与推送通道都在网页内配置，保存后立即生效并随数据库持久化，无需修改配置文件。</p></div>
+    <section class="tab-panel" id="tab-config" role="tabpanel" aria-labelledby="nav-config">
+      <div class="page-heading"><p class="eyebrow">按需设置</p><h1>模型、投递与服务</h1><p>基础检索开箱可用；需要模型复核、消息推送或服务器访问时，再配置对应分组。</p></div>
       <div class="config-security-note"><i>●</i><div><b>敏感信息默认不回显</b><p id="config-security-notice">密钥、密码和 Webhook 地址只显示“已配置”；留空保持原值，只有显式勾选才会清除。</p></div></div>
       <div class="config-toolbar">
-        <div><span class="state-badge muted" id="config-save-state">正在读取配置</span><small>通道测试会真实发送一条“配置中心连通性测试”消息。</small></div>
+        <div><span class="state-badge muted" id="config-save-state">正在读取配置</span><small>通道测试会真实发送一条“系统设置连通性测试”消息。</small></div>
         <div><button class="secondary-button compact" id="reload-config">重新读取</button><button class="primary-button compact" id="save-config" disabled>保存所有已修改项</button></div>
       </div>
 
       <div class="config-grid">
         <article class="config-card" data-config-group="ai">
-          <div class="config-card-head"><div><p class="eyebrow">AI MODEL</p><h2>OpenAI-compatible 模型</h2></div><span class="state-badge muted" id="config-status-ai">未配置</span></div>
+          <div class="config-card-head"><div><p class="eyebrow">可选增强</p><h2>OpenAI-compatible 模型</h2></div><span class="state-badge muted" id="config-status-ai">未配置</span></div>
           <p>模型参与七个可独立控制的环节：低置信意图复核、检索词规划、边界候选语义复核、逐公告摘要、证据约束情报简报、企业适配语义解释和本轮证据追问。模型只能提议或选择证据；地域、日期、公告类型、排除词、分数、链接和证据引用始终由本地校验把关。</p>
           <div class="config-fields">
             <label class="wide"><span>API 基础地址</span><input data-config="llm_base_url" type="url" placeholder="http://127.0.0.1:8045/v1"><small>填写 OpenAI-compatible 服务的 <code>/v1</code> 根地址；查询或证据只会在相应 AI 功能启用时发送。使用外部服务前请确认其隐私政策。</small></label>
@@ -272,8 +283,8 @@
         </article>
 
         <article class="config-card" data-config-group="retrieval">
-          <div class="config-card-head"><div><p class="eyebrow">SOURCE & REQUEST BUDGET</p><h2>检索与来源预算</h2></div><span class="state-badge muted">立即生效</span></div>
-          <p>这些设置决定每个公开来源的网络等待、访问间隔、候选上限和中国政府采购网分页深度。数值越大不等于结果越准，建议逐项调整并观察来源中心。</p>
+          <div class="config-card-head"><div><p class="eyebrow">检索控制</p><h2>检索与来源预算</h2></div><span class="state-badge muted">立即生效</span></div>
+          <p>这些设置决定每个公开来源的网络等待、访问间隔、候选上限和中国政府采购网分页深度。数值越大不等于结果越准，建议逐项调整并观察来源状态。</p>
           <div class="config-fields">
             <label><span>单次请求超时（秒）</span><input data-config="request_timeout" type="number" min="3" max="120" step="1"><small>范围 3～120 秒；只限制单个来源。超时来源会单独记录诊断，不会拖垮其他来源。</small></label>
             <label><span>同站请求间隔（秒）</span><input data-config="request_interval" type="number" min="0.1" max="10" step="0.1"><small>用于尊重网站负载和频率边界，建议不低于 0.8。</small></label>
@@ -284,7 +295,7 @@
         </article>
 
         <article class="config-card" data-config-group="system">
-          <div class="config-card-head"><div><p class="eyebrow">WORKER & NETWORK</p><h2>长期任务与局域网</h2></div><span class="state-badge warning">网络改动需重启</span></div>
+          <div class="config-card-head"><div><p class="eyebrow">后台运行</p><h2>长期任务与局域网</h2></div><span class="state-badge warning">网络改动需重启</span></div>
           <p>默认只允许本机访问。临时可信局域网可使用 LAN；正式公司服务器请选择企业内网模式，由 HTTPS 网关、受信网段、来源白名单和管理员令牌共同保护。</p>
           <div class="config-fields">
             <label><span>访问范围</span><select data-config="network_access_mode"><option value="local">仅本机（默认）</option><option value="lan">临时可信局域网</option><option value="enterprise">企业内网服务器（推荐生产）</option></select><small>企业模式使用 <code>BIDPILOT_HOST</code> 指定监听地址；即使绑定 0.0.0.0 也不会取消 API 身份校验。</small></label>
@@ -305,7 +316,7 @@
         </article>
 
         <article class="config-card compact-card" data-config-group="publishing">
-          <div class="config-card-head"><div><p class="eyebrow">REPORT PUBLISHING</p><h2>报告发布与下载链接</h2></div><span class="state-badge muted">可选</span></div>
+          <div class="config-card-head"><div><p class="eyebrow">报告链接</p><h2>报告发布与下载链接</h2></div><span class="state-badge muted">可选</span></div>
           <p>这是所有“链接型渠道”共用的入口，不属于飞书。只有你已经部署了 HTTPS、身份认证和访问控制时才填写；留空时系统会诚实说明报告仅保存在本机。</p>
           <div class="config-fields one-column">
             <label><span>公网报告根地址（可选）</span><input data-config="public_base_url" type="url" placeholder="https://bidpilot.example.com"><small>飞书/钉钉/企业微信/Slack 可附带下载链接；Telegram 文件超过 50 MB 时也使用这里。不要填写裸露、无认证的临时地址。</small></label>
@@ -407,7 +418,7 @@
 
   <section class="lan-unlock hidden" id="lan-unlock" role="dialog" aria-modal="true" aria-labelledby="lan-unlock-title">
     <div class="lan-unlock-card">
-      <p class="eyebrow">LAN MANAGEMENT</p>
+      <p class="eyebrow">局域网管理</p>
       <h2 id="lan-unlock-title">解锁局域网管理</h2>
       <p>这台 BidPilot 使用管理员令牌保护写操作。只需在当前标签页输入一次；令牌不会发送给任何招投标平台。</p>
       <label><span>管理员令牌</span><input id="lan-unlock-token" type="password" minlength="16" autocomplete="current-password" placeholder="输入服务主机配置的令牌"></label>
@@ -417,6 +428,6 @@
   </section>
 
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=0.8.0" defer></script>
+  <script src="/static/app.js?v=0.8.0-20260811" defer></script>
 </body>
 </html>

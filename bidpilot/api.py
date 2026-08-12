@@ -190,9 +190,9 @@ OPENAPI_TAGS = [
         "name": "买方雷达",
         "description": "只聚合本机已抓取标讯，查看采购单位活动、公告生命周期、主题和证据入口，并创建精确买方监控订阅。",
     },
-    {"name": "机会工作台", "description": "把已抓取标讯转为项目级跟进机会并查看生命周期。"},
+    {"name": "机会跟进", "description": "把已抓取标讯转为项目级跟进机会并查看生命周期。"},
     {"name": "决策智能", "description": "管理企业画像、本轮证据快照和用户反馈学习数据。"},
-    {"name": "配置中心", "description": "安全管理模型与推送通道，并执行真实连通性测试。"},
+    {"name": "系统设置", "description": "安全管理模型与推送通道，并执行真实连通性测试。"},
     {"name": "来源授权", "description": "由用户本人完成可见浏览器登录，并管理加密的来源会话。"},
 ]
 
@@ -610,7 +610,7 @@ def create_app(
             tag="决策智能",
             summary="生成或刷新本轮企业适配判断",
             purpose="把固定运行证据、当前企业画像和有界反馈记忆合并为逐机会适配分、建议参与/观察/跳过、风险与下一步；模型只找语义关联和逐字证据，不直接给分。",
-            parameters="路径 `run_id`；无请求体。模型开关、地址、超时和最多送入模型复核的条数来自网页配置中心；超出模型窗口的其余结果仍会获得本地判断。",
+            parameters="路径 `run_id`；无请求体。模型开关、地址、超时和最多送入模型复核的条数来自网页系统设置；超出模型窗口的其余结果仍会获得本地判断。",
             returns="HTTP 200；返回模型/回退状态、画像版本、反馈数量、逐条证据编号，以及本地回填的标题、采购人、发布日期、地域、阶段、原文、本地适配分、逐字证据摘录、反馈调整和建议；每条本轮可信结果都有判断。",
             side_effects="可能调用用户配置的 OpenAI-compatible 模型并消耗额度；通过校验的结果按证据、画像、反馈和模型版本缓存，并写回该运行。不会访问标讯来源。",
             errors="404：运行不存在；模型未配置、超时、JSON 非法、未知证据或数字幻觉不会返回 502，而是返回确定性安全回退。",
@@ -798,7 +798,7 @@ def create_app(
         "/api/v1/reports",
         **_api_docs(
             tag="报告",
-            summary="列出报告历史",
+            summary="列出 Word 报告",
             purpose="展示已成功登记的 Word 报告及其运行、订阅、记录数和生成时间。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；按生成时间倒序返回报告元数据，不返回文件正文。",
@@ -817,7 +817,7 @@ def create_app(
             tag="报告",
             summary="下载 Word 报告",
             purpose="下载报告目录中真实生成的 `.docx` 文件。服务端会剥离目录并校验扩展名，阻止路径穿越。",
-            parameters="路径参数 `filename`：报告历史返回的文件名，只接受当前报告目录中的 `.docx`。",
+            parameters="路径参数 `filename`：Word 报告列表返回的文件名，只接受当前报告目录中的 `.docx`。",
             returns="HTTP 200；返回 Word 二进制流和下载文件名。",
             side_effects="无业务写入；会读取本机报告文件。",
             errors="404：文件不存在、扩展名不正确或路径不在报告目录内。",
@@ -1016,7 +1016,7 @@ def create_app(
         **_api_docs(
             tag="长期订阅",
             summary="列出全部订阅",
-            purpose="读取所有长期任务及其下次时间、租约、失败次数、最近检索状态和独立交付状态，供订阅中心区分来源覆盖受限与渠道待处理。",
+            purpose="读取所有长期任务及其下次时间、租约、失败次数、最近检索状态和独立交付状态，供自动订阅页面区分来源覆盖受限与渠道待处理。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；按创建时间倒序返回订阅列表。",
             side_effects="无，只读 SQLite。",
@@ -1302,8 +1302,8 @@ def create_app(
         "/api/v1/opportunities",
         response_model=Opportunity,
         **_api_docs(
-            tag="机会工作台",
-            summary="把真实标讯加入机会工作台",
+            tag="机会跟进",
+            summary="把真实标讯加入机会跟进",
             purpose="从 tender_items 中已抓取、已规范化的公告创建项目级机会；同一 project_key 重复加入返回原机会。",
             parameters="JSON：`canonical_id` 与 `version_hash` 必须来自 RunResult 中的真实记录。客户端不能上传自造标题或摘要。",
             returns="HTTP 200；返回机会、当前最新项目快照和人工跟进字段。",
@@ -1323,7 +1323,7 @@ def create_app(
         "/api/v1/opportunities",
         response_model=list[Opportunity],
         **_api_docs(
-            tag="机会工作台",
+            tag="机会跟进",
             summary="筛选机会列表",
             purpose="按阶段和关键字读取项目级机会，用于看板、负责人检索和待办管理。",
             parameters="可选查询参数 `stage`：new/following/bidding/won/lost/archived；`search`：匹配项目、采购人、负责人、下一步执行动作、标签或备注。",
@@ -1344,7 +1344,7 @@ def create_app(
         "/api/v1/opportunities/{opportunity_id}",
         response_model=Opportunity,
         **_api_docs(
-            tag="机会工作台",
+            tag="机会跟进",
             summary="读取单个机会",
             purpose="按机会 ID 获取最新项目快照、阶段、负责人、下一步、标签和备注。",
             parameters="路径参数 `opportunity_id`。",
@@ -1365,7 +1365,7 @@ def create_app(
         "/api/v1/opportunities/{opportunity_id}",
         response_model=Opportunity,
         **_api_docs(
-            tag="机会工作台",
+            tag="机会跟进",
             summary="更新机会跟进信息",
             purpose="局部更新阶段、负责人、下一步执行动作、计划完成时间、备注、标签或已读状态；后续公告刷新不会覆盖这些人工字段。",
             parameters="路径参数 `opportunity_id`；JSON 可提交 `stage`、`owner`、`next_action`、`next_action_at`、`notes`、`tags`、`is_read`。`next_action` 是不超过 500 字的可执行业务动作。",
@@ -1386,8 +1386,8 @@ def create_app(
         "/api/v1/opportunities/{opportunity_id}",
         response_model=DeleteResultResponse,
         **_api_docs(
-            tag="机会工作台",
-            summary="从机会工作台删除卡片",
+            tag="机会跟进",
+            summary="从机会跟进删除卡片",
             purpose=(
                 "移除用户不再跟进的机会卡片及其中的阶段、负责人、下一步执行动作、计划完成时间、备注和标签。"
                 "这只是工作台整理操作；同一真实标讯以后仍可重新加入。"
@@ -1414,7 +1414,7 @@ def create_app(
         "/api/v1/opportunities/{opportunity_id}/timeline",
         response_model=list[TenderRecord],
         **_api_docs(
-            tag="机会工作台",
+            tag="机会跟进",
             summary="查看项目生命周期",
             purpose="读取同一 project_key 的采购意向、招标、更正、中标和合同事件，并保留每条原文证据。",
             parameters="路径参数 `opportunity_id`。",
@@ -1526,7 +1526,7 @@ def create_app(
         **_api_docs(
             tag="来源授权",
             summary="读取全部来源的脱敏授权状态",
-            purpose="来源中心用它区分无需授权、可管理授权、正在登录、已授权、已过期以及仅能打开原站工作台的来源。",
+            purpose="来源状态页面用它区分无需授权、可管理授权、正在登录、已授权、已过期以及仅能打开原站工作台的来源。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；逐来源返回状态、官方登录页、授权真实作用范围、时间和测试结论；不返回 Cookie 名称或值。",
             side_effects="无。不会打开浏览器、访问外站或刷新会话。",
@@ -1691,9 +1691,9 @@ def create_app(
         "/api/v1/config",
         response_model=RuntimeConfigView,
         **_api_docs(
-            tag="配置中心",
+            tag="系统设置",
             summary="读取脱敏后的运行时配置",
-            purpose="为网页配置中心读取 AI、检索、worker、网络访问、报告发布，以及飞书、SMTP、钉钉、企业微信、通用 Webhook、Telegram 和 Slack 的非敏感字段、来源、版本与就绪状态。",
+            purpose="为网页系统设置读取 AI、检索、worker、网络访问、报告发布，以及飞书、SMTP、钉钉、企业微信、通用 Webhook、Telegram 和 Slack 的非敏感字段、来源、版本与就绪状态。",
             parameters="无请求体、无查询参数。",
             returns="HTTP 200；返回 revision、字段来源和当前/重启后网络状态；敏感字段仅返回 `{configured:true/false}`，永不返回管理员令牌、API Key、密码、Cookie、Webhook 完整地址、签名密钥或 Bearer Token。",
             side_effects="无，只读 SQLite 与当前内存设置。",
@@ -1708,7 +1708,7 @@ def create_app(
         "/api/v1/config/edit-token",
         response_model=ConfigEditTokenResponse,
         **_api_docs(
-            tag="配置中心",
+            tag="系统设置",
             summary="签发短期配置编辑令牌",
             purpose="同源网页在保存或测试前获取一次性会话令牌，用自定义请求头抵御跨站表单直接修改本机配置。",
             parameters="无请求体。后续写请求把返回值放入 `X-BidPilot-Config-Token` 请求头。",
@@ -1727,7 +1727,7 @@ def create_app(
         "/api/v1/config",
         response_model=RuntimeConfigView,
         **_api_docs(
-            tag="配置中心",
+            tag="系统设置",
             summary="保存白名单运行时配置",
             purpose="在网页中按字段保存 AI、检索、worker、网络和推送通道设置。仅接受 schema 明列字段；普通字段立即生效，网络字段在重启后一次性生效，避免保存瞬间改变当前连接权限。",
             parameters="请求头必须含短期编辑令牌。JSON 必须携带读取时得到的 `revision`，可局部提交任意白名单字段；`network_access_mode` 为 local/lan/enterprise，`lan_access_policy` 为 admin_token/trusted_lan，`lan_trusted_networks` 可用 auto。企业模式还要求受信代理网段、HTTPS Origin 白名单和管理员令牌。敏感字段留空表示保持原值，清除放入 `clear_secrets`，普通字段恢复环境变量/默认值放入 `reset_fields`。",
@@ -1767,7 +1767,7 @@ def create_app(
         "/api/v1/config/model/test",
         response_model=ConnectionTestResult,
         **_api_docs(
-            tag="配置中心",
+            tag="系统设置",
             summary="测试 OpenAI-compatible 模型",
             purpose="使用当前已保存地址、模型和可选 API Key 调用 `/chat/completions`，验证真实连通性与兼容响应格式。",
             parameters="请求头必须含短期编辑令牌；无请求体。请先保存 `llm_base_url` 与 `llm_model`。",
@@ -1800,9 +1800,9 @@ def create_app(
         "/api/v1/config/channels/{channel}/test",
         response_model=ConnectionTestResult,
         **_api_docs(
-            tag="配置中心",
+            tag="系统设置",
             summary="真实测试一个推送通道",
-            purpose="通过指定通道发送一条明确标记为“配置中心连通性测试”的无新增回执，验证凭据、网络和平台配置。",
+            purpose="通过指定通道发送一条明确标记为“系统设置连通性测试”的无新增回执，验证凭据、网络和平台配置。",
             parameters="路径 `channel`：feishu_webhook、feishu_app、email、dingtalk_webhook、wecom_webhook、generic_webhook、telegram_bot 或 slack_webhook；请求头必须含短期编辑令牌。",
             returns="HTTP 200；返回实际通道、平台回执、延迟和成功状态。",
             side_effects="【真实外发副作用】会向已配置群聊、用户、邮箱或 Webhook 接收方发送一条测试消息；网页调用前会二次确认。",
@@ -1837,7 +1837,7 @@ def create_app(
                 None,
                 channel,
                 new_count=0,
-                subscription_name="配置中心连通性测试",
+                subscription_name="系统设置连通性测试",
             )
         except DeliveryError as exc:
             raise HTTPException(status_code=502, detail=f"通道测试失败：{exc}") from exc

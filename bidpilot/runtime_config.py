@@ -146,7 +146,7 @@ URL_FIELDS = {
 
 
 class RuntimeConfigUpdate(BaseModel):
-    """网页配置中心允许写入的完整白名单。未提交字段保持原值。"""
+    """网页系统设置允许写入的完整白名单。未提交字段保持原值。"""
 
     model_config = ConfigDict(extra="forbid")
 
